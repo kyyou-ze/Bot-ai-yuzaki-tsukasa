@@ -1,0 +1,64 @@
+# ===== Node.js =====
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.pnpm-store/
+
+# ===== Environment & secrets =====
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# ===== WhatsApp session (Baileys auth folder) =====
+session/
+session_auth/
+*_auth/
+session.db
+session.db-journal
+
+# ===== Bot state & memory =====
+tsukasa_state.json
+elaina_state.json
+tsukasa_state.db
+elaina_state.db
+data/
+tmp/
+temp/
+
+# ===== Logs & runtime =====
+*.log
+logs/
+pids/
+*.pid
+*.seed
+
+# ===== Go (masih disimpan sebagai referensi) =====
+/app
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+__debug_bin
+vendor/
+
+# ===== Docker / build =====
+*.tar
+*.bak
+Dockerfile.old
+
+# ===== Editor / OS =====
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
