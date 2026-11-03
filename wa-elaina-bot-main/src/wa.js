@@ -126,9 +126,24 @@ async function sendMessage(jid, content, quoted) {
 }
 
 async function sendText(jid, text, quoted, mentions) {
-  const content = { text: String(text) };
+  const to = destJid(jid);
+  const str = String(text);
+  try {
+    await sock.sendPresenceUpdate('composing', to);
+    const delay = Math.min(8000, Math.max(800, Math.ceil(str.length / 40) * 1000));
+    await new Promise((r) => setTimeout(r, delay));
+  } catch {
+    /* ignore */
+  }
+  const content = { text: str };
   if (mentions && mentions.length) content.mentions = mentions;
-  return sendMessage(jid, content, quoted);
+  const res = await sendMessage(jid, content, quoted);
+  try {
+    await sock.sendPresenceUpdate('paused', to);
+  } catch {
+    /* ignore */
+  }
+  return res;
 }
 
 async function sendImage(jid, buffer, caption, quoted, mimetype) {
