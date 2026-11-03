@@ -78,7 +78,7 @@ function load() {
       sources: getenv('ANIME_CHANNEL_SOURCES', 'anilist,kitsu,animekita,jikan'),
       perSource: Math.max(1, Math.min(20, intEnv(getenv('ANIME_CHANNEL_PER_SOURCE', '8'), 8))),
       images: boolEnv(getenv('ANIME_CHANNEL_IMAGES', 'true'), true),
-      translate: boolEnv(getenv('ANIME_CHANNEL_TRANSLATE', 'false'), false),
+      translate: boolEnv(getenv('ANIME_CHANNEL_TRANSLATE', 'true'), true),
       startDelaySec: intEnv(getenv('ANIME_CHANNEL_START_DELAY_SEC', '60'), 60),
     },
   };

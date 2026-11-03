@@ -22,6 +22,8 @@ const ANILIST_QUERY = `query ($page: Int, $perPage: Int) {
       status
       seasonYear
       format
+      startDate { year month day }
+      studios(isMain: true) { nodes { name } }
       nextAiringEpisode { episode airingAt }
     }
   }
@@ -132,6 +134,11 @@ async function fetchAniList(limit = 8) {
             { day: 'numeric', month: 'long', year: 'numeric' }
           )}`
         : '';
+      const studio = (it.studios && Array.isArray(it.studios.nodes) ? it.studios.nodes : [])
+        .map((s) => s && s.name)
+        .filter(Boolean)
+        .slice(0, 2)
+        .join(', ');
       return {
         key: `anilist:${it.id}`,
         source: 'anilist',
@@ -147,6 +154,8 @@ async function fetchAniList(limit = 8) {
         status: idStatus(it.status),
         year: Number(it.seasonYear) || 0,
         type: cleanText(it.format, 30),
+        studio,
+        releaseDate: it.startDate || '',
         extra,
         slug: '',
       };
@@ -203,6 +212,8 @@ async function fetchKitsu(limit = 8) {
         status: idStatus(a.status),
         year: yearOf(a.startDate),
         type: cleanText(a.subtype, 30),
+        studio,
+        releaseDate: a.startDate || '',
         extra: studio ? `Studio: ${studio}` : '',
         slug: '',
       };
@@ -262,6 +273,8 @@ async function fetchJikan(limit = 8) {
         status: idStatus(it.status),
         year: Number(it.year) || yearOf(it.aired && it.aired.from),
         type: cleanText(it.type, 30),
+        studio: studios,
+        releaseDate: (it.aired && it.aired.from) || '',
         extra: studios ? `Studio: ${studios}` : '',
         slug: '',
       };
@@ -302,6 +315,8 @@ async function fetchAnimeKita(limit = 8) {
         status: 'Sedang Tayang',
         year: 0,
         type: 'TV',
+        studio: '',
+        releaseDate: '',
         extra,
         slug,
       };

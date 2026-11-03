@@ -5,6 +5,7 @@ const { StickerFeature, BratFeature } = require('./features/media');
 const { BaImageFeature, PapFeature } = require('./features/images');
 const { VisionFeature, VnFeature, TtsFeature, ImgGenFeature, HijabinFeature } = require('./features/ai');
 const { AnimeFeature } = require('./features/anime');
+const { InfoFeature } = require('./features/info');
 const { PeraturanFeature } = require('./features/peraturan');
 const tiktok = require('./tiktok');
 const llm = require('./llm');
@@ -69,6 +70,7 @@ class Router {
     this.imggen = new ImgGenFeature(cfg);
     this.hijab = new HijabinFeature(cfg);
     this.anime = new AnimeFeature(this.reTrig);
+    this.info = new InfoFeature(this.reTrig);
     this.peraturan = new PeraturanFeature(store);
   }
 
@@ -138,6 +140,7 @@ class Router {
           '- tsukasa brat <teks> : buat sticker brat',
           '- tsukasa buatin gambar <prompt> / !gambar <prompt> : generate gambar AI',
           '- !anime ... : info anime (new/movie/schedule/search/detail)',
+          '- !info <topik> : info apa saja (anime/film/Jepang/fakta absurd) dalam Bahasa Indonesia',
           '- !animechannel status|test : cek / tes auto-post ke channel (owner/admin)',
           '- !peraturan on|off|status : moderasi grup (admin)',
           '- !tsukasa persona tsukasa1|tsukasa2 : pilih persona AI (persist)',
@@ -159,6 +162,10 @@ class Router {
 
       if (bang.cmd === 'anime') {
         if (await this.anime.handle(this.sock, m, origTxt)) return;
+      }
+
+      if (bang.cmd === 'info') {
+        if (await this.info.handle(this.sock, m, origTxt)) return;
       }
 
       if (bang.cmd === 'animechannel' || bang.cmd === 'anime-channel') {
@@ -305,6 +312,7 @@ class Router {
       if (await this.sticker.handle(this.sock, m, content, origTxt)) return;
       if (await this.vision.handle(this.sock, m, content, origTxt)) return;
       if (await this.anime.handle(this.sock, m, origTxt)) return;
+      if (await this.info.handle(this.sock, m, origTxt)) return;
       if (await this.tts.handle(this.sock, m, content, origTxt)) return;
     }
 

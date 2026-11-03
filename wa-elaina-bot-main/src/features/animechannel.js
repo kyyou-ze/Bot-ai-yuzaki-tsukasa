@@ -1,8 +1,10 @@
 'use strict';
 
 const feeds = require('../animefeeds');
+const animekita = require('../animekita');
 const llm = require('../llm');
 const wa = require('../wa');
+const { buildAnimeInfo } = require('../animeinfo');
 const { downloadBytes, randomPick } = require('../util');
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -56,10 +58,6 @@ function channelJid(raw) {
   if (/^https?:\/\//i.test(s)) s = inviteCode(s);
   if (!s) return '';
   return `${s}@newsletter`;
-}
-
-function valueLine(label, value) {
-  return value ? `${label}: ${value}` : '';
 }
 
 class AnimeChannelPoster {
@@ -204,43 +202,47 @@ class AnimeChannelPoster {
     }
   }
 
-  _caption(item, description) {
-    const head = ['🎬 *INFO ANIME* 🎬', '', `*${item.title}*`];
-    if (item.altTitle && normalise(item.altTitle) !== normalise(item.title)) {
-      head.push(`_${item.altTitle}_`);
+  async _enrich(item) {
+    if (!item || item.source !== 'animekita' || !item.slug) return item;
+    if (item.description && Array.isArray(item.genres) && item.genres.length) return item;
+
+    try {
+      const detail = await animekita.detail(item.slug);
+      if (detail) {
+        if (!item.description && detail.sinopsis) item.description = detail.sinopsis;
+        if ((!Array.isArray(item.genres) || item.genres.length === 0) && detail.genre) {
+          item.genres = Array.isArray(detail.genre)
+            ? detail.genre
+            : String(detail.genre)
+                .split(',')
+                .map((g) => g.trim())
+                .filter(Boolean);
+        }
+        if (!item.releaseDate && detail.published) item.releaseDate = detail.published;
+        if (!item.studio && detail.author) item.studio = detail.author;
+      }
+    } catch (err) {
+      console.warn('[ANIME] gagal ambil detail AnimeKita:', err.message);
     }
 
-    const meta = [
-      valueLine('📺 Tipe', item.type),
-      valueLine('🎞️ Episode', item.episodes ? String(item.episodes) : ''),
-      valueLine('📅 Tahun', item.year ? String(item.year) : ''),
-      valueLine('📡 Status', item.status),
-      valueLine('⭐ Skor', item.score ? `${item.score}/100` : ''),
-    ].filter(Boolean);
+    return item;
+  }
 
-    const genres = Array.isArray(item.genres) && item.genres.length
-      ? `🏷️ Genre: ${item.genres.slice(0, 6).join(', ')}`
-      : '';
+  _caption(item, description) {
+    const options = {
+      title: item.title,
+      studio: item.studio,
+      genres: item.genres,
+      releaseDate: item.releaseDate,
+      synopsis: description,
+    };
 
-    const tail = [];
-    if (item.extra) tail.push(item.extra);
-    if (item.url) tail.push(`🔗 ${item.url}`);
-    if (item.sourceLabel) tail.push(`📚 Sumber: ${item.sourceLabel}`);
-    tail.push('', '*NimaCoRe - Latest Info*');
-
-    let desc = String(description || '').trim();
-    const build = (d) =>
-      [...head, '', ...(meta.length ? [meta.join(' • ')] : []), genres, '', d]
-        .filter((line) => line !== undefined && line !== null)
-        .join('\n')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-
-    let caption = `${build(desc)}\n\n${tail.join('\n')}`;
+    let caption = buildAnimeInfo(options);
+    const desc = String(description || '').trim();
     if (caption.length > CAPTION_LIMIT && desc) {
       const excess = caption.length - CAPTION_LIMIT;
-      desc = desc.slice(0, Math.max(120, desc.length - excess - 4)).trimEnd() + '…';
-      caption = `${build(desc)}\n\n${tail.join('\n')}`;
+      options.synopsis = desc.slice(0, Math.max(120, desc.length - excess - 1)).trimEnd() + '…';
+      caption = buildAnimeInfo(options);
     }
     return caption.slice(0, CAPTION_LIMIT);
   }
@@ -348,6 +350,7 @@ class AnimeChannelPoster {
     const pool = eligible.slice(0, 8);
     const item = randomPick(pool) || pool[0];
 
+    await this._enrich(item);
     const description = await this._translate(item.description);
     const caption = this._caption(item, description);
 

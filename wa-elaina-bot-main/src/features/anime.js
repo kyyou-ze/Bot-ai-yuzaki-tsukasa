@@ -3,6 +3,7 @@
 const path = require('path');
 const api = require('../animekita');
 const wa = require('../wa');
+const { buildAnimeInfo } = require('../animeinfo');
 const { fetchWithTimeout } = require('../util');
 
 const MAX_SIMPLE_ITEMS = 10;
@@ -123,36 +124,32 @@ function formatSearchResults(query, results) {
 
 function formatDetail(d) {
   if (!d) return 'Data detail kosong.';
-  const lines = [`*${fallback(d.judul, 'Tanpa judul')}*`];
-  if (d.type || d.status) lines.push(`${fallback(d.type, '?')} | ${fallback(d.status, '?')}`);
-  if (d.rating) lines.push(`Rating: ${d.rating}`);
-  if (d.published) lines.push(`Rilis: ${d.published}`);
-  if (d.author) lines.push(`Studio/Author: ${d.author}`);
-  if (Array.isArray(d.genre) && d.genre.length) lines.push(`Genre: ${d.genre.join(', ')}`);
-  if (d.cover) lines.push(`Cover: ${d.cover}`);
-  if (String(d.sinopsis || '').trim()) {
-    lines.push('');
-    lines.push('Sinopsis:');
-    lines.push(String(d.sinopsis).trim());
-  }
-  lines.push('');
-  lines.push('Chapter terbaru:');
+
+  const extra = ['Chapter terbaru:'];
   const chapters = Array.isArray(d.chapter) ? d.chapter : [];
   if (chapters.length === 0) {
-    lines.push('- Belum ada data.');
+    extra.push('- Belum ada data.');
   } else {
     const limit = Math.min(chapters.length, MAX_CHAPTER_ITEMS);
     for (let i = 0; i < limit; i++) {
       const ch = chapters[i] || {};
-      lines.push(`- ${fallback(ch.ch, 'ep')} (${fallback(ch.date, '?')}) -> ${fallback(ch.url)}`);
+      extra.push(`- ${fallback(ch.ch, 'ep')} (${fallback(ch.date, '?')}) -> ${fallback(ch.url)}`);
     }
     if (chapters.length > limit) {
-      lines.push(`... ${chapters.length - limit} episode lainnya di API.`);
+      extra.push(`... ${chapters.length - limit} episode lainnya di API.`);
     }
   }
-  lines.push('');
-  lines.push('Ambil stream: anime episode <slug> [reso]');
-  return lines.join('\n');
+  extra.push('');
+  extra.push('Ambil stream: anime episode <slug> [reso]');
+
+  return buildAnimeInfo({
+    title: d.judul,
+    studio: d.author,
+    genres: d.genre,
+    releaseDate: d.published,
+    synopsis: d.sinopsis,
+    extra: extra.join('\n'),
+  });
 }
 
 function formatEpisode(slug, ep, note) {

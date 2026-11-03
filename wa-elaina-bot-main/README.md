@@ -75,8 +75,9 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `ANIME_CHANNEL_SOURCES` | `anilist,kitsu,animekita,jikan` | Sumber info anime |
 | `ANIME_CHANNEL_PER_SOURCE` | `8` | Kandidat per sumber |
 | `ANIME_CHANNEL_IMAGES` | `true` | Kirim cover (fallback teks jika gagal) |
-| `ANIME_CHANNEL_TRANSLATE` | `false` | Terjemahkan sinopsis ke Indonesia via Gemini |
+| `ANIME_CHANNEL_TRANSLATE` | `true` | Terjemahkan sinopsis ke Indonesia via Gemini |
 | `ANIME_CHANNEL_START_DELAY_SEC` | `60` | Jeda post pertama setelah terhubung |
+| `INFO_FOOTER` | `> yuzaki tsukasa by ren` | Footer output info channel & `!info` |
 | `BA_LINKS_LOCAL` / `BA_LINKS_URL` | - | Sumber gambar Blue Archive |
 | `PAP_LINKS_PATH` | - | Sumber gambar Pap |
 | `PERATURAN_APIKEY` | - | Diperlukan untuk fitur peraturan/moderasi |
@@ -145,11 +146,16 @@ Fitur ini berjalan otomatis setelah bot terhubung (tidak perlu trigger) dan meng
 - Batas harian `ANIME_CHANNEL_MAX_PER_DAY` mencegah spam. Post pertama menunggu `ANIME_CHANNEL_START_DELAY_SEC`.
 - Caption memakai Bahasa Indonesia dan menyertakan branding channel.
 
+**Format info:**
+
+Template info ada di `src/animeinfo.js` dan dipakai oleh auto-post channel maupun perintah `!info`. Formatnya fleksibel untuk anime, film, drama Jepang/Korea, budaya Jejepangan, fakta unik, info absurd, dan topik lain. Output selalu Bahasa Indonesia dengan footer `> yuzaki tsukasa by ren`.
+
 **Perintah manual (owner / admin grup):**
 
 ```text
 !animechannel status   # status scheduler, channel, jumlah post, error terakhir
 !animechannel test     # paksa satu post sekarang (melewati batas harian)
+!info <topik>          # info apa saja (anime, film, Jepang, fakta absurd, dll)
 ```
 
 ## HTTP API
