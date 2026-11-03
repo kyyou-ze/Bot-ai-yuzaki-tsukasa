@@ -47,30 +47,29 @@ async function send(key, body, timeoutMs = 60000, model = TEXT_MODEL) {
       Array.isArray(parsed.candidates[0].content.parts) &&
       parsed.candidates[0].content.parts[0]
         ? String(parsed.candidates[0].content.parts[0].text || '').trim()
-        : raw.trim();
-    return { text, status: res.status };
+        : '';
+    // Jangan pernah mengembalikan body error mentah sebagai jawaban chat.
+    return { text: res.status === 200 ? text : '', status: res.status, raw: raw.trim() };
   } catch (err) {
-    return { text: `LLM error: ${err.message}`, status: 0 };
+    return { text: '', status: 0, raw: err.message };
   } finally {
     clearTimeout(timer);
   }
 }
 
 async function askText(system, user) {
-  let last = '';
   const attempts = Math.max(1, keys.length);
   for (let i = 0; i < attempts; i++) {
     const key = nextKey();
-    if (!key) return 'LLM key belum diatur';
+    if (!key) return '';
     const body = {
       system_instruction: { role: 'system', parts: [{ text: system }] },
       contents: [{ role: 'user', parts: [{ text: user }] }],
     };
     const { text, status } = await send(key, body);
     if (status === 200 && text) return text;
-    last = text;
   }
-  return String(last || '').trim();
+  return '';
 }
 
 async function askTextAsTsukasa(user) {
@@ -82,11 +81,10 @@ async function askTextAsTsukasa(user) {
 async function askVision(system, prompt, imageBuffer, mime) {
   const mt = mime || 'image/jpeg';
   const b64 = imageBuffer.toString('base64');
-  let last = '';
   const attempts = Math.max(1, keys.length);
   for (let i = 0; i < attempts; i++) {
     const key = nextKey();
-    if (!key) return 'LLM key belum diatur';
+    if (!key) break;
     const body = {
       system_instruction: { role: 'system', parts: [{ text: system }] },
       contents: [
@@ -98,19 +96,17 @@ async function askVision(system, prompt, imageBuffer, mime) {
     };
     const { text, status } = await send(key, body);
     if (status === 200 && text) return text;
-    last = text;
   }
-  return String(last || '').trim();
+  return 'Maaf, aku gagal menganalisis gambar ini. Coba lagi ya 🙏';
 }
 
 async function transcribe(audioBuffer, mime) {
   const mt = mime || 'audio/ogg';
   const b64 = audioBuffer.toString('base64');
-  let last = '';
   const attempts = Math.max(1, keys.length);
   for (let i = 0; i < attempts; i++) {
     const key = nextKey();
-    if (!key) return '';
+    if (!key) break;
     const body = {
       system_instruction: {
         role: 'system',
@@ -125,9 +121,8 @@ async function transcribe(audioBuffer, mime) {
     };
     const { text, status } = await send(key, body);
     if (status === 200 && text) return text;
-    last = text;
   }
-  return String(last || '').trim();
+  return '';
 }
 
 // ---------------- Persona ----------------
@@ -164,7 +159,10 @@ async function askAsPersona(cfg, persona, pro, userText, senderJID) {
     sys += `\n\nINFO TAMBAHAN: Nama pengguna yang sedang berbicara denganmu adalah ${userName}. Gunakan nama ini secara natural dalam percakapan, terutama saat menyapa atau merespons.`;
   }
 
-  return askText(sys, userText);
+  return (
+    (await askText(sys, userText)) ||
+    'Maaf, aku sedang tidak bisa menjawab sekarang. Coba lagi sebentar ya 🙏'
+  );
 }
 
 // ---------------- Moderation (fitur peraturan) ----------------
@@ -216,8 +214,8 @@ async function moderate({ mode, rules, botName, message, userId }) {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
   };
 
-  const { text, status } = await send(apiKey, body, 45000, MODERATION_MODEL);
-  if (status >= 300) throw new Error(text);
+  const { text, status, raw } = await send(apiKey, body, 45000, MODERATION_MODEL);
+  if (status !== 200 || !text) throw new Error(raw || 'Moderation LLM tidak merespons');
   const parsed = JSON.parse(normalizeJson(text));
   return {
     violation: Boolean(parsed.violation),

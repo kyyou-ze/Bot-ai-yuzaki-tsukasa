@@ -3,6 +3,7 @@
 const path = require('path');
 const api = require('../animekita');
 const wa = require('../wa');
+const { fetchWithTimeout } = require('../util');
 
 const MAX_SIMPLE_ITEMS = 10;
 const MAX_SCHEDULE_ITEMS = 8;
@@ -411,15 +412,23 @@ class AnimeFeature {
   }
 
   async deliverPixeldrain(chat, streams) {
+    const MAX_BYTES = 200 * 1024 * 1024;
     for (const st of streams) {
       if (!isPixeldrainLink(st && st.link)) continue;
       try {
-        const res = await fetch(st.link, {
-          headers: { 'User-Agent': 'wa-tsukasa-bot/1.0' },
-          redirect: 'follow',
-        });
+        const res = await fetchWithTimeout(
+          st.link,
+          {
+            headers: { 'User-Agent': 'wa-tsukasa-bot/1.0' },
+            redirect: 'follow',
+          },
+          120000
+        );
         if (res.status >= 300) throw new Error(`http ${res.status} ${res.statusText}`);
+        const len = Number(res.headers.get('content-length') || 0);
+        if (len > MAX_BYTES) throw new Error(`file terlalu besar (${len} byte)`);
         const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > MAX_BYTES) throw new Error(`file terlalu besar (${buf.length} byte)`);
         const filename = filenameFor(st.link, res.headers.get('content-disposition'));
         const mime = (res.headers.get('content-type') || '').split(';')[0].trim() ||
           'application/octet-stream';

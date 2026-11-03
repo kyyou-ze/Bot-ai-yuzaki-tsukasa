@@ -2,7 +2,7 @@
 
 const wa = require('../wa');
 const llm = require('../llm');
-const { trimWords } = require('../util');
+const { fetchWithTimeout, trimWords } = require('../util');
 
 // ---------------- Vision ----------------
 class VisionFeature {
@@ -111,6 +111,12 @@ class VnFeature {
       'Perankan "Tsukasa", asisten AI cerdas, hangat, dan ramah. Bahasa Indonesia, ringkas, sopan.',
       clean
     );
+    if (!reply || !reply.trim()) {
+      await wa.sendText(chat, 'Maaf, aku belum bisa menjawab voice note itu. Coba lagi ya 🙏', m).catch(
+        () => {}
+      );
+      return true;
+    }
     const out = this.owner.decorate(isOwner, reply);
     await wa.sendText(chat, out.text, m, out.mentions).catch(() => {});
     return true;
@@ -157,6 +163,13 @@ class TtsFeature {
     return s;
   }
 
+  outputMime() {
+    const fmt = String(this.outFmt || '').toLowerCase();
+    if (fmt.startsWith('ogg') || fmt.startsWith('opus')) return 'audio/ogg';
+    if (fmt.startsWith('pcm')) return 'audio/wav';
+    return 'audio/mpeg';
+  }
+
   async handle(sock, m, content, text) {
     if (!this.reTrigger.test(text)) return false;
     const after = String(text).replace(this.reTrigger, '').trim();
@@ -196,24 +209,28 @@ class TtsFeature {
       const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(
         this.voice
       )}?output_format=${encodeURIComponent(this.outFmt)}&optimize_streaming_latency=${this.latency}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'audio/mpeg',
-          'xi-api-key': this.key,
-        },
-        body: JSON.stringify({
-          text: script,
-          model_id: this.model,
-          voice_settings: {
-            stability: this.stability,
-            similarity_boost: this.similarity,
-            style: this.style,
-            use_speaker_boost: this.speakerBoost,
+      const res = await fetchWithTimeout(
+        url,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: this.outputMime(),
+            'xi-api-key': this.key,
           },
-        }),
-      });
+          body: JSON.stringify({
+            text: script,
+            model_id: this.model,
+            voice_settings: {
+              stability: this.stability,
+              similarity_boost: this.similarity,
+              style: this.style,
+              use_speaker_boost: this.speakerBoost,
+            },
+          }),
+        },
+        60000
+      );
       if (!res.ok) {
         const err = await res.text().catch(() => '');
         console.error('[TTS] elevenlabs error:', res.status, err.slice(0, 150));
@@ -223,7 +240,7 @@ class TtsFeature {
         return true;
       }
       const buf = Buffer.from(await res.arrayBuffer());
-      await wa.sendAudio(chat, buf, 'audio/mpeg', true, m);
+      await wa.sendAudio(chat, buf, this.outputMime(), true, m);
     } catch (err) {
       console.error('[TTS] gagal:', err.message);
       await wa.sendText(chat, 'TTS gagal. Coba lagi ya.', m).catch(() => {});
@@ -266,14 +283,18 @@ class ImgGenFeature {
           key
         )}`;
         try {
-          const res = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: `Generate a high-quality image: ${prompt}` }] }],
-              generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
-            }),
-          });
+          const res = await fetchWithTimeout(
+            url,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: `Generate a high-quality image: ${prompt}` }] }],
+                generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+              }),
+            },
+            90000
+          );
           if (!res.ok) {
             const err = await res.text().catch(() => '');
             console.error('[IMGGEN]', model, res.status, err.slice(0, 80));
@@ -284,8 +305,9 @@ class ImgGenFeature {
           for (const c of candidates) {
             const parts = c.content && c.content.parts ? c.content.parts : [];
             for (const p of parts) {
-              if (p.inlineData && p.inlineData.data) {
-                return Buffer.from(p.inlineData.data, 'base64');
+              const inline = p.inlineData || p.inline_data;
+              if (inline && inline.data) {
+                return Buffer.from(inline.data, 'base64');
               }
             }
           }
@@ -397,14 +419,18 @@ class HijabinFeature {
     if (this.apiUrl) {
       try {
         const b64 = blob.toString('base64');
-        const res = await fetch(this.apiUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
+        const res = await fetchWithTimeout(
+          this.apiUrl,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
+            },
+            body: JSON.stringify({ image: `data:${mt};base64,${b64}` }),
           },
-          body: JSON.stringify({ image: `data:${mt};base64,${b64}` }),
-        });
+          60000
+        );
         if (res.ok) {
           const ct = (res.headers.get('content-type') || '').split(';')[0];
           if (ct.startsWith('image/')) return Buffer.from(await res.arrayBuffer());
@@ -426,11 +452,11 @@ class HijabinFeature {
                 /* lanjut ke URL */
               }
             }
-            const r2 = await fetch(raw).catch(() => null);
+            const r2 = await fetchWithTimeout(raw, {}, 60000).catch(() => null);
             if (r2 && r2.ok) return Buffer.from(await r2.arrayBuffer());
           }
           if (typeof json.url === 'string' && json.url) {
-            const r2 = await fetch(json.url).catch(() => null);
+            const r2 = await fetchWithTimeout(json.url, {}, 60000).catch(() => null);
             if (r2 && r2.ok) return Buffer.from(await r2.arrayBuffer());
           }
         }
@@ -455,29 +481,34 @@ class HijabinFeature {
             const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
               key
             )}`;
-            const res = await fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [
-                  {
-                    parts: [
-                      { text: prompt },
-                      { inline_data: { mime_type: mt, data: b64 } },
-                    ],
-                  },
-                ],
-                generationConfig: { response_mime_type: 'image/png', temperature: 0.8 },
-              }),
-            });
+            const res = await fetchWithTimeout(
+              url,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents: [
+                    {
+                      parts: [
+                        { text: prompt },
+                        { inlineData: { mimeType: mt, data: b64 } },
+                      ],
+                    },
+                  ],
+                  generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+                }),
+              },
+              90000
+            );
             if (!res.ok) continue;
             const json = await res.json();
             const candidates = json.candidates || [];
             for (const c of candidates) {
               const parts = c.content && c.content.parts ? c.content.parts : [];
               for (const p of parts) {
-                if (p.inline_data && p.inline_data.data) {
-                  return Buffer.from(p.inline_data.data, 'base64');
+                const inline = p.inlineData || p.inline_data;
+                if (inline && inline.data) {
+                  return Buffer.from(inline.data, 'base64');
                 }
               }
             }

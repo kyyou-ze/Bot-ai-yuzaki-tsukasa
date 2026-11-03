@@ -40,14 +40,20 @@ function contentOf(messageOrMessageLike) {
 
 function contentTypeOf(content) {
   if (!content) return null;
-  const getContentType = getBaileysFn('getContentType');
-  return getContentType(content);
+  try {
+    const getContentType = getBaileysFn('getContentType');
+    if (typeof getContentType === 'function') return getContentType(content);
+  } catch {
+    /* fallback di bawah */
+  }
+  const keys = Object.keys(content).filter((k) => k !== 'messageContextInfo');
+  return keys[0] || null;
 }
 
 /** ContextInfo dari content apa pun (teks/gambar/video/dokumen). */
 function contextInfoOf(content) {
   if (!content) return null;
-  const type = getContentType(content);
+  const type = contentTypeOf(content);
   if (!type) return null;
   const node = content[type];
   return (node && node.contextInfo) || null;

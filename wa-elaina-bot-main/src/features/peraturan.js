@@ -48,8 +48,13 @@ class PeraturanFeature {
       const target = bareJid(sender);
       const targetUser = jidUser(target);
       for (const p of participants) {
-        const id = bareJid(p.id);
-        if (id === target || jidUser(id) === targetUser) {
+        // Grup modern bisa menyimpan participant sebagai LID, sedangkan
+        // sender bisa berupa nomor telepon (atau sebaliknya).
+        const ids = [p.id, p.lid, p.phoneNumber, p.pn]
+          .filter(Boolean)
+          .map(bareJid);
+        const same = ids.some((id) => id === target || jidUser(id) === targetUser);
+        if (same) {
           return p.admin === 'admin' || p.admin === 'superadmin';
         }
       }

@@ -27,17 +27,25 @@ function readBody(req, limit = 64 * 1024) {
   return new Promise((resolve) => {
     let data = '';
     let size = 0;
+    let done = false;
+    let overflow = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      resolve(value);
+    };
     req.on('data', (chunk) => {
+      if (overflow) return;
       size += chunk.length;
       if (size > limit) {
-        req.destroy();
-        resolve('');
+        overflow = true;
+        data = '';
         return;
       }
       data += chunk.toString('utf8');
     });
-    req.on('end', () => resolve(data));
-    req.on('error', () => resolve(''));
+    req.on('end', () => finish(overflow ? '' : data));
+    req.on('error', () => finish(''));
   });
 }
 
@@ -52,15 +60,24 @@ class HttpApi {
 
   allow(key) {
     const now = Date.now();
-    const b = this.buckets.get(key);
-    if (!b) {
-      this.buckets.set(key, { tokens: this.rateCap, lastRefill: now });
-      return true;
+    // Buang bucket lama agar Map tidak tumbuh tanpa batas saat banyak IP.
+    if (this.buckets.size > 1000) {
+      for (const [k, v] of this.buckets) {
+        if (now - v.lastRefill > 10 * 60000 && v.tokens >= this.rateCap) {
+          this.buckets.delete(k);
+        }
+      }
     }
-    const elapsedMin = (now - b.lastRefill) / 60000;
-    if (elapsedMin > 0) {
-      b.tokens = Math.min(this.rateCap, b.tokens + elapsedMin * this.rateCap);
-      b.lastRefill = now;
+    let b = this.buckets.get(key);
+    if (!b) {
+      b = { tokens: this.rateCap, lastRefill: now };
+      this.buckets.set(key, b);
+    } else {
+      const elapsedMin = (now - b.lastRefill) / 60000;
+      if (elapsedMin > 0) {
+        b.tokens = Math.min(this.rateCap, b.tokens + elapsedMin * this.rateCap);
+        b.lastRefill = now;
+      }
     }
     if (b.tokens < 1) return false;
     b.tokens -= 1;

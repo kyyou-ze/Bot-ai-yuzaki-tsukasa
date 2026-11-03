@@ -61,7 +61,7 @@ class Router {
     this.rvo = new RvoHandler();
     this.sticker = new StickerFeature();
     this.brat = new BratFeature(this.reTrig);
-    this.ba = new BaImageFeature(cfg);
+    this.ba = new BaImageFeature(cfg, this.reTrig);
     this.pap = new PapFeature(cfg);
     this.vision = new VisionFeature(this.reTrig, this.owner);
     this.vn = new VnFeature(this.reTrig, this.owner);
@@ -94,7 +94,16 @@ class Router {
     let txt = extractText(m, content);
     const origTxt = txt;
     const sender = m.key.participant || chat;
-    const isOwner = this.owner.isOwner(sender, chat);
+    // Baileys modern memakai LID sebagai participant. Nomor telepon asli ada di
+    // participantPn/participantAlt/remoteJidAlt, jadi owner tetap dikenali
+    // walaupun OWNER_NUMBER diisi nomor telepon biasa.
+    const ownerCandidates = [
+      sender,
+      m.key.participantPn,
+      m.key.participantAlt,
+      m.key.remoteJidAlt,
+    ].filter(Boolean);
+    const isOwner = ownerCandidates.some((jid) => this.owner.isOwner(jid, chat));
     this.owner.debugLog(sender, chat, isOwner);
 
     const quoted = wa.quotedContent(wa.contextInfoOf(content));
@@ -235,14 +244,18 @@ class Router {
       }
     }
 
-    // Moderation peraturan (berjalan untuk semua teks di grup)
-    this.peraturan.handleMessage(this.sock, m, origTxt).catch(() => {});
+    // Moderation peraturan (berjalan untuk semua teks di grup).
+    // Perintah bang dan pesan owner tidak perlu dimoderasi.
+    if (!bang && !isOwner) {
+      this.peraturan.handleMessage(this.sock, m, origTxt).catch(() => {});
+    }
 
     const isCmd = Boolean(bang);
     const cmd = bang ? bang.cmd : '';
     const isGroup = isGroupJid(chat);
     const hasTrig = this.reTrig.test(origTxt);
     const isTagAllCmd = isCmd && cmd === 'tagall';
+    const isRvoCmd = isCmd && cmd === 'rvo';
 
     const hasQuoted = q.img || q.aud || q.text !== '';
     if (hasQuoted && !hasTrig && !isCmd) return;
@@ -264,7 +277,7 @@ class Router {
     }
 
     // RVO & tagall
-    if (!isGroup || hasTrig || isTagAllCmd) {
+    if (!isGroup || hasTrig || isTagAllCmd || isRvoCmd) {
       if (await this.rvo.handle(this.sock, m, content)) return;
       if (await this.tagall.handle(this.sock, m, content)) return;
     }
@@ -281,7 +294,9 @@ class Router {
       console.error('[TIKTOK] detect error:', err.message);
     }
 
-    const allowNonCmd = !isGroup || hasTrig;
+    // Perintah bang (!ba, !pap, !s, !stiker, dll) juga harus jalan di grup
+    // walaupun tidak ada trigger.
+    const allowNonCmd = !isGroup || hasTrig || isCmd;
     if (allowNonCmd) {
       if (await this.pap.handle(chat, m, content, origTxt)) return;
       if (await this.ba.handle(chat, m, content, origTxt)) return;

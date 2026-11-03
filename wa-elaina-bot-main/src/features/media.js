@@ -179,7 +179,8 @@ function watermarkConfig() {
 // ---------------- Sticker ----------------
 class StickerFeature {
   constructor() {
-    this.reCmd = /\b(!s|!sgif|!stiker|!sticker|stiker|sticker)\b/i;
+    // Catatan: pola "!s" tidak bisa diawali \b karena "!" bukan karakter word.
+    this.reCmd = /(?:^|\s)!\s*(?:s|sgif|stiker|sticker)\b|\b(?:stiker|sticker)\b/i;
     this.reNat = /\b(stiker|sticker)\b/i;
     this.reTsukasa = /\btsukasa\b/i;
   }

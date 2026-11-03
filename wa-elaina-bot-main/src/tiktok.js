@@ -1,6 +1,6 @@
 'use strict';
 
-const { downloadBytes, headInfo } = require('./util');
+const { downloadBytes, fetchWithTimeout, headInfo } = require('./util');
 
 const TIKWM_API = 'https://www.tikwm.com/api/';
 
@@ -17,21 +17,29 @@ async function detectTikTokUrls(text) {
 
 async function expandUrl(url) {
   try {
-    const res = await fetch(url, {
-      method: 'HEAD',
-      redirect: 'follow',
-      headers: { 'User-Agent': 'wa-tsukasa-bot/2.0' },
-    });
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: 'HEAD',
+        redirect: 'follow',
+        headers: { 'User-Agent': 'wa-tsukasa-bot/2.0' },
+      },
+      20000
+    );
     if (res.url) return res.url;
   } catch {
     /* ignore */
   }
   try {
-    const res = await fetch(url, {
-      method: 'GET',
-      redirect: 'follow',
-      headers: { 'User-Agent': 'wa-tsukasa-bot/2.0' },
-    });
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: 'GET',
+        redirect: 'follow',
+        headers: { 'User-Agent': 'wa-tsukasa-bot/2.0' },
+      },
+      20000
+    );
     if (res.url) return res.url;
   } catch {
     /* ignore */
@@ -41,7 +49,11 @@ async function expandUrl(url) {
 
 async function getFromTikwm(link) {
   const api = `${TIKWM_API}?url=${encodeURIComponent(link)}`;
-  const res = await fetch(api, { headers: { Accept: 'application/json', 'User-Agent': 'wa-tsukasa-bot/2.0' } });
+  const res = await fetchWithTimeout(
+    api,
+    { headers: { Accept: 'application/json', 'User-Agent': 'wa-tsukasa-bot/2.0' } },
+    30000
+  );
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`tikwm HTTP ${res.status}: ${body.slice(0, 200)}`);

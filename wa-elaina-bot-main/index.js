@@ -46,9 +46,23 @@ async function main() {
   console.log(`[BOOT] HTTP: ${cfg.host || '0.0.0.0'}:${cfg.port}`);
 
   let reconnectAttempts = 0;
+  let reconnectTimer = null;
+  let currentSock = null;
   let shuttingDown = false;
 
   async function startSocket() {
+    // Bersihkan socket lama agar listener-nya tidak ikut memicu reconnect
+    // ganda saat koneksi baru sudah aktif.
+    if (currentSock) {
+      try {
+        currentSock.ev.removeAllListeners();
+        currentSock.end(undefined);
+      } catch {
+        /* ignore */
+      }
+      currentSock = null;
+    }
+
     const { state, saveCreds } = await useMultiFileAuthState(cfg.sessionDir);
     let pairingRequested = false;
 
@@ -72,6 +86,7 @@ async function main() {
     });
 
     wa.setSock(sock);
+    currentSock = sock;
     const router = new Router(cfg, sock, isReady, store, animeChannel);
 
     sock.ev.on('creds.update', saveCreds);
@@ -104,6 +119,10 @@ async function main() {
       if (connection === 'open') {
         waReady = true;
         reconnectAttempts = 0;
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
         console.log('[WA] Terhubung. Bot siap menerima pesan.');
         console.log('[READY] Tsukasa siap menerima pesan.');
         animeChannel.start();
@@ -134,7 +153,9 @@ async function main() {
         reconnectAttempts += 1;
         const delay = Math.min(30000, 2000 * reconnectAttempts);
         console.warn(`[WA] Terputus (code=${statusCode || '?'}). Reconnect dalam ${delay}ms...`);
-        setTimeout(() => {
+        if (reconnectTimer) return;
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
           startSocket().catch((err) => {
             console.error('[WA] reconnect gagal:', err.message);
             setTimeout(() => startSocket().catch(() => {}), 5000);
@@ -145,7 +166,9 @@ async function main() {
 
     sock.ev.on('messages.upsert', async (payload) => {
       const { messages, type } = payload || {};
-      if (type && type !== 'notify' && type !== 'append') return;
+      // Hanya proses pesan baru. Type "append" berasal dari sinkronisasi
+      // riwayat/offline dan bisa membuat bot membalas pesan lama.
+      if (type && type !== 'notify') return;
       if (!Array.isArray(messages)) return;
 
       for (const msg of messages) {

@@ -79,11 +79,11 @@ function safeReadJson(file, def) {
 async function fetchWithTimeout(url, options = {}, timeoutMs = 60000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+  // Timer sengaja tidak di-clear: signal harus tetap hidup selama body dibaca.
+  // Tanpa ini, server yang mengirim header lalu berhenti bisa menggantung
+  // selamanya karena timeout sudah dilepas tepat setelah fetch() resolve.
+  if (typeof timer.unref === 'function') timer.unref();
+  return fetch(url, { ...options, signal: controller.signal });
 }
 
 async function downloadBytes(url, max = 0, timeoutMs = 90000) {

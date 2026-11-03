@@ -4,15 +4,24 @@ const fs = require('fs');
 const path = require('path');
 
 const wa = require('../wa');
-const { downloadBytes, publicPath, randomPick } = require('../util');
+const { downloadBytes, fetchWithTimeout, publicPath, randomPick } = require('../util');
 
 // ---------------- Blue Archive ----------------
 class BaImageFeature {
-  constructor(cfg) {
+  constructor(cfg, reTrigger) {
     this.index = {};
+    this.reTrigger = reTrigger || null;
     this.reBA = /^ba(?:\s+(?:random|img|gambar|foto))?\s*$/i;
     this.reNat = /\b(kirim|minta|tolong|please).*(blue\s*archive)|\bblue\s*archive\b/i;
     this.loadIndex(cfg.baLinksLocal, cfg.baLinksUrl);
+  }
+
+  normalizeText(text) {
+    let low = String(text || '').trim().toLowerCase();
+    if (this.reTrigger) low = low.replace(this.reTrigger, ' ');
+    // Buang tanda "!" di awal supaya "!ba" dan "tsukasa !ba" sama-sama dikenali.
+    low = low.replace(/^\s*!\s*/, '').replace(/\s+/g, ' ').trim();
+    return low;
   }
 
   loadIndex(local, remote) {
@@ -25,7 +34,7 @@ class BaImageFeature {
       }
     }
     if (remote) {
-      fetch(remote)
+      fetchWithTimeout(remote, {}, 30000)
         .then((r) => r.arrayBuffer())
         .then((b) => this.parse(Buffer.from(b)))
         .catch(() => {});
@@ -118,7 +127,7 @@ class BaImageFeature {
   }
 
   async handle(chat, m, content, text) {
-    const low = String(text || wa.extractText(content) || '').trim().toLowerCase();
+    const low = this.normalizeText(text || wa.extractText(content));
     if (this.reBA.test(low)) return this.sendRandom(chat, m);
     if (this.reNat.test(low) || low.includes('blue archive')) return this.sendRandom(chat, m);
     if (low.startsWith('ba:')) return this.sendByName(chat, m, low.slice(3));
