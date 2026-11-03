@@ -50,6 +50,7 @@ function load() {
     // Opsional: nomor WhatsApp (format internasional, mis. 628xxxx) untuk
     // pairing code. Sangat membantu di Pterodactyl yang consolenya sempit.
     pairingNumber: String(getenv('PAIRING_NUMBER', '')).replace(/\D+/g, ''),
+    ownerJid: getenv('OWNER_JID', getenv('PAIRING_NUMBER', '')),
     // Pterodactyl memberi port lewat SERVER_PORT. Utamakan itu supaya
     // aplikasi selalu memakai allocation yang diberikan panel.
     port: String(process.env.SERVER_PORT || getenv('PORT', '7860')),

@@ -10,6 +10,7 @@ const llm = require('./src/llm');
 const wa = require('./src/wa');
 const { Router } = require('./src/router');
 const { HttpApi } = require('./src/httpapi');
+const { Reminders } = require('./src/reminders');
 const { AnimeChannelPoster } = require('./src/features/animechannel');
 
 const logger = pino({ level: process.env.BAILEYS_LOG || 'warn' });
@@ -36,6 +37,7 @@ async function main() {
   let waReady = false;
   const isReady = () => waReady;
   const animeChannel = new AnimeChannelPoster(cfg, store, isReady);
+  const reminders = new Reminders(cfg);
 
   const api = new HttpApi(cfg, isReady);
   api.start();
@@ -126,6 +128,7 @@ async function main() {
         console.log('[WA] Terhubung. Bot siap menerima pesan.');
         console.log('[READY] Tsukasa siap menerima pesan.');
         animeChannel.start();
+        reminders.start();
       }
 
       if (connection === 'connecting') {
@@ -137,6 +140,7 @@ async function main() {
       if (connection === 'close') {
         waReady = false;
         animeChannel.stop();
+        reminders.stop();
         if (shuttingDown) return;
 
         const statusCode =
