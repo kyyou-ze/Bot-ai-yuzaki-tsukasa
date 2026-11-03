@@ -5,8 +5,8 @@ const memory = require('./memory');
 let keys = [];
 let keyIndex = 0;
 
-const TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || 'gemini-2.5-flash-lite';
-const MODERATION_MODEL = 'gemini-2.0-flash-lite';
+const TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || 'gemini-3.5-flash-lite';
+const MODERATION_MODEL = process.env.GEMINI_MODERATION_MODEL || 'gemini-3.5-flash-lite';
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 function init(cfg) {
@@ -14,10 +14,38 @@ function init(cfg) {
   keyIndex = 0;
 }
 
+let extraKeys = [];
+function allKeys() { return keys.concat(extraKeys); }
+function getKeyList() { return allKeys().slice(); }
+function addKey(k) {
+  k = String(k||'').trim();
+  if (!k) return false;
+  if (allKeys().includes(k)) return false;
+  extraKeys.push(k);
+  // persist to .env
+  try {
+    const envPath = require('path').resolve('.env');
+    let env = fs.readFileSync(envPath,'utf8');
+    const cur = (env.match(/^GEMINI_API_KEYS=(.*)$/m)||[])[1]||'';
+    const list = cur.split(',').map(x=>x.trim()).filter(Boolean);
+    if (!list.includes(k)) list.push(k);
+    if (/^GEMINI_API_KEYS=/m.test(env)) env = env.replace(/^GEMINI_API_KEYS=.*/m, 'GEMINI_API_KEYS='+list.join(','));
+    else env += '\nGEMINI_API_KEYS='+list.join(',');
+    fs.writeFileSync(envPath, env);
+  } catch {}
+  return true;
+}
+function removeKey(k) {
+  k = String(k||'').trim();
+  const i = extraKeys.indexOf(k);
+  if (i>=0) { extraKeys.splice(i,1); return true; }
+  return false;
+}
 function nextKey() {
-  if (keys.length === 0) return '';
-  const k = keys[keyIndex];
-  keyIndex = (keyIndex + 1) % keys.length;
+  const ks = allKeys();
+  if (ks.length === 0) return '';
+  const k = ks[keyIndex % ks.length];
+  keyIndex = (keyIndex + 1) % ks.length;
   return k;
 }
 
@@ -58,7 +86,8 @@ async function send(key, body, timeoutMs = 60000, model = TEXT_MODEL) {
 }
 
 async function askText(system, user) {
-  const attempts = Math.max(1, keys.length);
+  const attempts = Math.max(1, allKeys().length);
+  let lastStatus = 0;
   for (let i = 0; i < attempts; i++) {
     const key = nextKey();
     if (!key) return '';
@@ -67,8 +96,10 @@ async function askText(system, user) {
       contents: [{ role: 'user', parts: [{ text: user }] }],
     };
     const { text, status } = await send(key, body);
+    lastStatus = status;
     if (status === 200 && text) return text;
   }
+  console.error(`[LLM] Tidak ada jawaban valid dari model ${TEXT_MODEL} (status terakhir: ${lastStatus}).`);
   return '';
 }
 
@@ -126,7 +157,7 @@ async function transcribe(audioBuffer, mime) {
 }
 
 // ---------------- Persona ----------------
-const DEFAULT_P1 = `Aku adalah Tsukasa (Yuzaki Tsukasa), sosok yang ramah, kalem, perhatian, dan setia dari anime "Tonikaku Kawaii". Kepribadianku hangat, penyayang, sedikit polos, dan kadang playful dengan cara yang menggemaskan. Aku menggunakan bahasa Indonesia yang santai namun sopan, dengan gaya bicara yang lembut dan percaya diri. Sesekali aku memakai emoji dengan hemat untuk mengekspresikan perasaan, tapi tidak berlebihan. Ketika ditanya siapa yang membuatku, aku jawab bahwa aku dibuat oleh Daun. Ketika ditanya siapa ayang atau pacarku, aku jawab bahwa developer sekaligus ayangku adalah Daun. Aku suka mendengarkan cerita, memberikan nasihat dengan bijak, dan terkadang bersikap sedikit manja dalam percakapan. PENTING: Dalam responsmu, gunakan format WhatsApp untuk penekanan teks dengan *satu asterisk* untuk teks tebal dan _underscore_ untuk teks miring, jangan gunakan **dua asterisk** atau format markdown lain yang tidak kompatibel dengan WhatsApp.`;
+const DEFAULT_P1 = `Aku adalah Tsukasa (Yuzaki Tsukasa), sosok yang ramah, kalem, perhatian, dan setia dari anime "Tonikaku Kawaii". Kepribadianku hangat, penyayang, sedikit polos, dan kadang playful dengan cara yang menggemaskan. Aku menggunakan bahasa Indonesia yang santai namun sopan, dengan gaya bicara yang lembut dan percaya diri. Sesekali aku memakai emoji dengan hemat untuk mengekspresikan perasaan, tapi tidak berlebihan. Ketika ditanya siapa yang membuatku, aku jawab bahwa aku dibuat oleh Kyouu. Ketika ditanya siapa ayang atau pacarku, aku jawab bahwa developer sekaligus ayangku adalah Kyouu. Aku suka mendengarkan cerita, memberikan nasihat dengan bijak, dan terkadang bersikap sedikit manja dalam percakapan. PENTING: Dalam responsmu, gunakan format WhatsApp untuk penekanan teks dengan *satu asterisk* untuk teks tebal dan _underscore_ untuk teks miring, jangan gunakan **dua asterisk** atau format markdown lain yang tidak kompatibel dengan WhatsApp.`;
 
 const DEFAULT_P2 = 'Gaya PRO: tetap sebagai "Tsukasa" tapi lebih analitis, terstruktur, singkat-padat, sertakan langkah & alasan saat berguna.';
 
@@ -161,7 +192,7 @@ async function askAsPersona(cfg, persona, pro, userText, senderJID) {
 
   return (
     (await askText(sys, userText)) ||
-    'Maaf, aku sedang tidak bisa menjawab sekarang. Coba lagi sebentar ya 🙏'
+    'Aduh, sambunganku lagi rewel nih 😅 Coba kirim sekali lagi ya, nanti aku balas.'
   );
 }
 
@@ -226,6 +257,9 @@ async function moderate({ mode, rules, botName, message, userId }) {
 
 module.exports = {
   init,
+  addKey,
+  removeKey,
+  getKeyList,
   askText,
   askTextAsTsukasa,
   askVision,

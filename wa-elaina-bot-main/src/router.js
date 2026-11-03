@@ -210,6 +210,36 @@ class Router {
         if (await this.peraturan.tryCommand(this.sock, m, bang.rest, isOwner)) return;
       }
 
+      if (bang.cmd === 'geminikey' || bang.cmd === 'gkey') {
+        if (!isOwner) {
+          await wa.sendText(chat, 'Perintah ini khusus owner.', m);
+          return;
+        }
+        const parts = String(bang.rest || '').trim().split(/\s+/).filter(Boolean);
+        const sub = (parts[0] || 'list').toLowerCase();
+        if (sub === 'list') {
+          const ks = llm.getKeyList();
+          await wa.sendText(chat, 'Gemini keys: ' + ks.length + '\n' + ks.map((k,i)=>(i+1)+'. '+k.slice(0,8)+'...').join('\n'), m);
+          return;
+        }
+        if (sub === 'add') {
+          const k = parts[1];
+          if (!k) { await wa.sendText(chat, 'Gunakan: !geminikey add <key>', m); return; }
+          const ok = llm.addKey(k);
+          await wa.sendText(chat, ok ? 'Key ditambahkan.' : 'Key sudah ada/invalid.', m);
+          return;
+        }
+        if (sub === 'remove' || sub === 'del') {
+          const k = parts[1];
+          if (!k) { await wa.sendText(chat, 'Gunakan: !geminikey remove <key>', m); return; }
+          const ok = llm.removeKey(k);
+          await wa.sendText(chat, ok ? 'Key dihapus (runtime).' : 'Key tidak ditemukan di runtime.', m);
+          return;
+        }
+        await wa.sendText(chat, 'Gunakan: !geminikey list|add <key>|remove <key>', m);
+        return;
+      }
+
       if (bang.cmd === 'tsukasa') {
         const parts = String(bang.rest || '').trim().split(/\s+/).filter(Boolean);
         if (parts.length >= 2 && parts[0].toLowerCase() === 'persona') {
