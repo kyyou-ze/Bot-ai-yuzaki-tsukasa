@@ -746,7 +746,7 @@ class Router {
 
   async handleTikTok(chat, m, urls) {
     try {
-      const data = await tiktok.getTikTokFromTikwm(urls);
+      const data = await tiktok.getTikTokFromTikwm(urls, this.cfg);
 
       if (Array.isArray(data.images) && data.images.length > 0) {
         const max = Math.min(data.images.length, Number(this.cfg.ttMaxSlides) || 10);

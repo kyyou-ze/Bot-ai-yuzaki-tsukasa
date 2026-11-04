@@ -1,8 +1,11 @@
 'use strict';
 
-const { downloadBytes, fetchWithTimeout, headInfo } = require('./util');
-
-const TIKWM_API = 'https://www.tikwm.com/api/';
+const { downloadBytes, headInfo } = require('./util');
+const {
+  desktopHeaders,
+  tiktokFetch,
+  fetchVideoInfoApi,
+} = require('./tiktokapi');
 
 async function detectTikTokUrls(text) {
   const t = String(text || '');
@@ -15,63 +18,43 @@ async function detectTikTokUrls(text) {
   return [...new Set(out)];
 }
 
-async function expandUrl(url) {
-  try {
-    const res = await fetchWithTimeout(
-      url,
-      {
-        method: 'HEAD',
-        redirect: 'follow',
-        headers: { 'User-Agent': 'wa-tsukasa-bot/2.0' },
-      },
-      20000
-    );
-    if (res.url) return res.url;
-  } catch {
-    /* ignore */
-  }
-  try {
-    const res = await fetchWithTimeout(
-      url,
-      {
-        method: 'GET',
-        redirect: 'follow',
-        headers: { 'User-Agent': 'wa-tsukasa-bot/2.0' },
-      },
-      20000
-    );
-    if (res.url) return res.url;
-  } catch {
-    /* ignore */
+async function expandUrl(url, cfg = {}) {
+  for (const method of ['HEAD', 'GET']) {
+    try {
+      const res = await tiktokFetch(
+        url,
+        {
+          method,
+          redirect: 'follow',
+          headers: desktopHeaders(cfg),
+        },
+        20000,
+        cfg
+      );
+      if (res.url) return res.url;
+    } catch {
+      /* ignore */
+    }
   }
   return url;
 }
 
-async function getFromTikwm(link) {
-  const api = `${TIKWM_API}?url=${encodeURIComponent(link)}`;
-  const res = await fetchWithTimeout(
-    api,
-    { headers: { Accept: 'application/json', 'User-Agent': 'wa-tsukasa-bot/2.0' } },
-    30000
-  );
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`tikwm HTTP ${res.status}: ${body.slice(0, 200)}`);
-  }
-  const json = await res.json();
-  const data = json && json.data ? json.data : {};
-  return {
-    video: String(data.play || '').trim(),
-    audio: String(data.music || '').trim(),
-    images: Array.isArray(data.images) ? data.images.filter(Boolean) : [],
-  };
-}
-
-async function getTikTokFromTikwm(urls) {
+/**
+ * Ambil media TikTok lewat rantai API anti-WAF:
+ * custom -> TikHub -> tiktok-api23 -> Ensig -> tiklydown -> TikWM.
+ * Nama fungsi dipertahankan supaya pemanggil lama tidak perlu diubah.
+ */
+async function getTikTokFromTikwm(urls, cfg = {}) {
   if (!urls || urls.length === 0) throw new Error('tidak ada url tiktok valid');
   const raw = urls[0];
-  const final = await expandUrl(raw);
-  return getFromTikwm(final);
+  const final = await expandUrl(raw, cfg);
+  return fetchVideoInfoApi(final, cfg);
 }
 
-module.exports = { detectTikTokUrls, getTikTokFromTikwm, downloadBytes, headInfo };
+module.exports = {
+  detectTikTokUrls,
+  getTikTokFromTikwm,
+  getTikTok: getTikTokFromTikwm,
+  downloadBytes,
+  headInfo,
+};

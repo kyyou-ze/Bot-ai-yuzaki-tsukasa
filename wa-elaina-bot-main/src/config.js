@@ -91,6 +91,30 @@ function load() {
     // {count}, mis. https://api.example.com/tiktok/user/{username}?count={count}
     tiktokApiUrl: getenv('TIKTOK_API_URL', ''),
     tiktokApiKey: getenv('TIKTOK_API_KEY', ''),
+    // Endpoint download video/foto sendiri (placeholder {url}).
+    tiktokDlApiUrl: getenv('TIKTOK_DL_API_URL', ''),
+    tiktokDlApiKey: getenv('TIKTOK_DL_API_KEY', ''),
+    // Provider API cadangan anti-WAF. Cukup isi salah satu key.
+    tikhubApiKey: getenv('TIKHUB_API_KEY', ''),
+    tiktokApi23Url: getenv(
+      'TIKTOK_API23_URL',
+      'https://tiktok-api23.p.rapidapi.com/api/user/posts?unique_id={username}&count={count}'
+    ),
+    tiktokApi23DlUrl: getenv(
+      'TIKTOK_API23_DL_URL',
+      'https://tiktok-api23.p.rapidapi.com/api/post?url={url}'
+    ),
+    tiktokApi23Key: getenv('TIKTOK_API23_KEY', getenv('RAPIDAPI_KEY', '')),
+    tiktokApi23Host: getenv('TIKTOK_API23_HOST', 'tiktok-api23.p.rapidapi.com'),
+    ensigApiUrl: getenv('ENSIG_API_URL', ''),
+    ensigDlUrl: getenv('ENSIG_DL_URL', ''),
+    ensigApiKey: getenv('ENSIG_API_KEY', ''),
+    // Rotasi proxy (pisahkan koma). Butuh paket undici.
+    tiktokProxyUrls: splitKeys(getenv('TIKTOK_PROXY_URLS', '')),
+    // Cookie browser TikTok opsional, mis. "tt_chain_token=...; msToken=...".
+    tiktokCookie: getenv('TIKTOK_COOKIE', ''),
+    // Setelah kena 403/WAF, berhenti dulu selama N menit (default 10).
+    tiktokWafCooldownMin: Math.max(1, intEnv(getenv('TIKTOK_WAF_COOLDOWN_MIN', '10'), 10)),
     // Daftar akun yang diubah via command (/addakun, /delakun).
     tiktokAccountsDb: getenv('TIKTOK_ACCOUNTS_DB', './database/accounts.json'),
     verifDb: path.resolve(getenv('VERIF_DB', 'database/verif.json')),

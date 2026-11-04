@@ -1,6 +1,6 @@
 # wa-tsukasa-bot (Tsukasa — WhatsApp Assistant) — Node.js / Baileys
 
-Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gambar (Vision), transkrip **voice note (VN)** → auto-reply, **downloader TikTok (TikWM)**, **Blue Archive**, **Pap**, **Brat/Sticker**, **TTS VN**, **Image Generation**, **Hijabin**, **AnimeKita**, **Peraturan/Moderation**, **Welcome**, **TagAll**, **RVO**, dan **HTTP API**. Dirancang agar mudah dijalankan di **Pterodactyl** (Node.js egg).
+Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gambar (Vision), transkrip **voice note (VN)** → auto-reply, **downloader TikTok (multi-API anti-WAF)**, **Blue Archive**, **Pap**, **Brat/Sticker**, **TTS VN**, **Image Generation**, **Hijabin**, **AnimeKita**, **Peraturan/Moderation**, **Welcome**, **TagAll**, **RVO**, dan **HTTP API**. Dirancang agar mudah dijalankan di **Pterodactyl** (Node.js egg).
 
 > Bot ini sebelumnya bernama **Elaina**. Semua default nama, trigger, persona, command, state, dan watermark sudah diganti menjadi **Tsukasa**.
 
@@ -15,7 +15,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Hijabin** (`tsukasa hijabin` / reply gambar) — Tambahkan hijab (JPEG/PNG).
 - **Brat & Sticker** — `tsukasa brat <teks>` untuk sticker gaya brat. Sticker biasa dari gambar/URL/video (animated memakai ffmpeg).
 - **Blue Archive & Pap** — `ba` / `!ba` atau kata kunci terkait, `!pap` / `pap`.
-- **TikTok (TikWM)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Batas ukuran bisa dikonfigurasi.
+- **TikTok (multi-API + fallback)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Sumber TikWM otomatis dialihkan ke TikHub/tiktok-api23/Ensig bila kena WAF. Batas ukuran bisa dikonfigurasi.
 - **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 3 menit, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Akun bisa dikelola dari WhatsApp (`/addakun`, `/delakun`, `/listakun`, `/detector`). Command verif: `/verif`, `/listverif`, `/unverif`, `/siapaup`, `/cekup`, `/history` (juga bisa `Tsukasa ...` atau `.verif`).
 - **AnimeKita** — `!anime ...` (new/movie/schedule/list/genre/search/detail/episode/roulette). Episode dengan link Pixeldrain bisa diunduh otomatis.
 - **Anime Roulette** — `!anime roulette [genre]` memilih anime acak dari AniList lengkap dengan sinopsis (diterjemahkan ke Indonesia bila Gemini tersedia), skor, episode, tahun, dan link.
@@ -81,6 +81,13 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `TIKTOK_NOTIFY_JID` | - | JID tujuan notifikasi tambahan |
 | `TIKTOK_API_URL` | - | Endpoint scraper sendiri dengan placeholder `{username}` & `{count}` (opsional) |
 | `TIKTOK_API_KEY` | - | API key untuk `TIKTOK_API_URL` (opsional) |
+| `TIKTOK_DL_API_URL` / `TIKTOK_DL_API_KEY` | - | Endpoint download media sendiri, placeholder `{url}` (opsional) |
+| `TIKHUB_API_KEY` | - | Key TikHub sebagai sumber cadangan anti-WAF (opsional) |
+| `TIKTOK_API23_KEY` / `TIKTOK_API23_HOST` | - | Key & host RapidAPI tiktok-api23 (opsional, fallback `RAPIDAPI_KEY`) |
+| `ENSIG_API_URL` / `ENSIG_DL_URL` / `ENSIG_API_KEY` | - | Endpoint gaya Ensig/EnsembleData, placeholder `{username}`, `{count}`, `{url}` (opsional) |
+| `TIKTOK_PROXY_URLS` | - | Daftar proxy dipisah koma untuk rotasi request (butuh paket `undici`) |
+| `TIKTOK_COOKIE` | - | Cookie browser TikTok opsional untuk mengurangi WAF |
+| `TIKTOK_WAF_COOLDOWN_MIN` | `10` | Lama berhenti setelah kena 403/WAF; log peringatan hanya sekali |
 | `VERIF_DB` / `HISTORY_UP_DB` / `UP_TODAY_DB` / `SEEN_VIDEOS_DB` | `./database/*.json` | Lokasi database JSON fitur verif & detector |
 | `TIKTOK_ACCOUNTS_DB` | `./database/accounts.json` | Daftar akun hasil `/addakun` & `/delakun` |
 | `ANIME_CHANNEL_ENABLED` | `true` | Aktifkan auto-post info anime ke channel |
@@ -186,7 +193,7 @@ Template info ada di `src/animeinfo.js` dan dipakai oleh auto-post channel maupu
 
 ## Detector TikTok & Verif ACC
 
-Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTOK_CHECK_MIN` menit. Untuk tiap video baru, bot mengecek:
+Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTOK_CHECK_MIN` menit. Akun dicek satu per satu dengan jeda acak 2-5 detik. Sumber data memakai rantai fallback anti-WAF: endpoint custom → TikHub → tiktok-api23 → Ensig → TikWM → scraping profil. Kalau semua sumber kena 403/WAF, bot berhenti selama `TIKTOK_WAF_COOLDOWN_MIN` menit dan hanya menulis satu log `[TIKTOK] WAF block, retry 10 menit`. Untuk tiap video baru, bot mengecek:
 
 - Caption mengandung hashtag `TIKTOK_HASHTAG` (default `#margaecn`, case-insensitive).
 - Nickname/display name akun mengandung `TIKTOK_CN_KEYWORD` (default `ECN`). Huruf Unicode seperti `𝙀𝘾𝙉`, `〆𝙀𝘾𝙉`, dan `ft 𝙀𝘾𝙉` otomatis dinormalisasi jadi `ECN` sebelum dicocokkan.

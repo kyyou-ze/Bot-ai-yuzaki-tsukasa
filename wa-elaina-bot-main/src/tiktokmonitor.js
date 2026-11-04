@@ -1,7 +1,13 @@
 'use strict';
 
 const wa = require('./wa');
-const { fetchWithTimeout } = require('./util');
+const { sleep } = require('./util');
+const {
+  desktopHeaders,
+  tiktokFetch,
+  isWafError,
+  fetchUserPostsApi,
+} = require('./tiktokapi');
 const {
   dayKey,
   normalizeAccount,
@@ -11,13 +17,10 @@ const {
   formatClock,
 } = require('./verifstore');
 
-const TIKWM_HOSTS = ['https://www.tikwm.com', 'https://tikwm.com'];
 const START_DELAY_MS = 15000;
-const REQUEST_COUNT = 12;
+const ACCOUNT_DELAY_MIN_MS = 2000;
+const ACCOUNT_DELAY_MAX_MS = 5000;
 const CAPTION_MAX = 180;
-const UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-  '(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
 function truncate(value, max) {
   const s = String(value || '').replace(/\s+/g, ' ').trim();
@@ -94,29 +97,6 @@ function normalizeList(raw, fallbackUnique) {
   return out;
 }
 
-function extractVideoArray(json) {
-  if (!json) return [];
-  if (Array.isArray(json)) return json;
-  const candidates = [
-    json.videos,
-    json.itemList,
-    json.item_list,
-    json.items,
-    json.aweme_list,
-    json.data,
-  ];
-  for (const c of candidates) {
-    if (Array.isArray(c)) return c;
-  }
-  const data = json.data;
-  if (data && typeof data === 'object' && !Array.isArray(data)) {
-    for (const key of ['videos', 'itemList', 'item_list', 'items', 'aweme_list']) {
-      if (Array.isArray(data[key])) return data[key];
-    }
-  }
-  return [];
-}
-
 function looksLikeVideo(o) {
   if (!o || typeof o !== 'object') return false;
   const id = o.id || o.video_id || o.aweme_id || o.item_id;
@@ -155,66 +135,26 @@ function parseProfileHtml(html) {
   }
 }
 
-async function fetchConfigured(cfg, unique) {
-  const template = String((cfg && cfg.tiktokApiUrl) || '').trim();
-  if (!template) return null;
-
-  const url = template
-    .replace(/\{username\}/g, encodeURIComponent(unique))
-    .replace(/\{count\}/g, String(REQUEST_COUNT));
-  const headers = { Accept: 'application/json', 'User-Agent': UA };
-  if (cfg && cfg.tiktokApiKey) {
-    headers['x-api-key'] = cfg.tiktokApiKey;
-    headers.Authorization = `Bearer ${cfg.tiktokApiKey}`;
-  }
-  const res = await fetchWithTimeout(url, { headers }, 30000);
-  if (!res.ok) throw new Error(`API custom HTTP ${res.status}`);
-  const json = await res.json().catch(() => null);
-  return normalizeList(extractVideoArray(json), unique);
-}
-
-async function fetchTikwm(unique) {
-  let lastError = null;
-  for (const host of TIKWM_HOSTS) {
-    const url = `${host}/api/user/posts?unique_id=${encodeURIComponent(
-      unique
-    )}&count=${REQUEST_COUNT}`;
-    try {
-      const res = await fetchWithTimeout(
-        url,
-        { headers: { Accept: 'application/json', 'User-Agent': UA } },
-        30000
-      );
-      if (!res.ok) throw new Error(`tikwm HTTP ${res.status}`);
-      const json = await res.json().catch(() => null);
-      if (!json) throw new Error('tikwm: respons bukan JSON');
-      if (json.code !== undefined && json.code !== 0) {
-        throw new Error(`tikwm: ${json.msg || json.message || 'error'}`);
-      }
-      return normalizeList(extractVideoArray(json), unique);
-    } catch (err) {
-      lastError = err;
-    }
-  }
-  throw lastError || new Error('tikwm gagal');
-}
-
-async function fetchProfileHtml(unique) {
+async function fetchProfileHtml(unique, cfg = {}) {
   const url = `https://www.tiktok.com/@${encodeURIComponent(unique)}?lang=en`;
-  const res = await fetchWithTimeout(
+  const res = await tiktokFetch(
     url,
     {
-      headers: {
-        'User-Agent': UA,
-        Accept: 'text/html,application/xhtml+xml',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
+      headers: desktopHeaders(cfg, {
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Upgrade-Insecure-Requests': '1',
+      }),
+      redirect: 'follow',
     },
-    30000
+    30000,
+    cfg
   );
   if (!res.ok) throw new Error(`profil TikTok HTTP ${res.status}`);
   const html = await res.text();
-  if (html.length < 5000 || /Just a moment|slardarClientWAF/i.test(html)) {
+  if (html.length < 5000 || /Just a moment|slardarClientWAF|cf-chl/i.test(html)) {
     throw new Error('profil TikTok diblokir WAF');
   }
   return normalizeList(parseProfileHtml(html), unique);
@@ -225,30 +165,29 @@ async function fetchUserVideos(account, cfg = {}) {
   if (!unique) return [];
 
   const errors = [];
+  let waf = false;
 
-  // 1) Endpoint scraper milik sendiri (paling stabil kalau diisi).
+  // 1) Rantai API: custom -> TikHub -> tiktok-api23 -> Ensig -> TikWM.
+  //    Provider yang tidak dikonfigurasi otomatis dilewati.
   try {
-    const custom = await fetchConfigured(cfg, unique);
-    if (custom !== null) return custom;
+    const { items } = await fetchUserPostsApi(unique, cfg);
+    return normalizeList(items, unique);
   } catch (err) {
+    waf = Boolean(err.waf);
     errors.push(err.message);
   }
 
-  // 2) TikWM (gratis, tapi kadang diblokir Cloudflare).
+  // 2) Scraping halaman profil TikTok sebagai upaya terakhir.
   try {
-    return await fetchTikwm(unique);
+    return await fetchProfileHtml(unique, cfg);
   } catch (err) {
+    if (isWafError(err)) waf = true;
     errors.push(err.message);
   }
 
-  // 3) Scraping halaman profil TikTok.
-  try {
-    return await fetchProfileHtml(unique);
-  } catch (err) {
-    errors.push(err.message);
-  }
-
-  throw new Error(errors.join(' | ') || 'gagal mengambil video TikTok');
+  const finalError = new Error(errors.join(' | ') || 'gagal mengambil video TikTok');
+  finalError.waf = waf;
+  throw finalError;
 }
 
 function captionHasHashtag(caption, hashtag) {
@@ -312,6 +251,26 @@ class TikTokMonitor {
     this.timer = null;
     this.startTimer = null;
     this.ticking = false;
+    // Cooldown WAF global: kalau semua sumber 403, berhenti sebentar supaya
+    // tidak makin dicurigai. Log hanya sekali per cooldown.
+    this.wafUntil = 0;
+    this.wafLogged = false;
+    this.wafCooldownMs =
+      Math.max(1, Number(this.cfg.tiktokWafCooldownMin) || 10) * 60 * 1000;
+  }
+
+  enterWafCooldown() {
+    this.wafUntil = Date.now() + this.wafCooldownMs;
+    if (!this.wafLogged) {
+      const minutes = Math.max(1, Math.round(this.wafCooldownMs / 60000));
+      console.warn(`[TIKTOK] WAF block, retry ${minutes} menit`);
+      this.wafLogged = true;
+    }
+  }
+
+  clearWafCooldown() {
+    this.wafUntil = 0;
+    this.wafLogged = false;
   }
 
   /** Daftar akun aktif: dari database/accounts.json bila sudah diubah. */
@@ -390,12 +349,35 @@ class TikTokMonitor {
     if (!this.isEnabled()) return;
     if (!this.ready()) return;
     if (this.ticking) return;
+    if (Date.now() < this.wafUntil) return;
+    if (this.wafUntil) {
+      // Cooldown selesai: coba lagi dan izinkan satu log baru kalau masih WAF.
+      this.wafUntil = 0;
+      this.wafLogged = false;
+    }
     this.ticking = true;
     try {
-      for (const account of this.getAccounts()) {
-        await this.checkAccount(account).catch((err) => {
+      const accounts = this.getAccounts();
+      for (let i = 0; i < accounts.length; i += 1) {
+        // Cek satu per satu; beri jeda acak 2-5 detik agar tidak menyerbu WAF.
+        if (i > 0) {
+          await sleep(
+            ACCOUNT_DELAY_MIN_MS +
+              Math.floor(Math.random() * (ACCOUNT_DELAY_MAX_MS - ACCOUNT_DELAY_MIN_MS + 1))
+          );
+        }
+        if (Date.now() < this.wafUntil) break;
+
+        const account = accounts[i];
+        try {
+          await this.checkAccount(account);
+        } catch (err) {
+          if (err && err.waf) {
+            this.enterWafCooldown();
+            break;
+          }
           console.error(`[TIKTOK] ${account} gagal dicek:`, err.message);
-        });
+        }
       }
     } finally {
       this.ticking = false;
@@ -404,6 +386,7 @@ class TikTokMonitor {
 
   async checkAccount(account) {
     const videos = await fetchUserVideos(account, this.cfg);
+    this.clearWafCooldown();
     if (!videos.length) return;
 
     const state = this.store.getSeenState(account);
