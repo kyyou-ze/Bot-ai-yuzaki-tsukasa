@@ -9,7 +9,7 @@
  * dan menolak keterlibatan anak di bawah umur).
  */
 const HOT_CUE =
-  /\b(hot|ecchi|etchi|seksi|sexy|spicy|nakal|mesum|vulgar|berahi|nafsu|goda|godain|menggoda|flirt|flirty|cium|ciuman|kiss|peluk|pelukan|ranjang|tidur\s*bareng|bobok|telanjang|bugil|tanpa\s*baju|bra|desah|erotis|sensual|foreplay|sex|seks|ngewe|entot|coli|masturbasi|orgasme|18\+|mode\s*dewasa)\b/i;
+  /\b(hot|ecchi|etchi|seksi|sexy|spicy|nakal|mesum|vulgar|berahi|nafsu|goda|godain|menggoda|flirt|flirty|cium|ciuman|kiss|peluk|pelukan|ranjang|tidur\s*bareng|bobok|telanjang|bugil|tanpa\s*baju|bra|desah|erotis|sensual|foreplay|sex|seks|ngewe|entot|coli|masturbasi|orgasme|18\+|mode\s*dewasa|horny|mesra|bercumbu|cumbu|bikin\s*panas|turn\s*on|one\s*night)\b/i;
 
 /** Pemicu untuk kembali ke obrolan normal. */
 const STOP_CUE =
@@ -20,7 +20,11 @@ function isHotCue(text) {
 }
 
 function isStopCue(text) {
-  return STOP_CUE.test(String(text || ''));
+  const s = String(text || '').trim();
+  if (!s) return false;
+  // "jangan berhenti" bukan perintah berhenti.
+  if (/\b(jangan|jgn|don'?t)\s+(stop|berhenti|matikan|nonaktifkan)\b/i.test(s)) return false;
+  return STOP_CUE.test(s);
 }
 
 module.exports = { isHotCue, isStopCue };

@@ -58,6 +58,16 @@ class OwnerDetector {
     return false;
   }
 
+  /**
+   * Cek beberapa kandidat JID sekaligus. Di chat pribadi, Baileys modern bisa
+   * mengirim remoteJid sebagai @lid sehingga nomor telepon owner hanya ada di
+   * field alternatif (remoteJidAlt/remoteJidPn/participantPn).
+   */
+  isOwnerAny(candidates, chat) {
+    const list = Array.isArray(candidates) ? candidates : [candidates];
+    return list.filter(Boolean).some((jid) => this.isOwner(jid, chat));
+  }
+
   debugLog(sender, chat, got) {
     if (!this.debug) return;
     console.log(

@@ -88,6 +88,20 @@ class Store {
     return this._save();
   }
 
+  /**
+   * Perpanjang masa aktif mode dewasa saat owner masih aktif mengobrol.
+   * Hanya menulis disk jika sisa waktunya sudah di bawah 25 menit.
+   */
+  refreshAdult(jid) {
+    const st = this.data.chatState[jid];
+    const until = Number(st && st.adultUntil) || 0;
+    if (until <= Date.now()) return Promise.resolve(false);
+    if (until - Date.now() > ADULT_TTL_MS - 5 * 60 * 1000) return Promise.resolve(true);
+    st.adultUntil = Date.now() + ADULT_TTL_MS;
+    st.updated = Date.now();
+    return this._save().then(() => true);
+  }
+
   getPeraturanState(group) {
     const p = this.data.peraturan[group];
     return {

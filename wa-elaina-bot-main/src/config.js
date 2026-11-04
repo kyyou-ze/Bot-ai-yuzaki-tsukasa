@@ -20,6 +20,10 @@ function splitKeys(raw) {
     .filter(Boolean);
 }
 
+function splitAccounts(raw) {
+  return splitKeys(raw).map((s) => (s.startsWith('@') ? s : '@' + s));
+}
+
 function boolEnv(value, def) {
   const v = String(value ?? '').trim().toLowerCase();
   if (['1', 'true', 'yes', 'y', 'on'].includes(v)) return true;
@@ -76,6 +80,21 @@ function load() {
     ttMaxImage: mustAtoi(getenv('TIKTOK_MAX_IMAGE_MB', '5'), 5) * 1024 * 1024,
     ttMaxDoc: mustAtoi(getenv('TIKTOK_MAX_DOC_MB', '80'), 80) * 1024 * 1024,
     ttMaxSlides: mustAtoi(getenv('TIKTOK_MAX_SLIDES', '10'), 10),
+    // Detector video baru + fitur verif ACC.
+    tiktokMonitorEnabled: boolEnv(getenv('TIKTOK_MONITOR_ENABLED', 'true'), true),
+    tiktokAccounts: splitAccounts(getenv('TIKTOK_ACCOUNTS', '@rinorstr')),
+    tiktokCnKeyword: getenv('TIKTOK_CN_KEYWORD', 'ECN'),
+    tiktokHashtag: getenv('TIKTOK_HASHTAG', '#margaecn'),
+    tiktokCheckMin: Math.max(1, intEnv(getenv('TIKTOK_CHECK_MIN', '3'), 3)),
+    tiktokNotifyJid: getenv('TIKTOK_NOTIFY_JID', ''),
+    // Opsional: endpoint scraper sendiri. Gunakan placeholder {username} dan
+    // {count}, mis. https://api.example.com/tiktok/user/{username}?count={count}
+    tiktokApiUrl: getenv('TIKTOK_API_URL', ''),
+    tiktokApiKey: getenv('TIKTOK_API_KEY', ''),
+    verifDb: path.resolve(getenv('VERIF_DB', 'database/verif.json')),
+    historyUpDb: path.resolve(getenv('HISTORY_UP_DB', 'database/history_up.json')),
+    upTodayDb: path.resolve(getenv('UP_TODAY_DB', 'database/up_today.json')),
+    seenVideosDb: path.resolve(getenv('SEEN_VIDEOS_DB', 'database/seen_videos.json')),
     // Auto-post info anime ke channel WhatsApp (bot harus admin channel).
     animeChannel: {
       enabled: boolEnv(getenv('ANIME_CHANNEL_ENABLED', 'true'), true),

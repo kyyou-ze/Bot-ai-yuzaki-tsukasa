@@ -62,3 +62,7 @@ Dockerfile.old
 Thumbs.db
 *.swp
 *.swo
+
+# ===== Tool lokal (bukan bagian bot) =====
+.kilo/
+yuzaki

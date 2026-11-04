@@ -13,6 +13,8 @@ const { HttpApi } = require('./src/httpapi');
 const { Reminders } = require('./src/reminders');
 const { AnimeChannelPoster } = require('./src/features/animechannel');
 const { GroupTools } = require('./src/features/grouptools');
+const { VerifStore } = require('./src/verifstore');
+const { TikTokMonitor } = require('./src/tiktokmonitor');
 
 const logger = pino({ level: process.env.BAILEYS_LOG || 'warn' });
 
@@ -40,6 +42,8 @@ async function main() {
   const animeChannel = new AnimeChannelPoster(cfg, store, isReady);
   const reminders = new Reminders(cfg);
   const groupTools = new GroupTools(cfg, store);
+  const verifStore = new VerifStore(cfg);
+  const tiktokMonitor = new TikTokMonitor(cfg, verifStore, isReady);
 
   const api = new HttpApi(cfg, isReady);
   api.start();
@@ -91,7 +95,16 @@ async function main() {
 
     wa.setSock(sock);
     currentSock = sock;
-    const router = new Router(cfg, sock, isReady, store, animeChannel, groupTools);
+    const router = new Router(
+      cfg,
+      sock,
+      isReady,
+      store,
+      animeChannel,
+      groupTools,
+      verifStore,
+      tiktokMonitor
+    );
 
     sock.ev.on('creds.update', saveCreds);
 
@@ -132,12 +145,14 @@ async function main() {
         animeChannel.start();
         reminders.start();
         groupTools.start();
+        tiktokMonitor.start();
       }
 
       if (connection === 'connecting') {
         waReady = false;
         animeChannel.stop();
         groupTools.stop();
+        tiktokMonitor.stop();
         console.log('[WA] Menghubungkan...');
       }
 
@@ -146,6 +161,7 @@ async function main() {
         animeChannel.stop();
         reminders.stop();
         groupTools.stop();
+        tiktokMonitor.stop();
         if (shuttingDown) return;
 
         const statusCode =
@@ -204,6 +220,7 @@ async function main() {
     console.log('[BOOT] SIGINT diterima, menutup...');
     animeChannel.stop();
     groupTools.stop();
+    tiktokMonitor.stop();
     try {
       wa.getSock()?.end?.(undefined);
     } catch {
@@ -217,6 +234,7 @@ async function main() {
     console.log('[BOOT] SIGTERM diterima, menutup...');
     animeChannel.stop();
     groupTools.stop();
+    tiktokMonitor.stop();
     try {
       wa.getSock()?.end?.(undefined);
     } catch {

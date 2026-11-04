@@ -8,6 +8,8 @@ const { AnimeFeature } = require('./features/anime');
 const { InfoFeature } = require('./features/info');
 const { PeraturanFeature } = require('./features/peraturan');
 const { GroupTools } = require('./features/grouptools');
+const { VerifFeature } = require('./features/verif');
+const { VerifStore } = require('./verifstore');
 const tiktok = require('./tiktok');
 const llm = require('./llm');
 const memory = require('./memory');
@@ -30,6 +32,112 @@ function parseBang(s) {
   return { cmd: parts[0].toLowerCase(), rest: parts.slice(1).join(' ') };
 }
 
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Perintah verif/UP bisa dipanggil dengan /verif, .verif, !verif, atau
+ * "Tsukasa verif". Hanya nama perintah yang dikenal yang dikembalikan supaya
+ * perintah lain tetap mengalir ke handler lama.
+ */
+function parseVerifCommand(text, trigger) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+
+  let cmd = '';
+  let rest = '';
+  const prefixed = raw.match(/^[\/.!]\s*([a-zA-Z]+)(?:\s+([\s\S]*))?$/);
+  if (prefixed) {
+    cmd = prefixed[1].toLowerCase();
+    rest = String(prefixed[2] || '').trim();
+  } else {
+    const re = new RegExp(
+      '^' + escapeRegExp(trigger || 'tsukasa') + '\\s+([a-zA-Z]+)(?:\\s+([\\s\\S]*))?$',
+      'i'
+    );
+    const match = raw.match(re);
+    if (!match) return null;
+    cmd = match[1].toLowerCase();
+    rest = String(match[2] || '').trim();
+  }
+
+  if (!VerifFeature.isCommand(cmd)) return null;
+  return { cmd, rest };
+}
+
+/**
+ * Dukung "Tsukasa hot on", "Tsukasa mode dewasa off", dst.
+ * Mengembalikan string argumen, atau null jika bukan perintah adult.
+ */
+function parseTriggerAdultCommand(text, trigger) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const re = new RegExp(
+    '^' + escapeRegExp(trigger || 'tsukasa') + '\\s+(?:mode\\s+)?(?:dewasa|adult|hot|ecchi)\\b\\s*([\\s\\S]*)$',
+    'i'
+  );
+  const match = raw.match(re);
+  if (!match) return null;
+  const rest = String(match[1] || '').trim();
+  if (!rest) return 'on';
+  // Hanya anggap perintah jika diikuti aksi yang dikenal. "tsukasa hot banget"
+  // tetap diproses sebagai chat biasa.
+  const action = rest.split(/\s+/)[0].toLowerCase();
+  const known = [
+    'on',
+    'off',
+    'status',
+    'enable',
+    'disable',
+    'aktif',
+    'aktifkan',
+    'matikan',
+    'mati',
+    'nonaktif',
+    'nonaktifkan',
+    'nyala',
+    'cek',
+    'info',
+    '1',
+    '0',
+    'ya',
+    'tidak',
+  ];
+  return known.includes(action) ? action : null;
+}
+
+/**
+ * Baileys modern bisa memberi JID @lid untuk chat pribadi. Coba ubah ke nomor
+ * telepon asli lewat mapping internal, lalu fallback ke onWhatsApp.
+ */
+async function resolveLidToPn(sock, jid) {
+  const s = String(jid || '').trim();
+  if (!s.endsWith('@lid') || !sock) return '';
+  const mapping = sock.signalRepository && sock.signalRepository.lidMapping;
+  if (mapping) {
+    for (const fn of ['getPNForLID', 'getPnForLid', 'getPhoneNumber']) {
+      if (typeof mapping[fn] !== 'function') continue;
+      try {
+        const pn = await mapping[fn](s);
+        if (pn) return String(pn);
+      } catch {
+        /* coba cara lain */
+      }
+    }
+  }
+  try {
+    const res = await sock.onWhatsApp(s);
+    if (Array.isArray(res)) {
+      const hit = res.find((x) => x && x.jid && !String(x.jid).endsWith('@lid'));
+      if (hit) return String(hit.jid);
+    }
+  } catch {
+    /* ignore */
+  }
+  return '';
+}
+
 function extractText(m, content) {
   const txt = wa.extractText(content);
   if (txt) return txt;
@@ -50,13 +158,14 @@ function quotedInfo(quoted) {
 }
 
 class Router {
-  constructor(cfg, sock, ready, store, animeChannel, groupTools) {
+  constructor(cfg, sock, ready, store, animeChannel, groupTools, verifStore, tiktokMonitor) {
     this.cfg = cfg;
     this.sock = sock;
     this.ready = typeof ready === 'function' ? ready : () => Boolean(ready);
     this.store = store;
     this.animeChannel = animeChannel || null;
     this.groupTools = groupTools || new GroupTools(cfg, store);
+    this.verif = new VerifFeature(cfg, verifStore || new VerifStore(cfg), tiktokMonitor || null);
 
     this.reTrig = normalizeTrigger(cfg);
     this.owner = new OwnerDetector();
@@ -107,9 +216,40 @@ class Router {
       m.key.participantPn,
       m.key.participantAlt,
       m.key.remoteJidAlt,
+      m.key.remoteJidPn,
+      m.key.senderPn,
+      m.key.senderLid,
     ].filter(Boolean);
-    const isOwner = ownerCandidates.some((jid) => this.owner.isOwner(jid, chat));
+    let isOwner = this.owner.isOwnerAny(ownerCandidates, chat);
+
+    // Fallback untuk chat pribadi yang hanya membawa @lid: resolve ke nomor
+    // telepon owner. Tanpa ini, mode dewasa (hot) tidak pernah aktif.
+    if (!isOwner && !isGroupJid(chat)) {
+      for (const cand of ownerCandidates.slice()) {
+        if (!String(cand).endsWith('@lid')) continue;
+        const pn = await resolveLidToPn(this.sock, cand);
+        if (!pn) continue;
+        ownerCandidates.push(pn);
+        if (this.owner.isOwner(pn, chat)) {
+          isOwner = true;
+          break;
+        }
+      }
+    }
     this.owner.debugLog(sender, chat, isOwner);
+
+    // Perintah verif/UP (bisa tanpa trigger di grup).
+    const verifCmd = parseVerifCommand(origTxt, this.cfg.trigger);
+    if (verifCmd && (await this.verif.handle(this.sock, m, verifCmd.cmd, verifCmd.rest, isOwner))) {
+      return;
+    }
+
+    // "Tsukasa hot on/off/status" dan "Tsukasa mode dewasa ..." (owner DM).
+    const adultCmd = parseTriggerAdultCommand(origTxt, this.cfg.trigger);
+    if (adultCmd !== null) {
+      await this.handleAdultMode(chat, m, isOwner, adultCmd);
+      return;
+    }
 
     const quoted = wa.quotedContent(wa.contextInfoOf(content));
     const q = quotedInfo(quoted);
@@ -158,6 +298,13 @@ class Router {
           '- !tsukasa persona tsukasa1|tsukasa2 : pilih persona AI (persist)',
           '- !tsukasa mode pro on|off : aktifkan Mode Pro (persist)',
           '- !tsukasa mode dewasa on|off : mode khusus owner di chat pribadi (18+)',
+          '- !hot on|off|status : alias cepat mode dewasa (owner, chat pribadi)',
+          '- /verif <acc> : verif ACC TikTok di grup ini',
+          '- /listverif : daftar ACC terverif di grup',
+          '- /unverif <acc> : hapus ACC dari daftar verif',
+          '- /siapaup : siapa yang UP hari ini',
+          '- /cekup @username : cek akun sudah UP atau belum',
+          '- /history : rekap UP 7 hari terakhir',
           '',
           'Tips: katakan "panggil aku [nama]" supaya aku ingat namamu!',
         ];
@@ -321,6 +468,11 @@ class Router {
         return;
       }
 
+      if (bang.cmd === 'hot') {
+        await this.handleAdultMode(chat, m, isOwner, bang.rest || 'on');
+        return;
+      }
+
       if (bang.cmd === 'tsukasa') {
         const parts = String(bang.rest || '').trim().split(/\s+/).filter(Boolean);
         if (parts.length >= 2 && parts[0].toLowerCase() === 'persona') {
@@ -339,30 +491,16 @@ class Router {
           }
           return;
         }
-        if (
-          parts.length >= 2 &&
-          parts[0].toLowerCase() === 'mode' &&
-          ['dewasa', 'adult', 'hot', 'ecchi'].includes(parts[1].toLowerCase())
-        ) {
-          if (!isOwner || isGroupJid(chat)) {
-            await wa.sendText(chat, 'Mode dewasa hanya untuk owner di chat pribadi.', m);
-            return;
-          }
-          const arg = String(parts[2] || '').toLowerCase();
-          const on = ['on', 'enable', 'aktif', 'nyala', '1'].includes(arg);
-          const off = ['off', 'disable', 'mati', 'nonaktif', '0'].includes(arg);
-          if (!on && !off) {
-            await wa.sendText(chat, 'Gunakan: !tsukasa mode dewasa on|off', m);
-            return;
-          }
-          await this.store.setAdult(chat, on);
-          await wa.sendText(
-            chat,
-            on
-              ? '🔥 Mode dewasa aktif untuk chat ini (18+, 30 menit). Kirim "stop" untuk kembali normal.'
-              : 'Mode dewasa dimatikan. Kita kembali ke obrolan biasa.',
-            m
-          );
+        const isAdultMode =
+          (parts[0].toLowerCase() === 'mode' &&
+            ['dewasa', 'adult', 'hot', 'ecchi'].includes((parts[1] || '').toLowerCase())) ||
+          parts[0].toLowerCase() === 'hot';
+        if (isAdultMode) {
+          const arg =
+            parts[0].toLowerCase() === 'hot'
+              ? parts.slice(1).join(' ')
+              : parts.slice(2).join(' ');
+          await this.handleAdultMode(chat, m, isOwner, arg || (parts[0].toLowerCase() === 'hot' ? 'on' : 'status'));
           return;
         }
         if (
@@ -501,6 +639,7 @@ class Router {
     if (ownerDm && isStopCue(txt)) {
       if (state.adult) await this.store.setAdult(chat, false);
       adult = false;
+      console.log(`[ADULT] nonaktif untuk chat=${chat}`);
     } else if (ownerDm && isHotCue(txt)) {
       if (!state.adult) {
         await wa
@@ -509,6 +648,15 @@ class Router {
       }
       adult = true;
       await this.store.setAdult(chat, true);
+      console.log(`[ADULT] aktif untuk chat=${chat} sender=${sender}`);
+    } else if (adult) {
+      // Perpanjang selama owner masih mengobrol (sliding 30 menit).
+      await this.store.refreshAdult(chat).catch(() => {});
+    } else if (!isGroupJid(chat) && isHotCue(txt)) {
+      console.log(
+        `[ADULT] cue terdeteksi tapi bukan owner. chat=${chat} sender=${sender} ` +
+          `kandidat=${ownerCandidates.join(',')}`
+      );
     }
 
     const hist = memory.load(chat);
@@ -525,6 +673,56 @@ class Router {
     memory.saveTurn(chat, 'assistant', reply);
     const out = this.owner.decorate(isOwner, reply);
     await wa.sendText(chat, out.text, m, out.mentions);
+  }
+
+  async handleAdultMode(chat, m, isOwner, arg) {
+    if (!isOwner || isGroupJid(chat)) {
+      await wa.sendText(
+        chat,
+        isGroupJid(chat)
+          ? 'Mode dewasa hanya untuk owner di chat pribadi.'
+          : 'Perintah ini khusus owner.',
+        m
+      );
+      return true;
+    }
+
+    const action = String(arg || 'status').trim().toLowerCase();
+    if (['status', 'cek', 'info'].includes(action)) {
+      const st = this.store.get(chat);
+      if (!st.adult) {
+        await wa.sendText(chat, 'Mode dewasa sedang *tidak aktif*.', m);
+      } else {
+        const until = new Date(st.adultUntil).toLocaleString('id-ID', {
+          timeZone: this.cfg.timezone || 'Asia/Jakarta',
+        });
+        await wa.sendText(chat, `🔥 Mode dewasa *aktif* sampai ${until}.`, m);
+      }
+      return true;
+    }
+
+    const on = ['on', 'enable', 'aktif', 'aktifkan', 'nyala', '1', 'ya'].includes(action);
+    const off = ['off', 'disable', 'mati', 'matikan', 'nonaktif', 'nonaktifkan', '0', 'tidak'].includes(
+      action
+    );
+    if (!on && !off) {
+      await wa.sendText(
+        chat,
+        'Gunakan: !hot on|off|status\nAtau: !tsukasa mode dewasa on|off|status',
+        m
+      );
+      return true;
+    }
+
+    await this.store.setAdult(chat, on);
+    await wa.sendText(
+      chat,
+      on
+        ? '🔥 Mode dewasa aktif untuk chat ini (18+, 30 menit). Kirim "stop" untuk kembali normal.'
+        : 'Mode dewasa dimatikan. Kita kembali ke obrolan biasa.',
+      m
+    );
+    return true;
   }
 
   async handleTikTok(chat, m, urls) {
