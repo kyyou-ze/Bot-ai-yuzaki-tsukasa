@@ -1,16 +1,22 @@
 'use strict';
 
 const animekita = require('./animekita');
-const { fetchWithTimeout } = require('./util');
+const { fetchWithTimeout, canonicalTitle } = require('./util');
 
 const ALL_SOURCES = ['anilist', 'kitsu', 'animekita', 'jikan'];
 const BROWSER_UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const DART_UA = 'Dart/3.1 (dart:io)';
 
-const ANILIST_QUERY = `query ($page: Int, $perPage: Int) {
+const ANILIST_QUERY = `query ($page: Int, $perPage: Int, $season: MediaSeason, $seasonYear: Int) {
   Page(page: $page, perPage: $perPage) {
-    media(type: ANIME, sort: TRENDING_DESC, isAdult: false) {
+    media(
+      type: ANIME
+      season: $season
+      seasonYear: $seasonYear
+      sort: POPULARITY_DESC
+      isAdult: false
+    ) {
       id
       title { romaji english native }
       description(asHtml: false)
@@ -80,10 +86,7 @@ function yearOf(value) {
 }
 
 function titleKey(title) {
-  return String(title || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
+  return canonicalTitle(title);
 }
 
 function normalizeSources(raw) {
@@ -95,7 +98,15 @@ function normalizeSources(raw) {
   return valid.length > 0 ? [...new Set(valid)] : ALL_SOURCES.slice();
 }
 
-async function fetchAniList(limit = 8) {
+function currentSeason(date = new Date()) {
+  const month = date.getMonth() + 1;
+  if (month <= 2) return 'WINTER';
+  if (month <= 5) return 'SPRING';
+  if (month <= 8) return 'SUMMER';
+  return 'FALL';
+}
+
+async function requestAniList(limit, extraVariables = {}) {
   const res = await fetchWithTimeout(
     'https://graphql.anilist.co',
     {
@@ -107,7 +118,11 @@ async function fetchAniList(limit = 8) {
       },
       body: JSON.stringify({
         query: ANILIST_QUERY,
-        variables: { page: 1, perPage: Math.max(1, Math.min(20, limit)) },
+        variables: {
+          page: 1,
+          perPage: Math.max(1, Math.min(20, limit)),
+          ...extraVariables,
+        },
       }),
     },
     15000
@@ -117,6 +132,17 @@ async function fetchAniList(limit = 8) {
   const json = await res.json();
   const list = json && json.data && json.data.Page && json.data.Page.media;
   if (!Array.isArray(list)) throw new Error('AniList response tidak valid');
+  return list;
+}
+
+async function fetchAniList(limit = 8) {
+  const season = currentSeason();
+  const seasonYear = new Date().getFullYear();
+
+  // Utamakan season berjalan. Kalau kosong (mis. awal musim), fallback ke
+  // anime populer; filter tahun tetap dilakukan setelahnya.
+  let list = await requestAniList(limit, { season, seasonYear });
+  if (list.length === 0) list = await requestAniList(limit);
 
   return list
     .map((it) => {
@@ -152,7 +178,10 @@ async function fetchAniList(limit = 8) {
         score: normalizeScore(it.averageScore),
         episodes: Number(it.episodes) || 0,
         status: idStatus(it.status),
-        year: Number(it.seasonYear) || 0,
+        year:
+          Number(it.seasonYear) ||
+          Number(it.startDate && it.startDate.year) ||
+          0,
         type: cleanText(it.format, 30),
         studio,
         releaseDate: it.startDate || '',
@@ -324,6 +353,103 @@ async function fetchAnimeKita(limit = 8) {
     .filter((it) => it && it.title);
 }
 
+// AnimeKita tidak mengirim tahun rilis. Cover-nya berasal dari AniList
+// (format .../bx<id>-...), jadi tahun bisa diambil sekaligus lewat AniList.
+const ANILIST_YEARS_QUERY = `query ($ids: [Int]) {
+  Page(page: 1, perPage: 50) {
+    media(id_in: $ids, type: ANIME) {
+      id
+      seasonYear
+      startDate { year }
+    }
+  }
+}`;
+
+function anilistIdFromCover(url) {
+  const m = String(url || '').match(/\/bx(\d+)-/i);
+  return m ? Number(m[1]) : 0;
+}
+
+async function fetchAniListYears(ids) {
+  const clean = [...new Set((ids || []).map(Number).filter((n) => n > 0))].slice(0, 50);
+  const out = new Map();
+  if (clean.length === 0) return out;
+
+  try {
+    const res = await fetchWithTimeout(
+      'https://graphql.anilist.co',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'User-Agent': BROWSER_UA,
+        },
+        body: JSON.stringify({
+          query: ANILIST_YEARS_QUERY,
+          variables: { ids: clean },
+        }),
+      },
+      15000
+    );
+    if (!res.ok) return out;
+    const json = await res.json();
+    const list = json && json.data && json.data.Page && json.data.Page.media;
+    if (!Array.isArray(list)) return out;
+    for (const it of list) {
+      const y = Number(it && it.seasonYear) || Number(it && it.startDate && it.startDate.year) || 0;
+      if (it && it.id && y) out.set(Number(it.id), y);
+    }
+  } catch {
+    /* abaikan, fallback ke filter unknown */
+  }
+  return out;
+}
+
+async function hydrateAnimeKitaYears(items) {
+  const targets = (items || []).filter(
+    (it) => it && it.source === 'animekita' && !Number(it.year)
+  );
+  if (targets.length === 0) return;
+  const ids = targets.map((it) => anilistIdFromCover(it.image)).filter(Boolean);
+  if (ids.length === 0) return;
+  const years = await fetchAniListYears(ids);
+  for (const it of targets) {
+    const y = years.get(anilistIdFromCover(it.image));
+    if (y) {
+      it.year = y;
+      if (!it.releaseDate) it.releaseDate = String(y);
+    }
+  }
+}
+
+function itemYear(item) {
+  if (!item) return 0;
+  if (Number(item.year)) return Number(item.year);
+  const rawDate =
+    item.releaseDate && typeof item.releaseDate === 'object'
+      ? item.releaseDate.year
+      : item.releaseDate;
+  const fromDate = yearOf(rawDate);
+  if (fromDate) return fromDate;
+  return yearOf(item.extra);
+}
+
+function filterFresh(items, options = {}) {
+  const minYear = Number(options.minYear) || 0;
+  const maxYear = Number(options.maxYear) || 0;
+  const allowUnknown = Boolean(options.allowUnknown);
+  if (!minYear && !maxYear) return items || [];
+
+  return (items || []).filter((it) => {
+    const y = itemYear(it);
+    if (!y) return allowUnknown;
+    if (minYear && y < minYear) return false;
+    if (maxYear && y > maxYear) return false;
+    return true;
+  });
+}
+
 async function fetchSource(name, limit) {
   switch (name) {
     case 'anilist':
@@ -342,10 +468,17 @@ async function fetchSource(name, limit) {
 /**
  * Ambil info anime dari beberapa sumber sekaligus. Sumber yang gagal /
  * timeout tidak menggagalkan keseluruhan proses.
+ *
+ * options.minYear / options.maxYear menyaring tahun rilis supaya channel
+ * tidak kebanjiran anime lama. options.allowUnknown=true mempertahankan item
+ * yang tahunnya tidak diketahui.
  */
-async function fetchAll(sources, perSource = 8) {
+async function fetchAll(sources, perSource = 8, options = {}) {
   const names = normalizeSources(sources);
-  const results = await Promise.allSettled(names.map((name) => fetchSource(name, perSource)));
+  const minYear = Number(options.minYear) || 0;
+  const maxYear = Number(options.maxYear) || 0;
+  const limit = Math.max(1, Math.min(20, perSource * (minYear || maxYear ? 3 : 1)));
+  const results = await Promise.allSettled(names.map((name) => fetchSource(name, limit)));
 
   const errors = [];
   const lists = [];
@@ -357,11 +490,22 @@ async function fetchAll(sources, perSource = 8) {
     }
   });
 
+  await hydrateAnimeKitaYears(lists.flat());
+
+  // Filter per sumber dulu, lalu batasi jumlah kandidat per sumber.
+  const freshLists = lists.map((list) =>
+    filterFresh(list, {
+      minYear,
+      maxYear,
+      allowUnknown: Boolean(options.allowUnknown),
+    }).slice(0, perSource)
+  );
+
   // Interleave antar sumber supaya hasilnya bervariasi.
   const merged = [];
-  const maxLen = lists.reduce((max, list) => Math.max(max, list.length), 0);
+  const maxLen = freshLists.reduce((max, list) => Math.max(max, list.length), 0);
   for (let i = 0; i < maxLen; i++) {
-    for (const list of lists) {
+    for (const list of freshLists) {
       if (list[i]) merged.push(list[i]);
     }
   }
@@ -376,7 +520,7 @@ async function fetchAll(sources, perSource = 8) {
     items.push(it);
   }
 
-  return { items, errors, sources: names };
+  return { items, errors, sources: names, minYear, maxYear };
 }
 
 module.exports = {
@@ -390,4 +534,7 @@ module.exports = {
   fetchJikan,
   fetchAnimeKita,
   fetchAll,
+  filterFresh,
+  itemYear,
+  hydrateAnimeKitaYears,
 };

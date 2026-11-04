@@ -49,6 +49,36 @@ function trimWords(s, max) {
   return parts.slice(0, max).join(' ');
 }
 
+function normaliseTitle(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+// Normalisasi judul untuk dedupe lintas sumber: buang tahun, season, part,
+// cour, dan tanda baca supaya variasi judul dianggap sama.
+function canonicalTitle(text) {
+  return normaliseTitle(
+    String(text || '')
+      .replace(/['’]s\b/gi, '')
+      .replace(/['’]/g, '')
+      // Sisa "journey s end" dari judul lama yang apostrofnya sudah hilang.
+      .replace(/\b([a-z0-9]+)\s+s\s+([a-z0-9]+)\b/gi, '$1 $2')
+      .replace(/&/g, ' and ')
+      .replace(/\((?:19|20)\d{2}\)/g, ' ')
+      .replace(/\b(?:19|20)\d{2}\b/g, ' ')
+      .replace(/\b(?:season|s)\s*\d+\b/gi, ' ')
+      .replace(/\b\d+\s*(?:st|nd|rd|th)\s*season\b/gi, ' ')
+      .replace(/\b(?:part|cour)\s*\d+\b/gi, ' ')
+      .replace(/\b(?:final season|the final season)\b/gi, ' ')
+      .replace(/\b(?:stage|movie|film|ova|ona|special|tv)\b/gi, ' ')
+      .replace(/\b\d+(?:st|nd|rd|th)\b/gi, ' ')
+  )
+    .replace(/^the\s+/, '')
+    .trim();
+}
+
 function firstNonEmpty(...values) {
   for (const v of values) {
     if (v !== undefined && v !== null && String(v).trim() !== '') return v;
@@ -145,6 +175,8 @@ module.exports = {
   destJid,
   escapeXml,
   trimWords,
+  normaliseTitle,
+  canonicalTitle,
   firstNonEmpty,
   ensureDir,
   atomicWriteJson,

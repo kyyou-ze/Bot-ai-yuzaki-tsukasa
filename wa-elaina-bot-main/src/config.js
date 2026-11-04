@@ -47,6 +47,13 @@ function load() {
     botName: getenv('BOT_NAME', 'Tsukasa'),
     mode: getenv('MODE', 'MANUAL').toUpperCase(),
     trigger: getenv('TRIGGER', 'tsukasa').toLowerCase(),
+    // Zona waktu untuk pengingat & statistik. Offset dipakai untuk
+    // mengubah "jam 15:30" menjadi waktu UTC yang tepat.
+    timezone: getenv('BOT_TIMEZONE', 'Asia/Jakarta'),
+    tzOffset: (() => {
+      const n = parseFloat(getenv('BOT_TZ_OFFSET', '7'));
+      return Number.isFinite(n) ? n : 7;
+    })(),
     // Opsional: nomor WhatsApp (format internasional, mis. 628xxxx) untuk
     // pairing code. Sangat membantu di Pterodactyl yang consolenya sempit.
     pairingNumber: String(getenv('PAIRING_NUMBER', '')).replace(/\D+/g, ''),
@@ -81,6 +88,14 @@ function load() {
       images: boolEnv(getenv('ANIME_CHANNEL_IMAGES', 'true'), true),
       translate: boolEnv(getenv('ANIME_CHANNEL_TRANSLATE', 'true'), true),
       startDelaySec: intEnv(getenv('ANIME_CHANNEL_START_DELAY_SEC', '60'), 60),
+      // 0 = pakai tahun berjalan. Isi angka untuk mengizinkan anime lama.
+      minYear: intEnv(getenv('ANIME_CHANNEL_MIN_YEAR', '0'), 0),
+      // 0 = riwayat dedupe disimpan permanen.
+      dedupeDays: intEnv(getenv('ANIME_CHANNEL_DEDUPE_DAYS', '0'), 0),
+      dedupeMax: Math.max(100, intEnv(getenv('ANIME_CHANNEL_DEDUPE_MAX', '5000'), 5000)),
+      // Selipkan info budaya/fakta Jejepangan setiap N post.
+      japanInfo: boolEnv(getenv('ANIME_CHANNEL_JAPAN_INFO', 'true'), true),
+      infoEvery: Math.max(1, intEnv(getenv('ANIME_CHANNEL_INFO_EVERY', '3'), 3)),
     },
   };
 

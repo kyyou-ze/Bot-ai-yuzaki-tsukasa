@@ -7,11 +7,13 @@ const { VisionFeature, VnFeature, TtsFeature, ImgGenFeature, HijabinFeature } = 
 const { AnimeFeature } = require('./features/anime');
 const { InfoFeature } = require('./features/info');
 const { PeraturanFeature } = require('./features/peraturan');
+const { GroupTools } = require('./features/grouptools');
 const tiktok = require('./tiktok');
 const llm = require('./llm');
 const memory = require('./memory');
 const wa = require('./wa');
 const { isGroupJid } = require('./util');
+const { isHotCue, isStopCue } = require('./adultmode');
 
 const RE_REPLY_CUE = /\b(balas(in|lah)?|reply|jawab(in|lah)?)(\s+ini)?\b/i;
 
@@ -48,12 +50,13 @@ function quotedInfo(quoted) {
 }
 
 class Router {
-  constructor(cfg, sock, ready, store, animeChannel) {
+  constructor(cfg, sock, ready, store, animeChannel, groupTools) {
     this.cfg = cfg;
     this.sock = sock;
     this.ready = typeof ready === 'function' ? ready : () => Boolean(ready);
     this.store = store;
     this.animeChannel = animeChannel || null;
+    this.groupTools = groupTools || new GroupTools(cfg, store);
 
     this.reTrig = normalizeTrigger(cfg);
     this.owner = new OwnerDetector();
@@ -120,6 +123,10 @@ class Router {
     if (await this.imggen.handle(this.sock, m, content, origTxt)) return;
 
     const bang = parseBang(txt);
+    // Simpan metadata pesan di memori untuk fitur rangkuman & statistik.
+    // Tidak ditulis ke disk dan tidak dipakai untuk membalas otomatis.
+    this.groupTools.recordMessage(chat, sender, txt, { isCommand: Boolean(bang) });
+
     if (bang) {
       if (bang.cmd === 'help') {
         const userName = memory.getUserName(sender) || '';
@@ -141,10 +148,16 @@ class Router {
           '- tsukasa buatin gambar <prompt> / !gambar <prompt> : generate gambar AI',
           '- !anime ... : info anime (new/movie/schedule/search/detail)',
           '- !info <topik> : info apa saja (anime/film/Jepang/fakta absurd) dalam Bahasa Indonesia',
-          '- !animechannel status|test : cek / tes auto-post ke channel (owner/admin)',
+          '- !animechannel status|test|info|check <judul> : cek/tes auto-post & info Jejepangan (owner/admin)',
+          '- !anime roulette [genre] : rekomendasi anime acak',
+          '- !ingatkan <waktu> <teks> : pengingat (contoh: !ingatkan 10m minum air)',
+          '- !poll <tanya> | <opsi1> | <opsi2> : polling grup',
+          '- !rangkum [jumlah] : rangkum percakapan terakhir dengan AI',
+          '- !statistik : statistik aktivitas chat',
           '- !peraturan on|off|status : moderasi grup (admin)',
           '- !tsukasa persona tsukasa1|tsukasa2 : pilih persona AI (persist)',
           '- !tsukasa mode pro on|off : aktifkan Mode Pro (persist)',
+          '- !tsukasa mode dewasa on|off : mode khusus owner di chat pribadi (18+)',
           '',
           'Tips: katakan "panggil aku [nama]" supaya aku ingat namamu!',
         ];
@@ -160,6 +173,22 @@ class Router {
         return;
       }
 
+      if (bang.cmd === 'ingatkan' || bang.cmd === 'remind' || bang.cmd === 'pengingat') {
+        if (await this.groupTools.handleReminder(this.sock, m, bang.rest)) return;
+      }
+
+      if (bang.cmd === 'poll' || bang.cmd === 'voting') {
+        if (await this.groupTools.handlePoll(this.sock, m, bang.rest)) return;
+      }
+
+      if (bang.cmd === 'rangkum' || bang.cmd === 'ringkas' || bang.cmd === 'summary') {
+        if (await this.groupTools.handleSummary(this.sock, m, bang.rest)) return;
+      }
+
+      if (bang.cmd === 'statistik' || bang.cmd === 'stats' || bang.cmd === 'stat') {
+        if (await this.groupTools.handleStats(this.sock, m)) return;
+      }
+
       if (bang.cmd === 'anime') {
         if (await this.anime.handle(this.sock, m, origTxt)) return;
       }
@@ -169,7 +198,8 @@ class Router {
       }
 
       if (bang.cmd === 'animechannel' || bang.cmd === 'anime-channel') {
-        const sub = String(bang.rest || '').trim().split(/\s+/).filter(Boolean)[0] || 'status';
+        const parts = String(bang.rest || '').trim().split(/\s+/).filter(Boolean);
+        const sub = (parts[0] || 'status').toLowerCase();
         const group = isGroupJid(chat);
         const allowed =
           isOwner || (group && (await this.peraturan.isAdmin(this.sock, chat, sender)));
@@ -185,13 +215,56 @@ class Router {
           await wa.sendText(chat, this.animeChannel.formatStatus(), m);
           return;
         }
+        if (sub === 'check' || sub === 'cek') {
+          const title = parts.slice(1).join(' ').trim();
+          if (!title) {
+            await wa.sendText(chat, 'Gunakan: !animechannel check <judul anime>', m);
+            return;
+          }
+          const res = this.animeChannel.checkTitle(title);
+          if (res.posted) {
+            const at = res.at
+              ? new Date(res.at).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
+              : '-';
+            await wa.sendText(
+              chat,
+              `🔁 *Sudah pernah diposting*: ${title}\nTerakhir: ${at}\nKey: ${res.key}`,
+              m
+            );
+          } else {
+            await wa.sendText(chat, `🆕 *Belum pernah diposting*: ${title}`, m);
+          }
+          return;
+        }
+        if (sub === 'info' || sub === 'jejepangan' || sub === 'japan') {
+          try {
+            const res = await this.animeChannel.postOne({
+              force: true,
+              type: 'info',
+              reason: 'manual-info',
+            });
+            if (res.ok) {
+              await wa.sendText(
+                chat,
+                `✅ Info Jejepangan terkirim ke channel: *${res.item.title}* (${res.mode}).`,
+                m
+              );
+            } else {
+              await wa.sendText(chat, `ℹ️ Tidak ada post: ${res.message}`, m);
+            }
+          } catch (err) {
+            await wa.sendText(chat, `❌ Gagal post info ke channel: ${err.message}`, m);
+          }
+          return;
+        }
         if (sub === 'test' || sub === 'post') {
           try {
             const res = await this.animeChannel.postOne({ force: true, reason: 'manual' });
             if (res.ok) {
+              const kind = res.type === 'info' ? 'Info Jejepangan' : 'Anime';
               await wa.sendText(
                 chat,
-                `✅ Terkirim ke channel: *${res.item.title}* (${res.mode}).\nSumber: ${res.source || '-'}`,
+                `✅ ${kind} terkirim ke channel: *${res.item.title}* (${res.mode}).\nSumber: ${res.item.sourceLabel || '-'}`,
                 m
               );
             } else {
@@ -202,7 +275,15 @@ class Router {
           }
           return;
         }
-        await wa.sendText(chat, 'Gunakan: !animechannel status  atau  !animechannel test', m);
+        await wa.sendText(
+          chat,
+          'Gunakan:\n' +
+            '!animechannel status\n' +
+            '!animechannel test\n' +
+            '!animechannel info\n' +
+            '!animechannel check <judul>',
+          m
+        );
         return;
       }
 
@@ -259,6 +340,32 @@ class Router {
           return;
         }
         if (
+          parts.length >= 2 &&
+          parts[0].toLowerCase() === 'mode' &&
+          ['dewasa', 'adult', 'hot', 'ecchi'].includes(parts[1].toLowerCase())
+        ) {
+          if (!isOwner || isGroupJid(chat)) {
+            await wa.sendText(chat, 'Mode dewasa hanya untuk owner di chat pribadi.', m);
+            return;
+          }
+          const arg = String(parts[2] || '').toLowerCase();
+          const on = ['on', 'enable', 'aktif', 'nyala', '1'].includes(arg);
+          const off = ['off', 'disable', 'mati', 'nonaktif', '0'].includes(arg);
+          if (!on && !off) {
+            await wa.sendText(chat, 'Gunakan: !tsukasa mode dewasa on|off', m);
+            return;
+          }
+          await this.store.setAdult(chat, on);
+          await wa.sendText(
+            chat,
+            on
+              ? '🔥 Mode dewasa aktif untuk chat ini (18+, 30 menit). Kirim "stop" untuk kembali normal.'
+              : 'Mode dewasa dimatikan. Kita kembali ke obrolan biasa.',
+            m
+          );
+          return;
+        }
+        if (
           parts.length >= 3 &&
           parts[0].toLowerCase() === 'mode' &&
           parts[1].toLowerCase() === 'pro'
@@ -274,7 +381,7 @@ class Router {
         }
         await wa.sendText(
           chat,
-          'Gunakan: !tsukasa persona tsukasa1|tsukasa2  atau  !tsukasa mode pro on|off',
+          'Gunakan: !tsukasa persona tsukasa1|tsukasa2, !tsukasa mode pro on|off, atau !tsukasa mode dewasa on|off',
           m
         );
         return;
@@ -386,9 +493,34 @@ class Router {
 
     // AI chat
     const state = this.store.get(chat);
+
+    // Mode dewasa otomatis: hanya di chat pribadi owner. Jika owner memulai
+    // percakapan hot, bot mengikuti selama 30 menit; "stop" mengembalikan normal.
+    const ownerDm = isOwner && !isGroupJid(chat);
+    let adult = ownerDm && state.adult;
+    if (ownerDm && isStopCue(txt)) {
+      if (state.adult) await this.store.setAdult(chat, false);
+      adult = false;
+    } else if (ownerDm && isHotCue(txt)) {
+      if (!state.adult) {
+        await wa
+          .sendText(chat, '🔥 _Mode dewasa aktif (18+). Kirim "stop" untuk kembali normal._', m)
+          .catch(() => {});
+      }
+      adult = true;
+      await this.store.setAdult(chat, true);
+    }
+
     const hist = memory.load(chat);
     const ctxTxt = memory.buildContext(hist, txt, sender);
-    const reply = await llm.askAsPersona(this.cfg, state.persona, state.pro, ctxTxt, sender);
+    const reply = await llm.askAsPersona(
+      this.cfg,
+      state.persona,
+      state.pro,
+      ctxTxt,
+      sender,
+      adult
+    );
     memory.saveTurn(chat, 'user', txt);
     memory.saveTurn(chat, 'assistant', reply);
     const out = this.owner.decorate(isOwner, reply);

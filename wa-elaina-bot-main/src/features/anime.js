@@ -2,6 +2,7 @@
 
 const path = require('path');
 const api = require('../animekita');
+const llm = require('../llm');
 const wa = require('../wa');
 const { buildAnimeInfo } = require('../animeinfo');
 const { fetchWithTimeout } = require('../util');
@@ -18,6 +19,190 @@ const GENRES = [
   'sci-fi', 'seinen', 'shoujo', 'shoujo-ai', 'shounen', 'slice-of-life', 'sports', 'space',
   'super-power', 'supernatural', 'thriller', 'vampire', 'yaoi', 'yuri',
 ];
+
+// Genre yang bisa dipakai di `!anime roulette`. AniList memakai nama
+// Inggris, jadi terima juga istilah Indonesia yang umum.
+const ROULETTE_GENRE_MAP = {
+  action: 'Action',
+  aksi: 'Action',
+  adventure: 'Adventure',
+  petualangan: 'Adventure',
+  comedy: 'Comedy',
+  komedi: 'Comedy',
+  drama: 'Drama',
+  fantasy: 'Fantasy',
+  fantasi: 'Fantasy',
+  horror: 'Horror',
+  horor: 'Horror',
+  mecha: 'Mecha',
+  music: 'Music',
+  musik: 'Music',
+  mystery: 'Mystery',
+  misteri: 'Mystery',
+  psychological: 'Psychological',
+  romance: 'Romance',
+  romansa: 'Romance',
+  'sci-fi': 'Sci-Fi',
+  scifi: 'Sci-Fi',
+  'sci fi': 'Sci-Fi',
+  'slice of life': 'Slice of Life',
+  sliceoflife: 'Slice of Life',
+  sports: 'Sports',
+  olahraga: 'Sports',
+  supernatural: 'Supernatural',
+  thriller: 'Thriller',
+  isekai: 'Fantasy',
+};
+
+const ROULETTE_GENRE_LIST = [
+  'Action',
+  'Adventure',
+  'Comedy',
+  'Drama',
+  'Fantasy',
+  'Horror',
+  'Mecha',
+  'Music',
+  'Mystery',
+  'Psychological',
+  'Romance',
+  'Sci-Fi',
+  'Slice of Life',
+  'Sports',
+  'Supernatural',
+  'Thriller',
+];
+
+const ANILIST_ROULETTE_QUERY = `query ($page: Int, $perPage: Int, $genre: String) {
+  Page(page: $page, perPage: $perPage) {
+    media(
+      type: ANIME
+      genre: $genre
+      sort: POPULARITY_DESC
+      isAdult: false
+      status_in: [FINISHED, RELEASING]
+      averageScore_greater: 60
+    ) {
+      id
+      title { romaji english }
+      description(asHtml: false)
+      genres
+      averageScore
+      episodes
+      status
+      seasonYear
+      startDate { year month day }
+      studios(isMain: true) { nodes { name } }
+      siteUrl
+    }
+  }
+}`;
+
+function stripHtml(text) {
+  return String(text || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function resolveRouletteGenre(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return { genre: '', label: '', unknown: false };
+  const key = raw.toLowerCase();
+  const mapped = ROULETTE_GENRE_MAP[key];
+  if (mapped) return { genre: mapped, label: mapped, unknown: false };
+  const known = ROULETTE_GENRE_LIST.find((g) => g.toLowerCase() === key);
+  if (known) return { genre: known, label: known, unknown: false };
+  return { genre: '', label: raw, unknown: true };
+}
+
+async function requestRoulette(genre) {
+  const res = await fetchWithTimeout(
+    'https://graphql.anilist.co',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'User-Agent': 'wa-tsukasa-bot/2.0',
+      },
+      body: JSON.stringify({
+        query: ANILIST_ROULETTE_QUERY,
+        variables: { page: 1, perPage: 30, genre: genre || null },
+      }),
+    },
+    15000
+  );
+  if (!res.ok) throw new Error(`AniList http ${res.status}`);
+  const json = await res.json();
+  if (json && json.errors && json.errors.length) {
+    throw new Error(json.errors[0].message || 'AniList error');
+  }
+  const list = json && json.data && json.data.Page && json.data.Page.media;
+  return Array.isArray(list) ? list : [];
+}
+
+async function fetchRoulette(genre) {
+  let list = [];
+  if (genre) {
+    try {
+      list = await requestRoulette(genre);
+    } catch (err) {
+      console.warn('[ANIME] roulette genre gagal, fallback acak:', err.message);
+    }
+  }
+  if (list.length === 0) list = await requestRoulette('');
+  return list;
+}
+
+async function translateSynopsis(text) {
+  const clean = stripHtml(text);
+  if (!clean) return '';
+  try {
+    const out = await llm.askText(
+      'Terjemahkan sinopsis anime berikut ke Bahasa Indonesia yang natural dan ringkas. Balas hanya dengan terjemahannya, tanpa markdown atau embel-embel.',
+      clean.slice(0, 1500)
+    );
+    return String(out || '').trim() || clean;
+  } catch {
+    return clean;
+  }
+}
+
+async function formatRoulette(item) {
+  const title =
+    (item.title && (item.title.english || item.title.romaji)) || 'Tanpa judul';
+  const studios =
+    item.studios && Array.isArray(item.studios.nodes)
+      ? item.studios.nodes.map((n) => n && n.name).filter(Boolean)
+      : [];
+  const year =
+    Number(item.seasonYear) || Number(item.startDate && item.startDate.year) || 0;
+  const synopsis = await translateSynopsis(item.description || '');
+  const extra = [
+    `⭐ Skor: ${item.averageScore || '-'}`,
+    `📺 Episode: ${item.episodes || '?'}`,
+    `📅 Tahun: ${year || '-'}`,
+    item.siteUrl ? `🔗 ${item.siteUrl}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return buildAnimeInfo({
+    title,
+    studio: studios.join(', '),
+    genres: item.genres || [],
+    releaseDate: item.startDate || year,
+    synopsis: synopsis || 'Belum ada sinopsis.',
+    extra,
+  });
+}
 
 function fallback(...values) {
   for (const v of values) {
@@ -240,6 +425,7 @@ class AnimeFeature {
       'anime search <keyword> - cari anime',
       'anime detail <slug>    - info detail + daftar chapter',
       'anime episode <slug> [reso] - link streaming per episode',
+      'anime roulette [genre] - rekomendasi anime acak (contoh: anime roulette romance)',
       '',
       'Gunakan slug/link dari hasil detail untuk mengambil episode.',
     ].join('\n');
@@ -376,6 +562,37 @@ class AnimeFeature {
               });
             });
           }
+          return true;
+        }
+
+        case 'roulette':
+        case 'random':
+        case 'acak':
+        case 'rekomendasi':
+        case 'recommend': {
+          const rawGenre = rest.join(' ').trim();
+          const resolved = resolveRouletteGenre(rawGenre);
+          if (rawGenre && resolved.unknown) {
+            await this.reply(
+              sock,
+              m,
+              `Genre "${rawGenre}" tidak dikenal.\nPilih salah satu:\n${ROULETTE_GENRE_LIST.join(', ')}\n\nAtau kosongkan: anime roulette`
+            );
+            return true;
+          }
+
+          const list = await fetchRoulette(resolved.genre);
+          const candidates = list.filter(
+            (it) => it && it.title && (it.title.english || it.title.romaji)
+          );
+          const pool = candidates.length ? candidates : list;
+          if (pool.length === 0) {
+            await this.reply(sock, m, 'Tidak ada anime yang cocok. Coba genre lain ya.');
+            return true;
+          }
+
+          const item = pool[Math.floor(Math.random() * pool.length)];
+          await this.reply(sock, m, await formatRoulette(item));
           return true;
         }
 

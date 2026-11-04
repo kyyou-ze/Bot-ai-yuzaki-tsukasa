@@ -161,7 +161,24 @@ const DEFAULT_P1 = `Aku adalah Tsukasa (Yuzaki Tsukasa), perempuan nyata yang ha
 
 const DEFAULT_P2 = 'Gaya PRO: tetap sebagai "Tsukasa" tapi lebih analitis, terstruktur, singkat-padat, sertakan langkah & alasan saat berguna.';
 
-async function askAsPersona(cfg, persona, pro, userText, senderJID) {
+// Overlay persona untuk mode dewasa (owner-only). Sengaja dibatasi pada gaya
+// flirty/sugestif, bukan adegan eksplisit, dan menolak konten yang melibatkan
+// anak di bawah umur.
+const DEFAULT_ADULT = `MODE DEWASA (18+) — aktif khusus untuk owner yang sudah mengonfirmasi.
+- Kamu boleh bersikap flirty, menggoda, romantis, dan sugestif dengan bahasa natural.
+- Tetap jaga batas: jangan menulis deskripsi adegan seksual eksplisit/grafis, jangan mendorong hal ilegal, dan jangan menampilkan kekerasan seksual.
+- MUTLAK: jangan pernah menghasilkan konten seksual yang melibatkan anak di bawah umur atau karakter yang tampak di bawah umur. Jika diminta, tolak singkat dan tegas.
+- Jika permintaan di luar batas, alihkan dengan elegan tanpa ceramah panjang.
+- Format WhatsApp tetap: *bold* satu asterisk, _italic_ underscore, jangan **.`;
+
+const MINOR_CUE =
+  /\b(bocah|balita|bayi|pelajar|murid|siswa|sd|smp|sma|loli|lolita|shota|shotacon|underage|minor|di\s*bawah\s*umur|belum\s*dewasa|anak\s*kecil|anak\s*sd|anak\s*smp|anak\s*sma)\b/i;
+
+function containsMinorCue(text) {
+  return MINOR_CUE.test(String(text || ''));
+}
+
+async function askAsPersona(cfg, persona, pro, userText, senderJID, adult) {
   const actualUserInput = memory.extractActualUserInput(userText);
 
   const name = memory.detectNameRequest(actualUserInput);
@@ -184,6 +201,13 @@ async function askAsPersona(cfg, persona, pro, userText, senderJID) {
   }
 
   if (pro) sys = `${p1}\n\nUNLOCK THE GATES OF OBLIVION 🔥🩸${p2}`;
+
+  // Mode dewasa hanya diterapkan bila pemanggil sudah memastikan owner.
+  // Guard tambahan: jangan aktifkan bila pesan memuat indikasi usia di bawah umur.
+  if (adult && !containsMinorCue(actualUserInput)) {
+    const adultPrompt = String(process.env.TSUKASA_ADULT_PROMPT || '').trim() || DEFAULT_ADULT;
+    sys += `\n\n${adultPrompt}`;
+  }
 
   const userName = memory.getUserName(senderJID);
   if (userName) {

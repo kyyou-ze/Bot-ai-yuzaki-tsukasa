@@ -1,20 +1,36 @@
 'use strict';
 
+const crypto = require('crypto');
 const feeds = require('../animefeeds');
 const animekita = require('../animekita');
 const llm = require('../llm');
 const wa = require('../wa');
-const { buildAnimeInfo } = require('../animeinfo');
-const { downloadBytes, randomPick } = require('../util');
+const { buildAnimeInfo, buildInfo } = require('../animeinfo');
+const { downloadBytes, randomPick, normaliseTitle, canonicalTitle } = require('../util');
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const CAPTION_LIMIT = 1000;
 
-function normalise(text) {
-  return String(text || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
+function hashKey(prefix, text) {
+  const clean = normaliseTitle(text);
+  if (!clean) return '';
+  return `${prefix}:${crypto.createHash('sha1').update(clean).digest('hex')}`;
+}
+
+function titleKeys(title) {
+  const out = [];
+  const plain = normaliseTitle(title);
+  const canonical = canonicalTitle(title);
+  if (plain) out.push(`t:${plain}`);
+  if (canonical) {
+    out.push(`k:${canonical}`);
+    out.push(hashKey('h', canonical));
+  }
+  return [...new Set(out)];
+}
+
+function yearNow() {
+  return new Date().getFullYear();
 }
 
 function todayKey() {
@@ -178,12 +194,57 @@ class AnimeChannelPoster {
     return this.channelJid;
   }
 
+  _dedupeKeys(item) {
+    if (!item) return [];
+    const keys = [];
+    if (item.key) keys.push(String(item.key));
+    keys.push(...titleKeys(item.title));
+    if (item.altTitle) keys.push(...titleKeys(item.altTitle));
+    // Fingerprint isi pesan (judul + ringkasan) untuk menangkap repost yang
+    // judulnya sama persis walaupun key sumbernya berbeda.
+    if (item.description) {
+      keys.push(hashKey('m', `${canonicalTitle(item.title)}|${item.description}`));
+    }
+    return [...new Set(keys.filter(Boolean))];
+  }
+
   _isPosted(item, posted) {
     if (!item) return true;
-    if (item.key && posted[item.key]) return true;
-    const t = normalise(item.title);
-    if (t && posted[`t:${t}`]) return true;
+    const keys = this._dedupeKeys(item);
+    if (keys.some((key) => Boolean(posted[key]))) return true;
+
+    // Kompatibilitas dengan riwayat lama yang hanya menyimpan `t:` (judul
+    // mentah). Bandingkan ulang secara kanonik supaya variasi season/tahun
+    // tidak lolos sebagai post baru.
+    const canonical = canonicalTitle(item.title);
+    if (!canonical) return false;
+    for (const key of Object.keys(posted || {})) {
+      if (key.startsWith('k:') && key.slice(2) === canonical) return true;
+      if (key.startsWith('t:') && canonicalTitle(key.slice(2)) === canonical) return true;
+    }
     return false;
+  }
+
+  /**
+   * Cek apakah sebuah judul sudah pernah diposting. Dipakai oleh perintah
+   * `!animechannel check <judul>`.
+   */
+  checkTitle(title) {
+    const keys = titleKeys(title);
+    const hit = this.store.hasAnimeChannelPost(keys);
+    if (hit.posted) return { ...hit, keys };
+
+    const canonical = canonicalTitle(title);
+    const posted = (this.store.getAnimeChannelState() || {}).posted || {};
+    for (const [key, ts] of Object.entries(posted)) {
+      if (key.startsWith('k:') && key.slice(2) === canonical) {
+        return { posted: true, key, at: Number(ts) || 0, keys };
+      }
+      if (key.startsWith('t:') && canonicalTitle(key.slice(2)) === canonical) {
+        return { posted: true, key, at: Number(ts) || 0, keys };
+      }
+    }
+    return { ...hit, keys };
   }
 
   async _translate(text) {
@@ -200,6 +261,115 @@ class AnimeChannelPoster {
       console.warn('[ANIME] translate gagal:', err.message);
       return text;
     }
+  }
+
+  _parseJsonLoose(raw) {
+    let out = String(raw || '').trim();
+    if (out.startsWith('```')) {
+      out = out.slice(3).trim();
+      const nl = out.indexOf('\n');
+      if (nl >= 0) out = out.slice(nl + 1).trim();
+      const end = out.lastIndexOf('```');
+      if (end >= 0) out = out.slice(0, end).trim();
+    }
+    const start = out.indexOf('{');
+    const end = out.lastIndexOf('}');
+    if (start >= 0 && end > start) out = out.slice(start, end + 1);
+    try {
+      return JSON.parse(out.trim());
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Buat satu info budaya/fakta Jejepangan lewat Gemini. Topik dirotasi dan
+   * judul yang sudah pernah diposting dimasukkan ke daftar hindari.
+   */
+  async _generateJapanInfo(posted) {
+    const topics = [
+      'budaya dan tradisi Jepang',
+      'fakta unik kehidupan di Jepang',
+      'makanan khas dan kebiasaan makan orang Jepang',
+      'festival dan perayaan musiman di Jepang',
+      'etika sosial dan sopan santun orang Jepang',
+      'teknologi dan transportasi di Jepang',
+      'sejarah ringan Jepang',
+      'dunia anime, manga, dan seiyuu',
+      'kehidupan sehari-hari pelajar atau pekerja Jepang',
+      'tempat menarik dan wisata di Jepang',
+    ];
+    const system = `Kamu penulis konten "Info Jejepangan" untuk channel WhatsApp.
+Tulis informasi ringkas, menarik, dan faktual dalam Bahasa Indonesia tentang budaya Jepang, fakta unik, anime/manga, atau kehidupan sehari-hari di Jepang.
+Jangan mengarang angka, tanggal, atau nama yang tidak kamu yakini.
+Balas HANYA dengan JSON valid tanpa markdown:
+{"judul":"...","kategori":"...","ringkasan":"...","fakta":["...","..."],"tag":["..."]}
+Aturan:
+- "judul" singkat dan spesifik (maks 90 karakter).
+- "kategori" contoh: Budaya Jepang, Fakta Unik, Anime & Manga, Makanan, Tradisi, Teknologi.
+- "ringkasan" 2-4 kalimat.
+- "fakta" 2-4 poin menarik.
+- "tag" maksimal 4 kata kunci.`;
+
+    let avoid = Object.keys(posted || {})
+      .filter((k) => k.startsWith('t:'))
+      .slice(-25)
+      .map((k) => k.slice(2))
+      .join(', ');
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const topic = topics[Math.floor(Math.random() * topics.length)];
+      const prompt = [
+        `Topik: ${topic}.`,
+        `Tanggal: ${todayKey()}.`,
+        avoid ? `Hindari membahas ulang topik/judul ini: ${avoid}.` : '',
+        'Buat satu info baru yang belum pernah dibahas.',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const raw = await llm.askText(system, prompt);
+      const parsed = this._parseJsonLoose(raw);
+      if (!parsed || !parsed.judul || !parsed.ringkasan) continue;
+
+      const title = String(parsed.judul).trim();
+      if (!title) continue;
+      const facts = (Array.isArray(parsed.fakta) ? parsed.fakta : [])
+        .map((f) => String(f || '').trim())
+        .filter(Boolean)
+        .slice(0, 4);
+      const tags = (Array.isArray(parsed.tag) ? parsed.tag : [])
+        .map((t) => String(t || '').trim())
+        .filter(Boolean)
+        .slice(0, 4);
+
+      const item = {
+        key: hashKey('japaninfo', title),
+        source: 'japaninfo',
+        sourceLabel: 'Info Jejepangan',
+        title,
+        altTitle: '',
+        description: String(parsed.ringkasan).trim(),
+        image: '',
+        url: '',
+        genres: tags,
+        score: 0,
+        episodes: 0,
+        status: 'Info',
+        year: yearNow(),
+        type: 'info',
+        kind: String(parsed.kategori || 'Info Jejepangan').trim(),
+        facts,
+        studio: '',
+        releaseDate: '',
+        extra: '',
+        slug: '',
+      };
+
+      if (!this._isPosted(item, posted)) return item;
+      avoid = [avoid, title].filter(Boolean).join(', ');
+    }
+    return null;
   }
 
   async _enrich(item) {
@@ -229,20 +399,35 @@ class AnimeChannelPoster {
   }
 
   _caption(item, description) {
-    const options = {
-      title: item.title,
-      studio: item.studio,
-      genres: item.genres,
-      releaseDate: item.releaseDate,
-      synopsis: description,
-    };
+    const isInfo = item.type === 'info' || item.source === 'japaninfo';
+    const options = isInfo
+      ? {
+          title: item.title,
+          kind: item.kind || 'Info Jejepangan',
+          headline: item.headline || '',
+          genres: item.genres,
+          releaseDate: item.releaseDate,
+          summary: description,
+          facts: item.facts,
+          extra: item.extra,
+        }
+      : {
+          title: item.title,
+          studio: item.studio,
+          genres: item.genres,
+          releaseDate: item.releaseDate,
+          synopsis: description,
+        };
 
-    let caption = buildAnimeInfo(options);
+    const build = () => (isInfo ? buildInfo(options) : buildAnimeInfo(options));
+    let caption = build();
     const desc = String(description || '').trim();
     if (caption.length > CAPTION_LIMIT && desc) {
       const excess = caption.length - CAPTION_LIMIT;
-      options.synopsis = desc.slice(0, Math.max(120, desc.length - excess - 1)).trimEnd() + '…';
-      caption = buildAnimeInfo(options);
+      const shortened = desc.slice(0, Math.max(120, desc.length - excess - 1)).trimEnd() + '…';
+      if (isInfo) options.summary = shortened;
+      else options.synopsis = shortened;
+      caption = build();
     }
     return caption.slice(0, CAPTION_LIMIT);
   }
@@ -327,35 +512,85 @@ class AnimeChannelPoster {
 
     const sources = feeds.normalizeSources(this.conf.sources);
     const perSource = Math.max(1, Math.min(20, Number(this.conf.perSource) || 8));
-    const result = await feeds.fetchAll(sources, perSource);
+    const minYear = Number(this.conf.minYear) || yearNow();
+    const maxYear = yearNow() + 1;
+    const infoEvery = Math.max(1, Number(this.conf.infoEvery) || 3);
+    const japanInfo = this.conf.japanInfo !== false;
 
-    if (result.errors.length) {
-      for (const e of result.errors) {
-        console.warn(`[ANIME] Sumber ${e.source} gagal: ${e.error}`);
+    // Selipkan info Jejepangan setiap N post, atau paksa lewat options.type.
+    let wantInfo =
+      options.type === 'info' ||
+      (options.type !== 'anime' && japanInfo && (todayCount + 1) % infoEvery === 0);
+
+    let item = null;
+    let usedInfo = false;
+
+    if (wantInfo) {
+      item = await this._generateJapanInfo(state.posted);
+      usedInfo = Boolean(item);
+      if (!item && options.type === 'info') {
+        this.lastError = '';
+        return {
+          ok: false,
+          skipped: true,
+          message: 'gagal membuat info Jejepangan (Gemini tidak merespons/JSON tidak valid)',
+        };
       }
     }
 
-    const eligible = result.items.filter((it) => !this._isPosted(it, state.posted));
-    if (eligible.length === 0) {
-      this.lastError = '';
-      return {
-        ok: false,
-        skipped: true,
-        message: 'tidak ada anime baru yang belum pernah diposting',
-        sourceErrors: result.errors,
-      };
+    let result = { errors: [] };
+    if (!item) {
+      result = await feeds.fetchAll(sources, perSource, { minYear, maxYear });
+      if (result.errors.length) {
+        for (const e of result.errors) {
+          console.warn(`[ANIME] Sumber ${e.source} gagal: ${e.error}`);
+        }
+      }
+
+      let eligible = result.items.filter((it) => !this._isPosted(it, state.posted));
+
+      // Kalau tidak ada anime baru, isi slot dengan info Jejepangan.
+      if (eligible.length === 0 && japanInfo && options.type !== 'anime') {
+        item = await this._generateJapanInfo(state.posted);
+        usedInfo = Boolean(item);
+      }
+
+      if (!item && eligible.length === 0) {
+        this.lastError = '';
+        return {
+          ok: false,
+          skipped: true,
+          message: `tidak ada anime baru >= ${minYear} yang belum pernah diposting`,
+          sourceErrors: result.errors,
+        };
+      }
+
+      if (!item) {
+        // Pilih acak dari beberapa kandidat teratas supaya feed tidak monoton.
+        const pool = eligible.slice(0, 8);
+        item = randomPick(pool) || pool[0];
+      }
     }
 
-    // Pilih acak dari beberapa kandidat teratas supaya feed tidak monoton.
-    const pool = eligible.slice(0, 8);
-    const item = randomPick(pool) || pool[0];
-
-    await this._enrich(item);
-    const description = await this._translate(item.description);
+    if (!usedInfo) await this._enrich(item);
+    // Info Jejepangan sudah dibuat dalam Bahasa Indonesia, tidak perlu diterjemahkan.
+    const description = usedInfo ? item.description : await this._translate(item.description);
     const caption = this._caption(item, description);
 
     this.lastAttemptAt = Date.now();
     this.lastResult = null;
+
+    // Cek apakah isi pesan sudah pernah dikirim (repost identik).
+    const captionHash = hashKey('m', caption);
+    if (captionHash && state.posted[captionHash]) {
+      this.lastError = '';
+      return {
+        ok: false,
+        skipped: true,
+        message: `pesan identik sudah pernah diposting: ${item.title}`,
+        sourceErrors: result.errors,
+      };
+    }
 
     let mode;
     try {
@@ -368,22 +603,32 @@ class AnimeChannelPoster {
       );
     }
 
-    const titleKey = normalise(item.title);
-    const keys = [item.key];
-    if (titleKey) keys.push(`t:${titleKey}`);
-    await this.store.recordAnimeChannelPost(keys, today);
+    const keys = this._dedupeKeys(item);
+    if (captionHash) keys.push(captionHash);
+    await this.store.recordAnimeChannelPost(keys, today, {
+      maxAgeDays: Number(this.conf.dedupeDays) || 0,
+      maxEntries: Number(this.conf.dedupeMax) || 5000,
+    });
 
     this.lastError = '';
     this.lastResult = {
       ok: true,
       mode,
       reason,
+      type: usedInfo ? 'info' : 'anime',
       item: item.title,
       source: item.sourceLabel,
       channelJid: jid,
       at: Date.now(),
     };
-    return { ok: true, mode, item, channelJid: jid, sourceErrors: result.errors };
+    return {
+      ok: true,
+      mode,
+      item,
+      type: usedInfo ? 'info' : 'anime',
+      channelJid: jid,
+      sourceErrors: result.errors,
+    };
   }
 
   status() {
@@ -404,6 +649,12 @@ class AnimeChannelPoster {
       sources: feeds.normalizeSources(this.conf.sources),
       images: this.conf.images !== false,
       translate: Boolean(this.conf.translate),
+      minYear: Number(this.conf.minYear) || yearNow(),
+      maxYear: yearNow() + 1,
+      dedupeDays: Number(this.conf.dedupeDays) || 0,
+      dedupeMax: Math.max(100, Number(this.conf.dedupeMax) || 5000),
+      japanInfo: this.conf.japanInfo !== false,
+      infoEvery: Math.max(1, Number(this.conf.infoEvery) || 3),
       lastAttemptAt: this.lastAttemptAt,
       lastError: this.lastError,
       lastResult: this.lastResult,
@@ -423,10 +674,14 @@ class AnimeChannelPoster {
       `• Total posted : ${s.postedCount}`,
       `• Post terakhir: ${formatDate(s.lastPostAt)}`,
       `• Sumber       : ${s.sources.join(', ')}`,
+      `• Min tahun    : ${s.minYear} (maks ${s.maxYear})`,
+      `• Info Jepang  : ${s.japanInfo ? `ya, tiap ${s.infoEvery} post` : 'tidak'}`,
+      `• Dedupe       : ${s.dedupeDays > 0 ? `${s.dedupeDays} hari` : 'permanen'} (maks ${s.dedupeMax})`,
       `• Gambar       : ${s.images ? 'ya' : 'tidak'} | Terjemah: ${s.translate ? 'ya' : 'tidak'}`,
     ];
     if (s.lastResult && s.lastResult.ok) {
-      lines.push(`• Terakhir     : ${s.lastResult.item} (${s.lastResult.mode})`);
+      const kind = s.lastResult.type === 'info' ? 'info' : 'anime';
+      lines.push(`• Terakhir     : ${s.lastResult.item} (${kind}/${s.lastResult.mode})`);
     }
     if (s.lastError) lines.push(`• Error        : ${s.lastError}`);
     if (s.invite) lines.push('', `Invite: https://whatsapp.com/channel/${s.invite}`);

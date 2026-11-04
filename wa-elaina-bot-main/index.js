@@ -12,6 +12,7 @@ const { Router } = require('./src/router');
 const { HttpApi } = require('./src/httpapi');
 const { Reminders } = require('./src/reminders');
 const { AnimeChannelPoster } = require('./src/features/animechannel');
+const { GroupTools } = require('./src/features/grouptools');
 
 const logger = pino({ level: process.env.BAILEYS_LOG || 'warn' });
 
@@ -38,6 +39,7 @@ async function main() {
   const isReady = () => waReady;
   const animeChannel = new AnimeChannelPoster(cfg, store, isReady);
   const reminders = new Reminders(cfg);
+  const groupTools = new GroupTools(cfg, store);
 
   const api = new HttpApi(cfg, isReady);
   api.start();
@@ -89,7 +91,7 @@ async function main() {
 
     wa.setSock(sock);
     currentSock = sock;
-    const router = new Router(cfg, sock, isReady, store, animeChannel);
+    const router = new Router(cfg, sock, isReady, store, animeChannel, groupTools);
 
     sock.ev.on('creds.update', saveCreds);
 
@@ -129,11 +131,13 @@ async function main() {
         console.log('[READY] Tsukasa siap menerima pesan.');
         animeChannel.start();
         reminders.start();
+        groupTools.start();
       }
 
       if (connection === 'connecting') {
         waReady = false;
         animeChannel.stop();
+        groupTools.stop();
         console.log('[WA] Menghubungkan...');
       }
 
@@ -141,6 +145,7 @@ async function main() {
         waReady = false;
         animeChannel.stop();
         reminders.stop();
+        groupTools.stop();
         if (shuttingDown) return;
 
         const statusCode =
@@ -198,6 +203,7 @@ async function main() {
     shuttingDown = true;
     console.log('[BOOT] SIGINT diterima, menutup...');
     animeChannel.stop();
+    groupTools.stop();
     try {
       wa.getSock()?.end?.(undefined);
     } catch {
@@ -210,6 +216,7 @@ async function main() {
     shuttingDown = true;
     console.log('[BOOT] SIGTERM diterima, menutup...');
     animeChannel.stop();
+    groupTools.stop();
     try {
       wa.getSock()?.end?.(undefined);
     } catch {

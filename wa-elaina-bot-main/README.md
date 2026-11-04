@@ -7,6 +7,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 ## Fitur Utama
 
 - **Chat AI berkarakter Tsukasa** — Mode `MANUAL` (butuh trigger `tsukasa`) atau `AUTO`. Persona `tsukasa1`/`tsukasa2` bisa diubah per chat (`!tsukasa persona ...`). Mode Pro bisa diaktifkan per chat.
+- **Mode Dewasa (owner-only)** — Di chat pribadi, jika owner memulai obrolan hot/flirty, bot otomatis mengikuti (18+, sugestif) selama 30 menit. Kirim `stop` untuk kembali normal.
 - **Vision** — Kirim/reply gambar + sebut `tsukasa` untuk dianalisis Gemini.
 - **VN → Teks → Auto-reply** — VN langsung akan ditranskrip & dibalas. VN hasil _quote_ hanya diproses jika menyebut `tsukasa`.
 - **TTS VN** (`tsukasa vn <teks>`) — Hasilkan voice note via ElevenLabs (bisa pakai konteks balasan).
@@ -15,8 +16,10 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Brat & Sticker** — `tsukasa brat <teks>` untuk sticker gaya brat. Sticker biasa dari gambar/URL/video (animated memakai ffmpeg).
 - **Blue Archive & Pap** — `ba` / `!ba` atau kata kunci terkait, `!pap` / `pap`.
 - **TikTok (TikWM)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Batas ukuran bisa dikonfigurasi.
-- **AnimeKita** — `!anime ...` (new/movie/schedule/list/genre/search/detail/episode). Episode dengan link Pixeldrain bisa diunduh otomatis.
-- **Auto-post Anime ke Channel** — Bot otomatis mencari info anime terbaru dari **AniList, Kitsu, AnimeKita, dan MyAnimeList (Jikan)**, lalu memposting ke channel WhatsApp (default `NimaCoRe - Latest Info`) lengkap dengan cover, genre, skor, dan link. Tanpa trigger, berjalan sesuai interval. Cek/tes manual: `!animechannel status` dan `!animechannel test` (owner/admin grup).
+- **AnimeKita** — `!anime ...` (new/movie/schedule/list/genre/search/detail/episode/roulette). Episode dengan link Pixeldrain bisa diunduh otomatis.
+- **Anime Roulette** — `!anime roulette [genre]` memilih anime acak dari AniList lengkap dengan sinopsis (diterjemahkan ke Indonesia bila Gemini tersedia), skor, episode, tahun, dan link.
+- **Grup Toolkit** — `!ingatkan` (pengingat persisten dengan waktu natural), `!poll` (polling native WhatsApp), `!rangkum` (ringkasan percakapan terakhir via AI), dan `!statistik` (anggota paling aktif, jam tersibuk, jumlah pesan).
+- **Auto-post Anime & Info Jejepangan ke Channel** — Bot otomatis mencari info anime terbaru dari **AniList, Kitsu, AnimeKita, dan MyAnimeList (Jikan)**, lalu memposting ke channel WhatsApp (default `NimaCoRe - Latest Info`) lengkap dengan cover, genre, skor, dan link. Hanya anime dengan tahun rilis baru yang lolos (bisa diatur), riwayat dedupe disimpan permanen, dan info budaya/fakta Jejepangan diselipkan tiap beberapa post. Cek/tes manual: `!animechannel status`, `!animechannel test`, `!animechannel info`, `!animechannel check <judul>` (owner/admin grup).
 - **Peraturan/Moderasi** — `!peraturan on|off|sync|status|rules|clear @user`. Bot menilai pesan grup dengan Gemini moderation, memberi warn (max 5), bisa mengeluarkan otomatis. Bisa kurangi warn dengan "sebut nama bot + saya mau mengurangi warn + subhanallah" 5x.
 - **TagAll**, **RVO**, **Welcome**, **Owner features**.
 - **HTTP API** — `GET /`, `GET /healthz`, `GET /help`, `POST/GET /send` dengan `X-API-Key` + rate limit.
@@ -51,6 +54,8 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `MODE` | `MANUAL` | `MANUAL` (butuh trigger) / `AUTO` |
 | `TRIGGER` | `tsukasa` | Kata pemicu |
 | `BOT_NAME` | `Tsukasa` | Nama bot |
+| `BOT_TIMEZONE` | `Asia/Jakarta` | Zona waktu tampilan pengingat & statistik |
+| `BOT_TZ_OFFSET` | `7` | Offset UTC zona waktu (WIB = 7) untuk parsing "jam 15:30" |
 | `SESSION_DIR` | `./session` | Folder auth Baileys (bisa jadi `*_auth` jika diisi nama file) |
 | `PAIRING_NUMBER` | - | Nomor WhatsApp bot untuk pairing code, mis. `6281234567890` |
 | `STATE_DB` | `./tsukasa_state.json` | State JSON (persona/pro/warn/peraturan) |
@@ -59,7 +64,7 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `SEND_API_KEY` | - | API key untuk `/send` |
 | `SEND_RATE_PER_MIN` | `10` | Rate limit `/send` per IP |
 | `GEMINI_API_KEYS` / `GEMINI_API_KEY` | - | API key Gemini (bisa koma) — wajib |
-| `GEMINI_TEXT_MODEL` | `gemini-2.5-flash-lite` | Model chat |
+| `GEMINI_TEXT_MODEL` | `gemini-3.5-flash-lite` | Model chat |
 | `ELEVENLABS_API_KEY` / `ELEVENLABS_VOICE_ID` | - | Untuk fitur VN TTS |
 | `FFMPEG_PATH` | - | Path ffmpeg manual (opsional) |
 | `VN_MAX_WORDS` | `80` | Batas kata script VN |
@@ -77,11 +82,17 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `ANIME_CHANNEL_IMAGES` | `true` | Kirim cover (fallback teks jika gagal) |
 | `ANIME_CHANNEL_TRANSLATE` | `true` | Terjemahkan sinopsis ke Indonesia via Gemini |
 | `ANIME_CHANNEL_START_DELAY_SEC` | `60` | Jeda post pertama setelah terhubung |
+| `ANIME_CHANNEL_MIN_YEAR` | `0` | Filter tahun rilis; `0` = tahun berjalan, `1900` = nonaktif |
+| `ANIME_CHANNEL_DEDUPE_DAYS` | `0` | Masa simpan riwayat dedupe; `0` = permanen |
+| `ANIME_CHANNEL_DEDUPE_MAX` | `5000` | Batas jumlah entri riwayat dedupe |
+| `ANIME_CHANNEL_JAPAN_INFO` | `true` | Selipkan info budaya/fakta Jejepangan |
+| `ANIME_CHANNEL_INFO_EVERY` | `3` | Info Jejepangan muncul tiap N post |
 | `INFO_FOOTER` | `> yuzaki tsukasa by ren` | Footer output info channel & `!info` |
 | `BA_LINKS_LOCAL` / `BA_LINKS_URL` | - | Sumber gambar Blue Archive |
 | `PAP_LINKS_PATH` | - | Sumber gambar Pap |
 | `PERATURAN_APIKEY` | - | Diperlukan untuk fitur peraturan/moderasi |
 | `TSUKASA1_PROMPT` / `TSUKASA2_PROMPT` | - | Override prompt persona |
+| `TSUKASA_ADULT_PROMPT` | - | Override overlay mode dewasa owner-only (18+, sugestif) |
 | `HIJABIN_API_URL` / `HIJABIN_API_KEY` | - | Opsional untuk hijabin via API eksternal |
 | `OWNER_*` | - | Konfigurasi owner |
 | `WELCOME_ENABLED` / `WELCOME_TEXT` | - | Pesan selamat datang grup |
@@ -141,7 +152,9 @@ Fitur ini berjalan otomatis setelah bot terhubung (tidak perlu trigger) dan meng
 **Cara kerja:**
 
 - Mengambil kandidat dari AniList, Kitsu, AnimeKita, dan Jikan/MyAnimeList secara paralel. Sumber yang timeout/gagal dilewati tanpa menghentikan post.
-- Judul yang sudah pernah diposting (per id sumber maupun judul) tidak akan diposting ulang.
+- Hanya kandidat dengan tahun rilis `>= ANIME_CHANNEL_MIN_YEAR` (default tahun berjalan) yang dipakai. Tahun AnimeKita diambil otomatis dari metadata AniList.
+- Judul yang sudah pernah diposting tidak akan diposting ulang. Dedupe memakai id sumber, judul yang dinormalisasi (tahun/season/part dibuang), fingerprint isi pesan, dan disimpan **permanen** (`ANIME_CHANNEL_DEDUPE_DAYS=0`).
+- Info budaya/fakta Jejepangan dibuat via Gemini dan diselipkan tiap `ANIME_CHANNEL_INFO_EVERY` post (default tiap 3 post), atau dipaksa dengan `!animechannel info`.
 - Cover diunduh dan dikirim bersama caption. Jika media gagal, bot otomatis fallback ke teks, lalu ke raw newsletter bila perlu.
 - Batas harian `ANIME_CHANNEL_MAX_PER_DAY` mencegah spam. Post pertama menunggu `ANIME_CHANNEL_START_DELAY_SEC`.
 - Caption memakai Bahasa Indonesia dan menyertakan branding channel.
@@ -153,10 +166,74 @@ Template info ada di `src/animeinfo.js` dan dipakai oleh auto-post channel maupu
 **Perintah manual (owner / admin grup):**
 
 ```text
-!animechannel status   # status scheduler, channel, jumlah post, error terakhir
-!animechannel test     # paksa satu post sekarang (melewati batas harian)
-!info <topik>          # info apa saja (anime, film, Jepang, fakta absurd, dll)
+!animechannel status        # status scheduler, filter tahun, dedupe, jumlah post
+!animechannel test          # paksa satu post sekarang (melewati batas harian)
+!animechannel info          # paksa post info budaya/fakta Jejepangan
+!animechannel check <judul> # cek apakah judul sudah pernah diposting
+!info <topik>               # info apa saja (anime, film, Jepang, fakta absurd, dll)
 ```
+
+## Grup Toolkit & Anime Roulette
+
+Fitur ini bisa dipakai tanpa trigger (langsung dengan `!`) dan tidak memerlukan Gemini, kecuali `!rangkum` dan terjemahan sinopsis roulette.
+
+### Pengingat
+
+```text
+!ingatkan 10m minum air
+!ingatkan 1 jam 30 menit rapat
+!ingatkan besok 08:00 berangkat kerja
+!ingatkan jam 15:30 telepon ibu
+!ingatkan list
+!ingatkan hapus <id>
+```
+
+- Waktu relatif: `10s`, `10m`, `2j`, `1 jam 30 menit`, `2 hari`.
+- Waktu absolut memakai `BOT_TIMEZONE`/`BOT_TZ_OFFSET` (default WIB).
+- Pengingat disimpan di `tsukasa_state.json` dan tetap ada setelah restart.
+- Jika waktu absolut sudah lewat hari ini, pengingat dijadwalkan besok.
+
+### Polling
+
+```text
+!poll Makan apa? | Nasi goreng | Mie ayam | Bakso
+```
+
+Mengirim poll native WhatsApp (satu pilihan, maksimal 12 opsi). Jika poll gagal dikirim, bot otomatis fallback ke teks bernomor.
+
+### Rangkuman & statistik
+
+```text
+!rangkum          # rangkum 40 pesan terakhir
+!rangkum 80       # rangkum 80 pesan terakhir (maks 100)
+!statistik        # jumlah pesan, anggota aktif, jam tersibuk, top 5
+```
+
+- Bot menyimpan **metadata pesan di memori** (maksimal 150 pesan terakhir per chat) untuk fitur ini. Tidak ditulis ke disk dan hilang saat restart.
+- `!rangkum` mengirim transkrip ke Gemini; `!statistik` dihitung lokal tanpa AI.
+- Gunakan di grup yang memang memperbolehkan bot membaca percakapan.
+
+### Anime Roulette
+
+```text
+!anime roulette
+!anime roulette romance
+!anime roulette komedi
+!anime roulette sci-fi
+```
+
+Memilih anime acak dari AniList (skor minimal 60), lalu menampilkan judul, studio, genre, tahun, skor, jumlah episode, sinopsis, dan link. Genre Indonesia umum seperti `aksi`, `komedi`, `romansa`, dan `isekai` otomatis dipetakan.
+
+## Mode Dewasa (khusus owner)
+
+Fitur ini **hanya aktif di chat pribadi antara owner dan bot**. Tidak berjalan di grup dan tidak bisa dipakai member lain.
+
+- Jika owner memulai percakapan bernuansa hot/flirty, bot otomatis mengikuti gaya tersebut.
+- Mode berlaku 30 menit sejak pemicu terakhir, lalu kembali normal otomatis.
+- Kirim `stop` (atau `biasa aja`) untuk langsung kembali normal.
+- Kontrol manual: `!tsukasa mode dewasa on|off` (owner, chat pribadi).
+- Batas aman: gaya **sugestif/flirty**, bukan adegan eksplisit; menolak konten yang melibatkan anak di bawah umur. Filter bawaan Gemini tetap berlaku.
+- Prompt overlay bisa diganti lewat `TSUKASA_ADULT_PROMPT` di `.env`.
 
 ## HTTP API
 
