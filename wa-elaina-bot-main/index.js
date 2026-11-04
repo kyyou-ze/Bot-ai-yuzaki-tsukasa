@@ -14,6 +14,7 @@ const { Reminders } = require('./src/reminders');
 const { AnimeChannelPoster } = require('./src/features/animechannel');
 const { GroupTools } = require('./src/features/grouptools');
 const { VerifStore } = require('./src/verifstore');
+const { TikTokAccounts } = require('./src/tiktokaccounts');
 const { TikTokMonitor } = require('./src/tiktokmonitor');
 
 const logger = pino({ level: process.env.BAILEYS_LOG || 'warn' });
@@ -43,7 +44,8 @@ async function main() {
   const reminders = new Reminders(cfg);
   const groupTools = new GroupTools(cfg, store);
   const verifStore = new VerifStore(cfg);
-  const tiktokMonitor = new TikTokMonitor(cfg, verifStore, isReady);
+  const tiktokAccounts = new TikTokAccounts(cfg);
+  const tiktokMonitor = new TikTokMonitor(cfg, verifStore, isReady, tiktokAccounts);
 
   const api = new HttpApi(cfg, isReady);
   api.start();
@@ -103,7 +105,8 @@ async function main() {
       animeChannel,
       groupTools,
       verifStore,
-      tiktokMonitor
+      tiktokMonitor,
+      tiktokAccounts
     );
 
     sock.ev.on('creds.update', saveCreds);

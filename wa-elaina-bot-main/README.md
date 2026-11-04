@@ -16,7 +16,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Brat & Sticker** — `tsukasa brat <teks>` untuk sticker gaya brat. Sticker biasa dari gambar/URL/video (animated memakai ffmpeg).
 - **Blue Archive & Pap** — `ba` / `!ba` atau kata kunci terkait, `!pap` / `pap`.
 - **TikTok (TikWM)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Batas ukuran bisa dikonfigurasi.
-- **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 3 menit, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Command `/verif`, `/listverif`, `/unverif`, `/siapaup`, `/cekup`, `/history` (juga bisa `Tsukasa ...` atau `.verif`).
+- **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 3 menit, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Akun bisa dikelola dari WhatsApp (`/addakun`, `/delakun`, `/listakun`, `/detector`). Command verif: `/verif`, `/listverif`, `/unverif`, `/siapaup`, `/cekup`, `/history` (juga bisa `Tsukasa ...` atau `.verif`).
 - **AnimeKita** — `!anime ...` (new/movie/schedule/list/genre/search/detail/episode/roulette). Episode dengan link Pixeldrain bisa diunduh otomatis.
 - **Anime Roulette** — `!anime roulette [genre]` memilih anime acak dari AniList lengkap dengan sinopsis (diterjemahkan ke Indonesia bila Gemini tersedia), skor, episode, tahun, dan link.
 - **Grup Toolkit** — `!ingatkan` (pengingat persisten dengan waktu natural), `!poll` (polling native WhatsApp), `!rangkum` (ringkasan percakapan terakhir via AI), dan `!statistik` (anggota paling aktif, jam tersibuk, jumlah pesan).
@@ -82,6 +82,7 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `TIKTOK_API_URL` | - | Endpoint scraper sendiri dengan placeholder `{username}` & `{count}` (opsional) |
 | `TIKTOK_API_KEY` | - | API key untuk `TIKTOK_API_URL` (opsional) |
 | `VERIF_DB` / `HISTORY_UP_DB` / `UP_TODAY_DB` / `SEEN_VIDEOS_DB` | `./database/*.json` | Lokasi database JSON fitur verif & detector |
+| `TIKTOK_ACCOUNTS_DB` | `./database/accounts.json` | Daftar akun hasil `/addakun` & `/delakun` |
 | `ANIME_CHANNEL_ENABLED` | `true` | Aktifkan auto-post info anime ke channel |
 | `ANIME_CHANNEL_INVITE` | `0029VbC2pzO5K3zPHUeTud01` | Kode/URL invite channel tujuan |
 | `ANIME_CHANNEL_JID` | - | JID channel langsung (opsional, mis. `123@newsletter`) |
@@ -185,7 +186,7 @@ Template info ada di `src/animeinfo.js` dan dipakai oleh auto-post channel maupu
 
 ## Detector TikTok & Verif ACC
 
-Bot memantau akun di `TIKTOK_ACCOUNTS` setiap `TIKTOK_CHECK_MIN` menit. Untuk tiap video baru, bot mengecek:
+Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTOK_CHECK_MIN` menit. Untuk tiap video baru, bot mengecek:
 
 - Caption mengandung hashtag `TIKTOK_HASHTAG` (default `#margaecn`, case-insensitive).
 - Nickname/display name akun mengandung `TIKTOK_CN_KEYWORD` (default `ECN`). Huruf Unicode seperti `𝙀𝘾𝙉`, `〆𝙀𝘾𝙉`, dan `ft 𝙀𝘾𝙉` otomatis dinormalisasi jadi `ECN` sebelum dicocokkan.
@@ -215,7 +216,22 @@ Command verif (bisa ` / `, `.`, `!`, atau diawali `Tsukasa`):
 /history           # rekap UP 7 hari terakhir per ACC
 ```
 
-Data disimpan di `database/verif.json`, `database/history_up.json`, `database/up_today.json`, dan `database/seen_videos.json` (bisa dipindah lewat env).
+### Kelola akun pantauan dari WhatsApp
+
+Tanpa edit `.env` dan tanpa restart (owner atau admin grup):
+
+```text
+/addakun @username   # tambah akun ke daftar pantauan
+/delakun @username   # hapus akun dari daftar pantauan
+/listakun            # lihat semua akun + status detector
+/detector status     # info detector (CN, hashtag, interval)
+/detector on         # aktifkan detector (khusus owner)
+/detector off        # matikan detector (khusus owner)
+```
+
+Daftar akun disimpan di `database/accounts.json`. Selama file itu belum punya daftar akun, bot memakai `TIKTOK_ACCOUNTS` dari `.env`. Begitu ada `/addakun` atau `/delakun`, daftar di file JSON yang menjadi acuan.
+
+Data verif disimpan di `database/verif.json`, `database/history_up.json`, `database/up_today.json`, `database/seen_videos.json`, dan `database/accounts.json` (bisa dipindah lewat env).
 
 ## Grup Toolkit & Anime Roulette
 

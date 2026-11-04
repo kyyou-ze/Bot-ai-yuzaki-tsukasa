@@ -303,27 +303,65 @@ function formatDetectorMessage(video, cfg) {
 }
 
 class TikTokMonitor {
-  constructor(cfg, store, isReady) {
+  constructor(cfg, store, isReady, accountsStore) {
     this.cfg = cfg || {};
     this.store = store;
+    this.accountsStore = accountsStore || null;
     this.ready = typeof isReady === 'function' ? isReady : () => Boolean(isReady);
-    this.accounts = Array.isArray(this.cfg.tiktokAccounts) ? this.cfg.tiktokAccounts : [];
     this.intervalMs = Math.max(1, Number(this.cfg.tiktokCheckMin) || 3) * 60 * 1000;
     this.timer = null;
     this.startTimer = null;
     this.ticking = false;
   }
 
+  /** Daftar akun aktif: dari database/accounts.json bila sudah diubah. */
+  getAccounts() {
+    if (this.accountsStore) return this.accountsStore.list();
+    return Array.isArray(this.cfg.tiktokAccounts) ? this.cfg.tiktokAccounts : [];
+  }
+
+  isEnabled() {
+    if (this.accountsStore) return this.accountsStore.isEnabled();
+    return this.cfg.tiktokMonitorEnabled !== false;
+  }
+
+  /**
+   * Dipanggil setelah /addakun, /delakun, atau /detector on|off supaya
+   * perubahan langsung berlaku tanpa restart.
+   */
+  refresh() {
+    if (!this.isEnabled()) {
+      this.stop();
+      console.log('[TIKTOK] Detector dimatikan.');
+      return;
+    }
+
+    const accounts = this.getAccounts();
+    if (!accounts.length) {
+      this.stop();
+      console.warn('[TIKTOK] Daftar akun kosong, detector berhenti sampai ada /addakun.');
+      return;
+    }
+
+    if (this.timer) {
+      console.log(`[TIKTOK] Daftar akun diperbarui: ${accounts.join(', ')}`);
+      return;
+    }
+
+    this.start();
+  }
+
   start() {
-    if (this.cfg.tiktokMonitorEnabled === false) return;
-    if (!this.accounts.length) {
-      console.warn('[TIKTOK] TIKTOK_ACCOUNTS kosong, detector tidak berjalan.');
+    if (!this.isEnabled()) return;
+    const accounts = this.getAccounts();
+    if (!accounts.length) {
+      console.warn('[TIKTOK] Daftar akun kosong, detector tidak berjalan. Tambah via /addakun.');
       return;
     }
     if (this.timer) return;
 
     console.log(
-      `[TIKTOK] Detector aktif: ${this.accounts.join(', ')} | cek tiap ${Math.round(
+      `[TIKTOK] Detector aktif: ${accounts.join(', ')} | cek tiap ${Math.round(
         this.intervalMs / 60000
       )} menit`
     );
@@ -349,11 +387,12 @@ class TikTokMonitor {
   }
 
   async tick() {
+    if (!this.isEnabled()) return;
     if (!this.ready()) return;
     if (this.ticking) return;
     this.ticking = true;
     try {
-      for (const account of this.accounts) {
+      for (const account of this.getAccounts()) {
         await this.checkAccount(account).catch((err) => {
           console.error(`[TIKTOK] ${account} gagal dicek:`, err.message);
         });

@@ -9,6 +9,7 @@ const { InfoFeature } = require('./features/info');
 const { PeraturanFeature } = require('./features/peraturan');
 const { GroupTools } = require('./features/grouptools');
 const { VerifFeature } = require('./features/verif');
+const { TikTokAdminFeature } = require('./features/tiktokadmin');
 const { VerifStore } = require('./verifstore');
 const tiktok = require('./tiktok');
 const llm = require('./llm');
@@ -41,7 +42,7 @@ function escapeRegExp(value) {
  * "Tsukasa verif". Hanya nama perintah yang dikenal yang dikembalikan supaya
  * perintah lain tetap mengalir ke handler lama.
  */
-function parseVerifCommand(text, trigger) {
+function parseFeatureCommand(text, trigger) {
   const raw = String(text || '').trim();
   if (!raw) return null;
 
@@ -62,7 +63,7 @@ function parseVerifCommand(text, trigger) {
     rest = String(match[2] || '').trim();
   }
 
-  if (!VerifFeature.isCommand(cmd)) return null;
+  if (!VerifFeature.isCommand(cmd) && !TikTokAdminFeature.isCommand(cmd)) return null;
   return { cmd, rest };
 }
 
@@ -158,7 +159,17 @@ function quotedInfo(quoted) {
 }
 
 class Router {
-  constructor(cfg, sock, ready, store, animeChannel, groupTools, verifStore, tiktokMonitor) {
+  constructor(
+    cfg,
+    sock,
+    ready,
+    store,
+    animeChannel,
+    groupTools,
+    verifStore,
+    tiktokMonitor,
+    tiktokAccounts
+  ) {
     this.cfg = cfg;
     this.sock = sock;
     this.ready = typeof ready === 'function' ? ready : () => Boolean(ready);
@@ -166,6 +177,7 @@ class Router {
     this.animeChannel = animeChannel || null;
     this.groupTools = groupTools || new GroupTools(cfg, store);
     this.verif = new VerifFeature(cfg, verifStore || new VerifStore(cfg), tiktokMonitor || null);
+    this.tiktokAdmin = new TikTokAdminFeature(cfg, tiktokAccounts || null, tiktokMonitor || null);
 
     this.reTrig = normalizeTrigger(cfg);
     this.owner = new OwnerDetector();
@@ -238,10 +250,13 @@ class Router {
     }
     this.owner.debugLog(sender, chat, isOwner);
 
-    // Perintah verif/UP (bisa tanpa trigger di grup).
-    const verifCmd = parseVerifCommand(origTxt, this.cfg.trigger);
-    if (verifCmd && (await this.verif.handle(this.sock, m, verifCmd.cmd, verifCmd.rest, isOwner))) {
-      return;
+    // Perintah verif/UP dan kelola akun detector (bisa tanpa trigger di grup).
+    const featureCmd = parseFeatureCommand(origTxt, this.cfg.trigger);
+    if (featureCmd) {
+      if (await this.verif.handle(this.sock, m, featureCmd.cmd, featureCmd.rest, isOwner)) return;
+      if (await this.tiktokAdmin.handle(this.sock, m, featureCmd.cmd, featureCmd.rest, isOwner)) {
+        return;
+      }
     }
 
     // "Tsukasa hot on/off/status" dan "Tsukasa mode dewasa ..." (owner DM).
@@ -305,6 +320,10 @@ class Router {
           '- /siapaup : siapa yang UP hari ini',
           '- /cekup @username : cek akun sudah UP atau belum',
           '- /history : rekap UP 7 hari terakhir',
+          '- /addakun @user : tambah akun TikTok yang dipantau',
+          '- /delakun @user : hapus akun dari pantauan',
+          '- /listakun : daftar akun yang dipantau',
+          '- /detector on|off|status : kontrol detector (on/off khusus owner)',
           '',
           'Tips: katakan "panggil aku [nama]" supaya aku ingat namamu!',
         ];

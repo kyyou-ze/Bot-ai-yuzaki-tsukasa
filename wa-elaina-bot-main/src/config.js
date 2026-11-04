@@ -91,6 +91,8 @@ function load() {
     // {count}, mis. https://api.example.com/tiktok/user/{username}?count={count}
     tiktokApiUrl: getenv('TIKTOK_API_URL', ''),
     tiktokApiKey: getenv('TIKTOK_API_KEY', ''),
+    // Daftar akun yang diubah via command (/addakun, /delakun).
+    tiktokAccountsDb: getenv('TIKTOK_ACCOUNTS_DB', './database/accounts.json'),
     verifDb: path.resolve(getenv('VERIF_DB', 'database/verif.json')),
     historyUpDb: path.resolve(getenv('HISTORY_UP_DB', 'database/history_up.json')),
     upTodayDb: path.resolve(getenv('UP_TODAY_DB', 'database/up_today.json')),
