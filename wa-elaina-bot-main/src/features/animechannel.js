@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('../logger');
 const crypto = require('crypto');
 const feeds = require('../animefeeds');
 const animekita = require('../animekita');
@@ -102,14 +103,14 @@ class AnimeChannelPoster {
 
   start() {
     if (!this.enabled) {
-      console.log('[ANIME] Auto-post channel dimatikan (ANIME_CHANNEL_ENABLED=false).');
+      log.info('[ANIME] Auto-post channel dimatikan (ANIME_CHANNEL_ENABLED=false).');
       return;
     }
     if (!this.stopped || this.timer) return;
 
     this.stopped = false;
     const delay = Math.max(0, Number(this.conf.startDelaySec) || 0) * 1000;
-    console.log(
+    log.info(
       `[ANIME] Auto-post channel aktif. Post pertama sekitar ${Math.round(delay / 1000)} detik lagi.`
     );
     this.timer = setTimeout(() => {
@@ -145,15 +146,15 @@ class AnimeChannelPoster {
     try {
       const res = await this.postOne({ reason: 'scheduler' });
       if (res.ok) {
-        console.log(`[ANIME] Terkirim ke channel (${res.mode}): ${res.item.title}`);
+        log.info(`[ANIME] Terkirim ke channel (${res.mode}): ${res.item.title}`);
       } else if (res.skipped) {
-        console.log(`[ANIME] Skip: ${res.message}`);
+        log.info(`[ANIME] Skip: ${res.message}`);
       } else {
-        console.warn(`[ANIME] Gagal: ${res.message}`);
+        log.warn(`[ANIME] Gagal: ${res.message}`);
       }
     } catch (err) {
       this.lastError = err && err.message ? err.message : String(err);
-      console.error('[ANIME] Auto-post error:', this.lastError);
+      log.error('[ANIME] Auto-post error:', this.lastError);
     } finally {
       this.running = false;
     }
@@ -165,7 +166,7 @@ class AnimeChannelPoster {
     const direct = channelJid(this.conf.jid);
     if (direct) {
       this.channelJid = direct;
-      console.log(`[ANIME] Memakai ANIME_CHANNEL_JID: ${direct}`);
+      log.info(`[ANIME] Memakai ANIME_CHANNEL_JID: ${direct}`);
       return direct;
     }
 
@@ -188,7 +189,7 @@ class AnimeChannelPoster {
 
     this.channelJid = String(id).includes('@') ? String(id) : `${id}@newsletter`;
     this.channelName = String((meta && (meta.name || meta.thread_metadata?.name?.text)) || '');
-    console.log(
+    log.info(
       `[ANIME] Channel: ${this.channelName || '(tanpa nama)'} -> ${this.channelJid}`
     );
     return this.channelJid;
@@ -258,7 +259,7 @@ class AnimeChannelPoster {
       const clean = String(out || '').trim();
       return clean || text;
     } catch (err) {
-      console.warn('[ANIME] translate gagal:', err.message);
+      log.warn('[ANIME] translate gagal:', err.message);
       return text;
     }
   }
@@ -392,7 +393,7 @@ Aturan:
         if (!item.studio && detail.author) item.studio = detail.author;
       }
     } catch (err) {
-      console.warn('[ANIME] gagal ambil detail AnimeKita:', err.message);
+      log.warn('[ANIME] gagal ambil detail AnimeKita:', err.message);
     }
 
     return item;
@@ -443,7 +444,7 @@ Aturan:
         await sock.sendMessage(jid, { image: got.data, caption, mimetype: mime });
         mode = 'image';
       } catch (err) {
-        console.warn('[ANIME] Gagal kirim gambar, fallback teks:', err.message);
+        log.warn('[ANIME] Gagal kirim gambar, fallback teks:', err.message);
       }
     }
 
@@ -452,7 +453,7 @@ Aturan:
         await sock.sendMessage(jid, { text: caption });
         mode = 'text';
       } catch (err) {
-        console.warn('[ANIME] Kirim teks gagal, coba raw newsletter:', err.message);
+        log.warn('[ANIME] Kirim teks gagal, coba raw newsletter:', err.message);
       }
     }
 
@@ -543,7 +544,7 @@ Aturan:
       result = await feeds.fetchAll(sources, perSource, { minYear, maxYear });
       if (result.errors.length) {
         for (const e of result.errors) {
-          console.warn(`[ANIME] Sumber ${e.source} gagal: ${e.error}`);
+          log.warn(`[ANIME] Sumber ${e.source} gagal: ${e.error}`);
         }
       }
 

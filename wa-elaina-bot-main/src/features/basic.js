@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('../logger');
 const { onlyDigits, jidUser, isGroupJid, destJid, firstNonEmpty } = require('../util');
 const wa = require('../wa');
 
@@ -70,7 +71,7 @@ class OwnerDetector {
 
   debugLog(sender, chat, got) {
     if (!this.debug) return;
-    console.log(
+    log.info(
       `[OWNER-DBG] sender=${sender} chat=${chat} digits(sender)=${digitsOf(sender)} digits(chat)=${digitsOf(
         chat
       )} => isOwner=${got}`
@@ -126,7 +127,7 @@ class WelcomeHandler {
     try {
       await sock.sendMessage(ev.id, { text, mentions });
     } catch (err) {
-      console.error('[WELCOME] gagal kirim sambutan:', err.message);
+      log.error('[WELCOME] gagal kirim sambutan:', err.message);
     }
     return true;
   }
@@ -203,7 +204,7 @@ class RvoHandler {
         await wa.sendVideo(chat, blob, caption, m, mime);
       }
     } catch (err) {
-      console.error('[RVO] gagal:', err.message);
+      log.error('[RVO] gagal:', err.message);
       await wa.sendText(chat, 'Gagal mengunduh/mengirim ulang media view-once 😔', m).catch(() => {});
     }
     return true;

@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('../logger');
 const api = require('../animekita');
 const llm = require('../llm');
 const wa = require('../wa');
@@ -163,7 +164,7 @@ class InfoFeature {
       try {
         data = await this.fromAnimeKita(query);
       } catch (err) {
-        console.warn('[INFO] AnimeKita gagal:', err.message);
+        log.warn('[INFO] AnimeKita gagal:', err.message);
       }
       if (!data) data = await this.fromLlm(query);
 
@@ -178,7 +179,7 @@ class InfoFeature {
 
       await this.reply(sock, m, buildInfo(data));
     } catch (err) {
-      console.error('[INFO] error:', err.message);
+      log.error('[INFO] error:', err.message);
       await this.reply(sock, m, `Gagal ambil info "${query}": ${err.message}`);
     }
     return true;

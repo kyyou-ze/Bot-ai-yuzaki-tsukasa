@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('./logger');
 const { atomicWriteJson, safeReadJson } = require('./util');
 
 const USERNAME_RE = /^[a-zA-Z0-9._]{2,24}$/;
@@ -124,7 +125,7 @@ class TikTokAccounts {
     };
     this._writing = this._writing
       .then(() => atomicWriteJson(this.file, payload))
-      .catch((err) => console.error('[TIKTOK] gagal menyimpan daftar akun:', err.message));
+      .catch((err) => log.error('[TIKTOK] gagal menyimpan daftar akun:', err.message));
     return this._writing;
   }
 }

@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('./logger');
 const { fetchWithTimeout } = require('./util');
 
 // UA desktop dipakai semua request TikTok supaya tidak langsung dicurigai bot.
@@ -10,6 +11,9 @@ const DESKTOP_UA =
 const DEFAULT_COUNT = 12;
 const TIKWM_HOSTS = ['https://www.tikwm.com', 'https://tikwm.com'];
 const TIKHUB_BASE = 'https://api.tikhub.io/api/v1/tiktok';
+// Jina Reader dipakai sebagai "jembatan" untuk membaca halaman profil TikTok.
+// Server Jina yang mengambil halaman, jadi IP bot tidak langsung kena WAF.
+const JINA_READER_BASE = 'https://r.jina.ai/';
 const DEFAULT_API23_URL =
   'https://tiktok-api23.p.rapidapi.com/api/user/posts?unique_id={username}&count={count}';
 const DEFAULT_API23_HOST = 'tiktok-api23.p.rapidapi.com';
@@ -42,7 +46,7 @@ function nextProxy(cfg) {
   const mod = loadUndici();
   if (!mod || typeof mod.ProxyAgent !== 'function') {
     if (!proxyWarned) {
-      console.warn(
+      log.warn(
         '[TIKTOK] TIKTOK_PROXY_URLS diisi tapi paket "undici" belum terpasang; proxy dilewati.'
       );
       proxyWarned = true;
@@ -80,6 +84,42 @@ async function tiktokFetch(url, options = {}, timeoutMs = 30000, cfg = {}) {
   });
 }
 
+/**
+ * Baca halaman lewat Jina Reader (https://r.jina.ai). Dipakai untuk profil
+ * TikTok karena halaman langsung sering diblokir Cloudflare/WAF. Jina
+ * mengembalikan teks/markdown, bukan HTML mentah.
+ */
+async function readViaJina(targetUrl, cfg = {}, timeoutMs = 45000) {
+  const base = String((cfg && cfg.tiktokJinaBase) || JINA_READER_BASE).trim();
+  const readerUrl = base.replace(/\/?$/, '/') + String(targetUrl || '');
+  const headers = {
+    Accept: 'text/plain, text/markdown;q=0.9, */*;q=0.8',
+    'User-Agent': DESKTOP_UA,
+    'X-Return-Format': 'markdown',
+    // Wajib: tanpa ini Jina bisa mengembalikan halaman cache lama sehingga
+    // video baru tidak terdeteksi.
+    'X-No-Cache': 'true',
+    'X-Timeout': '30',
+  };
+  const key = String((cfg && cfg.tiktokJinaKey) || '').trim();
+  if (key) headers.Authorization = `Bearer ${key}`;
+
+  const res = await fetchWithTimeout(
+    readerUrl,
+    { headers, redirect: 'follow' },
+    Math.max(10000, Number(timeoutMs) || 45000)
+  );
+  const text = await res.text().catch(() => '');
+  if (!res.ok) {
+    const snippet = text.replace(/\s+/g, ' ').slice(0, 180);
+    const err = new Error(`Jina HTTP ${res.status}${snippet ? `: ${snippet}` : ''}`);
+    err.status = res.status;
+    throw err;
+  }
+  if (!text.trim()) throw new Error('Jina: respons kosong');
+  return text;
+}
+
 // ---------- header & helper ----------
 function desktopHeaders(cfg, extra = {}) {
   const headers = {
@@ -107,7 +147,9 @@ function fillTemplate(template, vars) {
 
 function isWafError(err) {
   const text = String((err && err.message) || err || '');
-  return /(?:\b403\b|WAF|cloudflare|just a moment|slardarClientWAF|access denied)/i.test(text);
+  return /(?:\b403\b|WAF|cloudflare|just a moment|slardarClientWAF|access denied|performing security verification|ratelimit triggered)/i.test(
+    text
+  );
 }
 
 function assertApiOk(json, label) {
@@ -360,6 +402,16 @@ async function postsTikwm(cfg, unique) {
   throw lastError || new Error('tikwm gagal');
 }
 
+/** Apakah user sudah mengisi API berbayar/custom untuk daftar upload? */
+function hasConfiguredPostsApi(cfg = {}) {
+  return Boolean(
+    cfg.tiktokApiUrl ||
+      cfg.tikhubApiKey ||
+      cfg.tiktokApi23Key ||
+      cfg.ensigApiUrl
+  );
+}
+
 /**
  * Ambil daftar upload dari beberapa API. Provider yang tidak dikonfigurasi
  * (mengembalikan null) dilewati. Error 403/WAF di satu provider tidak
@@ -477,13 +529,16 @@ async function infoTikwm(cfg, link) {
 }
 
 async function fetchVideoInfoApi(link, cfg = {}) {
+  // TikWM diletakkan sebelum tiklydown karena endpoint tiklydown sering
+  // mati/TLS error; kalau ditaruh duluan, download jadi lambat 30 detik
+  // sebelum akhirnya jatuh ke TikWM.
   const providers = [
     ['custom', infoCustom],
     ['tikhub', infoTikHub],
     ['tiktok-api23', infoApi23],
     ['ensig', infoEnsig],
-    ['tiklydown', infoTiklydown],
     ['tikwm', infoTikwm],
+    ['tiklydown', infoTiklydown],
   ];
 
   const errors = [];
@@ -512,8 +567,10 @@ module.exports = {
   DESKTOP_UA,
   desktopHeaders,
   tiktokFetch,
+  readViaJina,
   fillTemplate,
   isWafError,
+  hasConfiguredPostsApi,
   extractVideoArray,
   extractMedia,
   fetchUserPostsApi,

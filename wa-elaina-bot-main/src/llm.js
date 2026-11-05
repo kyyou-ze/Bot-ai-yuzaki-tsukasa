@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('./logger');
 const memory = require('./memory');
 
 let keys = [];
@@ -99,7 +100,7 @@ async function askText(system, user) {
     lastStatus = status;
     if (status === 200 && text) return text;
   }
-  console.error(`[LLM] Tidak ada jawaban valid dari model ${TEXT_MODEL} (status terakhir: ${lastStatus}).`);
+  log.error(`[LLM] Tidak ada jawaban valid dari model ${TEXT_MODEL} (status terakhir: ${lastStatus}).`);
   return '';
 }
 

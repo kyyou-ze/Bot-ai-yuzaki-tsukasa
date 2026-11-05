@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('./logger');
 const fs = require('fs');
 const path = require('path');
 
@@ -65,7 +66,7 @@ async function persistChat(chatJID, hist) {
       JSON.stringify(hist, null, 2)
     );
   } catch (err) {
-    console.error('[MEMORY] gagal simpan chat:', err.message);
+    log.error('[MEMORY] gagal simpan chat:', err.message);
   }
 }
 
@@ -77,7 +78,7 @@ async function persistUserNames() {
       JSON.stringify(Object.fromEntries(userNameMap), null, 2)
     );
   } catch (err) {
-    console.error('[MEMORY] gagal simpan nama:', err.message);
+    log.error('[MEMORY] gagal simpan nama:', err.message);
   }
 }
 

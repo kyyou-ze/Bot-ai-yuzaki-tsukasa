@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('../logger');
 const crypto = require('crypto');
 const memory = require('../memory');
 const llm = require('../llm');
@@ -234,7 +235,7 @@ class GroupTools {
           await wa.sendText(r.chat, `⏰ *Pengingat* ${who}\n${r.text}`, undefined, mention);
           await this.store.removeReminderById(r.id);
         } catch (err) {
-          console.error('[REMINDER] gagal kirim:', err.message);
+          log.error('[REMINDER] gagal kirim:', err.message);
         }
       }
     } finally {
@@ -387,7 +388,7 @@ class GroupTools {
       );
     } catch (err) {
       // Fallback jika server/versi WhatsApp tidak mendukung poll native.
-      console.warn('[POLL] gagal kirim poll native:', err.message);
+      log.warn('[POLL] gagal kirim poll native:', err.message);
       const lines = [`📊 *${parsed.question}*`, ''];
       parsed.options.forEach((opt, i) => lines.push(`${i + 1}. ${opt}`));
       lines.push('');
@@ -457,7 +458,7 @@ class GroupTools {
     try {
       summary = await llm.askText(SUMMARY_SYSTEM, lines.join('\n'));
     } catch (err) {
-      console.error('[SUMMARY] gagal:', err.message);
+      log.error('[SUMMARY] gagal:', err.message);
     }
     if (!summary) {
       await this.reply(m, 'Gagal membuat rangkuman. Coba lagi sebentar ya.');

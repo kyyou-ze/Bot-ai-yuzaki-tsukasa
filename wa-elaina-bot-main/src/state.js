@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('./logger');
 const { atomicWriteJson, safeReadJson } = require('./util');
 
 const WARN_LIMIT = 5;
@@ -33,7 +34,7 @@ class Store {
     const snapshot = this.data;
     this._writing = this._writing
       .then(() => atomicWriteJson(this.file, snapshot))
-      .catch((err) => console.error('[STORE] gagal menyimpan state:', err.message));
+      .catch((err) => log.error('[STORE] gagal menyimpan state:', err.message));
     return this._writing;
   }
 

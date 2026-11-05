@@ -1,11 +1,15 @@
 'use strict';
 
+const log = require('./logger');
 const wa = require('./wa');
 const { sleep } = require('./util');
+const { shortError } = require('./logfmt');
 const {
   desktopHeaders,
   tiktokFetch,
+  readViaJina,
   isWafError,
+  hasConfiguredPostsApi,
   fetchUserPostsApi,
 } = require('./tiktokapi');
 const {
@@ -21,6 +25,8 @@ const START_DELAY_MS = 15000;
 const ACCOUNT_DELAY_MIN_MS = 2000;
 const ACCOUNT_DELAY_MAX_MS = 5000;
 const CAPTION_MAX = 180;
+// Error yang sama tidak perlu ditulis tiap 3 menit; cukup sekali per 10 menit.
+const ERROR_LOG_EVERY_MS = 10 * 60 * 1000;
 
 function truncate(value, max) {
   const s = String(value || '').replace(/\s+/g, ' ').trim();
@@ -71,9 +77,16 @@ function normalizeVideo(v, fallbackUnique) {
   const caption = String(
     v.title || v.desc || v.caption || v.description || v.text || ''
   ).trim();
-  const createTime = normalizeCreateTime(
+  let createTime = normalizeCreateTime(
     v.create_time || v.createTime || v.create_time_ms || v.createTimeMs || v.ctime || v.timestamp || 0
   );
+  if (!createTime) createTime = timestampFromVideoId(id);
+
+  // Pertahankan jenis post (video/photo) kalau sumber memberi link aslinya.
+  const kindMatch = String(v.link || v.url || '').match(
+    /tiktok\.com\/@[^/]+\/(video|photo)\/\d{6,}/i
+  );
+  const kind = kindMatch ? kindMatch[1].toLowerCase() : 'video';
 
   return {
     id,
@@ -81,7 +94,7 @@ function normalizeVideo(v, fallbackUnique) {
     nickname,
     caption,
     createTime,
-    link: `https://www.tiktok.com/@${uniqueId}/video/${id}`,
+    link: `https://www.tiktok.com/@${uniqueId}/${kind}/${id}`,
   };
 }
 
@@ -160,6 +173,146 @@ async function fetchProfileHtml(unique, cfg = {}) {
   return normalizeList(parseProfileHtml(html), unique);
 }
 
+/**
+ * ID video TikTok adalah snowflake: 32 bit teratas berisi Unix timestamp
+ * dalam detik. Dengan begitu kita tetap bisa tahu waktu upload walau sumber
+ * hanya memberi link (mis. hasil render Jina Reader).
+ */
+function timestampFromVideoId(id) {
+  try {
+    const seconds = Number(BigInt(String(id)) >> 32n);
+    if (seconds > 1000000000 && seconds < 4102444800) return seconds;
+  } catch {
+    /* bukan angka */
+  }
+  return 0;
+}
+
+function cleanJinaText(value) {
+  return String(value || '')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[*~`>]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function cleanJinaCaption(value) {
+  let caption = cleanJinaText(value);
+  // Alt text TikTok: "<caption> created by <nickname> with <sound>".
+  caption = caption.replace(/\s*\bcreated by\b[\s\S]*$/i, '');
+  caption = caption.replace(/\s*\[Video \d+\][\s\S]*$/i, ' ');
+  caption = caption.replace(/\s+\bPinned\b\s*$/i, '');
+  return caption.replace(/\s+/g, ' ').trim();
+}
+
+function nicknameFromJina(markdown, unique) {
+  const title = (String(markdown || '').match(/^Title:\s*(.+)$/m) || [])[1] || '';
+  const titleMatch = title.match(
+    new RegExp(`^(.*?)\\s*\\(@${escapeRegExp(unique)}\\)`, 'i')
+  );
+  if (titleMatch && titleMatch[1]) return cleanJinaText(titleMatch[1]);
+
+  const altMatch = String(markdown || '').match(/\bcreated by\s+(.+?)\s+with\b/i);
+  if (altMatch && altMatch[1]) return cleanJinaText(altMatch[1]);
+  return '';
+}
+
+/**
+ * Parse markdown hasil Jina Reader untuk halaman profil TikTok.
+ * Contoh baris:
+ * [![Image 2: caption created by Nick](thumb) 1.2K](https://.../video/123)
+ */
+function parseProfileMarkdown(markdown, unique) {
+  const acc = normalizeAccount(unique);
+  if (!acc) return [];
+
+  const text = String(markdown || '');
+  const nickname = nicknameFromJina(text, acc);
+  const lines = text.split(/\r?\n/);
+  const seen = new Set();
+  const out = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const link = line.match(
+      /https?:\/\/(?:www\.)?tiktok\.com\/@([^/\s)]+)\/(video|photo)\/(\d{6,})/i
+    );
+    if (!link) continue;
+    // Abaikan video akun lain yang mungkin muncul di bagian rekomendasi.
+    if (link[1].toLowerCase() !== acc.toLowerCase()) continue;
+
+    const id = link[3];
+    if (seen.has(id)) continue;
+
+    let caption = '';
+    const titleAttr = line.match(/(?:video|photo)\/\d{6,}\s+"([^"]*)"/i);
+    if (titleAttr) caption = titleAttr[1];
+    if (!caption) {
+      const alt = line.match(/!\[Image\s+\d+:\s*([^\]]*?)\]/i);
+      if (alt) caption = alt[1];
+    }
+    if (!caption) {
+      const next = (lines[i + 1] || '').trim();
+      if (next && !/^[![]/.test(next) && !/^(?:Title|URL Source):/i.test(next)) {
+        caption = next;
+      }
+    }
+
+    seen.add(id);
+    out.push({
+      aweme_id: id,
+      author: { unique_id: acc, nickname },
+      desc: cleanJinaCaption(caption),
+      create_time: timestampFromVideoId(id),
+      link: `https://www.tiktok.com/@${acc}/${link[2].toLowerCase()}/${id}`,
+    });
+  }
+
+  return out;
+}
+
+/**
+ * Baca profil lewat Jina Reader. Ini jalur anti-WAF utama untuk daftar video:
+ * request dilakukan dari server Jina, bukan dari IP bot.
+ */
+async function fetchProfileJina(unique, cfg = {}) {
+  const acc = normalizeAccount(unique);
+  if (!acc) return [];
+
+  const text = await readViaJina(
+    `https://www.tiktok.com/@${encodeURIComponent(acc)}?lang=en`,
+    cfg,
+    60000
+  );
+
+  if (/couldn.?\s*t find this account|could not find this account/i.test(text)) {
+    const err = new Error(`akun @${acc} tidak ditemukan`);
+    err.notFound = true;
+    throw err;
+  }
+
+  const items = parseProfileMarkdown(text, acc);
+  if (items.length) return normalizeList(items, acc);
+
+  // Profil valid tapi memang belum punya video.
+  if (new RegExp(`\\(@${escapeRegExp(acc)}\\)`, 'i').test(text) || /Followers/i.test(text)) {
+    return [];
+  }
+
+  if (
+    /just a moment|performing security verification|captcha|slardarClientWAF|access denied/i.test(
+      text
+    )
+  ) {
+    const err = new Error('profil TikTok diblokir WAF (Jina)');
+    err.waf = true;
+    throw err;
+  }
+
+  throw new Error('Jina: tidak ada video di halaman profil');
+}
+
 async function fetchUserVideos(account, cfg = {}) {
   const unique = normalizeAccount(account);
   if (!unique) return [];
@@ -167,22 +320,39 @@ async function fetchUserVideos(account, cfg = {}) {
   const errors = [];
   let waf = false;
 
-  // 1) Rantai API: custom -> TikHub -> tiktok-api23 -> Ensig -> TikWM.
-  //    Provider yang tidak dikonfigurasi otomatis dilewati.
-  try {
+  const tryApi = async () => {
     const { items } = await fetchUserPostsApi(unique, cfg);
-    return normalizeList(items, unique);
-  } catch (err) {
-    waf = Boolean(err.waf);
-    errors.push(err.message);
-  }
+    const videos = normalizeList(items, unique);
+    // Respons kosong bisa berarti parser provider tidak cocok. Biarkan jalur
+    // berikutnya mencoba, daripada akun dianggap tidak pernah upload.
+    if (!videos.length) throw new Error('API: 0 video');
+    return videos;
+  };
+  const tryJina = () => fetchProfileJina(unique, cfg);
+  const tryHtml = () => fetchProfileHtml(unique, cfg);
 
-  // 2) Scraping halaman profil TikTok sebagai upaya terakhir.
-  try {
-    return await fetchProfileHtml(unique, cfg);
-  } catch (err) {
-    if (isWafError(err)) waf = true;
-    errors.push(err.message);
+  // Kalau user punya API key/endpoint sendiri, coba itu dulu. Kalau tidak,
+  // Jina Reader lebih aman daripada menembak TikTok/TikWM yang kena WAF.
+  const steps = [];
+  if (hasConfiguredPostsApi(cfg)) steps.push(['API', tryApi]);
+  steps.push(['Jina', tryJina]);
+  if (!hasConfiguredPostsApi(cfg)) steps.push(['API', tryApi]);
+  steps.push(['HTML', tryHtml]);
+
+  for (const [name, fn] of steps) {
+    try {
+      return await fn();
+    } catch (err) {
+      // Akun benar-benar tidak ada: jangan lanjut ke sumber lain yang bisa
+      // memicu cooldown WAF hanya karena akunnya sudah dihapus/rename.
+      if (err && err.notFound) {
+        const notFoundError = new Error(`${name}: ${err.message}`);
+        notFoundError.notFound = true;
+        throw notFoundError;
+      }
+      if ((err && err.waf) || isWafError(err)) waf = true;
+      errors.push(`${name}: ${err && err.message ? err.message : err}`);
+    }
   }
 
   const finalError = new Error(errors.join(' | ') || 'gagal mengambil video TikTok');
@@ -251,6 +421,10 @@ class TikTokMonitor {
     this.timer = null;
     this.startTimer = null;
     this.ticking = false;
+    // Akun yang sudah dihapus/rename jangan dilaporkan tiap siklus.
+    this.missingAccounts = new Set();
+    // Throttle log error per akun supaya panel tidak spam.
+    this.errorLogAt = new Map();
     // Cooldown WAF global: kalau semua sumber 403, berhenti sebentar supaya
     // tidak makin dicurigai. Log hanya sekali per cooldown.
     this.wafUntil = 0;
@@ -263,7 +437,7 @@ class TikTokMonitor {
     this.wafUntil = Date.now() + this.wafCooldownMs;
     if (!this.wafLogged) {
       const minutes = Math.max(1, Math.round(this.wafCooldownMs / 60000));
-      console.warn(`[TIKTOK] WAF block, retry ${minutes} menit`);
+      log.warn(`[TIKTOK] WAF block, retry ${minutes} menit`);
       this.wafLogged = true;
     }
   }
@@ -271,6 +445,14 @@ class TikTokMonitor {
   clearWafCooldown() {
     this.wafUntil = 0;
     this.wafLogged = false;
+  }
+
+  logCheckError(account, err) {
+    const now = Date.now();
+    const last = this.errorLogAt.get(account) || 0;
+    if (now - last < ERROR_LOG_EVERY_MS) return;
+    this.errorLogAt.set(account, now);
+    log.error(`[TIKTOK] ${account} gagal: ${shortError(err)}`);
   }
 
   /** Daftar akun aktif: dari database/accounts.json bila sudah diubah. */
@@ -291,19 +473,19 @@ class TikTokMonitor {
   refresh() {
     if (!this.isEnabled()) {
       this.stop();
-      console.log('[TIKTOK] Detector dimatikan.');
+      log.info('[TIKTOK] Detector dimatikan.');
       return;
     }
 
     const accounts = this.getAccounts();
     if (!accounts.length) {
       this.stop();
-      console.warn('[TIKTOK] Daftar akun kosong, detector berhenti sampai ada /addakun.');
+      log.warn('[TIKTOK] Daftar akun kosong, detector berhenti sampai ada /addakun.');
       return;
     }
 
     if (this.timer) {
-      console.log(`[TIKTOK] Daftar akun diperbarui: ${accounts.join(', ')}`);
+      log.info(`[TIKTOK] Akun diperbarui | ${accounts.join(', ')}`);
       return;
     }
 
@@ -314,15 +496,15 @@ class TikTokMonitor {
     if (!this.isEnabled()) return;
     const accounts = this.getAccounts();
     if (!accounts.length) {
-      console.warn('[TIKTOK] Daftar akun kosong, detector tidak berjalan. Tambah via /addakun.');
+      log.warn('[TIKTOK] Daftar akun kosong, detector tidak berjalan. Tambah via /addakun.');
       return;
     }
     if (this.timer) return;
 
-    console.log(
-      `[TIKTOK] Detector aktif: ${accounts.join(', ')} | cek tiap ${Math.round(
+    log.info(
+      `[TIKTOK] Detector aktif | ${accounts.length} akun | interval ${Math.round(
         this.intervalMs / 60000
-      )} menit`
+      )} menit | ${accounts.join(', ')}`
     );
     this.startTimer = setTimeout(() => {
       this.startTimer = null;
@@ -376,7 +558,14 @@ class TikTokMonitor {
             this.enterWafCooldown();
             break;
           }
-          console.error(`[TIKTOK] ${account} gagal dicek:`, err.message);
+          if (err && err.notFound) {
+            if (!this.missingAccounts.has(account)) {
+              this.missingAccounts.add(account);
+              log.warn(`[TIKTOK] ${account} tidak ditemukan, dilewati.`);
+            }
+            continue;
+          }
+          this.logCheckError(account, err);
         }
       }
     } finally {
@@ -386,6 +575,8 @@ class TikTokMonitor {
 
   async checkAccount(account) {
     const videos = await fetchUserVideos(account, this.cfg);
+    this.missingAccounts.delete(account);
+    this.errorLogAt.delete(account);
     this.clearWafCooldown();
     if (!videos.length) return;
 
@@ -403,7 +594,7 @@ class TikTokMonitor {
         }
       }
       await this.store.markSeen(account, currentIds, true);
-      console.log(`[TIKTOK] ${account}: baseline ${videos.length} video disimpan.`);
+      log.info(`[TIKTOK] ${account} baseline ${videos.length} video`);
       return;
     }
 
@@ -415,11 +606,13 @@ class TikTokMonitor {
       const data = buildVideoData(video, this.cfg);
       await this.store.recordVideo(data);
       await this.notify(data);
-      console.log(
-        `[TIKTOK] UP ${data.username} (${data.nickname || '-'}) @ ${formatClock(
+      log.info(
+        `[TIKTOK] UP ${data.username} (${data.nickname || '-'}) | ${formatClock(
           data.timestamp,
           this.cfg.timezone
-        )}`
+        )} | ${data.hashtagStatus === 'Ada' ? 'hashtag ok' : 'hashtag -'} | ${
+          data.cnStatus === 'Cocok' ? 'CN ok' : 'CN -'
+        }`
       );
     }
 
@@ -430,7 +623,7 @@ class TikTokMonitor {
     const targets = new Set(this.store.notifyTargets(video));
     if (this.cfg.tiktokNotifyJid) targets.add(String(this.cfg.tiktokNotifyJid).trim());
     if (!targets.size) {
-      console.log(`[TIKTOK] ${video.username} UP, tapi belum ada grup terverif untuk ACC ini.`);
+      log.info(`[TIKTOK] ${video.username} UP | belum ada grup terverif`);
       return;
     }
 
@@ -440,7 +633,7 @@ class TikTokMonitor {
       try {
         await wa.sendText(jid, text);
       } catch (err) {
-        console.error(`[TIKTOK] gagal kirim notif ke ${jid}:`, err.message);
+        log.error(`[TIKTOK] notif ke ${jid} gagal: ${shortError(err)}`);
       }
     }
   }

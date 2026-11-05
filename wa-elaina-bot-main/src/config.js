@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('./logger');
 const path = require('path');
 require('dotenv').config();
 
@@ -113,6 +114,11 @@ function load() {
     tiktokProxyUrls: splitKeys(getenv('TIKTOK_PROXY_URLS', '')),
     // Cookie browser TikTok opsional, mis. "tt_chain_token=...; msToken=...".
     tiktokCookie: getenv('TIKTOK_COOKIE', ''),
+    // Jina Reader dipakai untuk membaca profil TikTok dari server Jina,
+    // sehingga request tidak langsung dari IP bot dan tidak mudah kena WAF.
+    // API key opsional; tanpa key tetap jalan dengan rate limit lebih kecil.
+    tiktokJinaKey: getenv('TIKTOK_JINA_KEY', getenv('JINA_API_KEY', '')),
+    tiktokJinaBase: getenv('TIKTOK_JINA_BASE', 'https://r.jina.ai/'),
     // Setelah kena 403/WAF, berhenti dulu selama N menit (default 10).
     tiktokWafCooldownMin: Math.max(1, intEnv(getenv('TIKTOK_WAF_COOLDOWN_MIN', '10'), 10)),
     // Daftar akun yang diubah via command (/addakun, /delakun).
@@ -149,14 +155,14 @@ function load() {
   cfg.geminiKeys = keys;
 
   if (keys.length === 0) {
-    console.error(
+    log.error(
       '[FATAL] Tidak ada GEMINI_API_KEYS/GEMINI_API_KEY di .env (boleh beberapa key dipisah koma).'
     );
     process.exit(1);
   }
 
   if (cfg.mode === 'PROD' && !cfg.sendApiKey) {
-    console.warn('[WARN] MODE=PROD tapi SEND_API_KEY kosong. /send akan terbuka tanpa auth!');
+    log.warn('[WARN] MODE=PROD tapi SEND_API_KEY kosong. /send akan terbuka tanpa auth!');
   }
 
   return cfg;

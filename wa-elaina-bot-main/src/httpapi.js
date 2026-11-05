@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('./logger');
 const http = require('http');
 const { destJid, onlyDigits } = require('./util');
 const wa = require('./wa');
@@ -174,7 +175,7 @@ class HttpApi {
     if (this.server) return this.server;
     this.server = http.createServer((req, res) => {
       this.handleRequest(req, res).catch((err) => {
-        console.error('[HTTP] error:', err.message);
+        log.error('[HTTP] error:', err.message);
         try {
           this.send(res, 500, 'internal error');
         } catch {
@@ -182,12 +183,12 @@ class HttpApi {
         }
       });
     });
-    this.server.on('error', (err) => console.error('[HTTP] server error:', err.message));
+    this.server.on('error', (err) => log.error('[HTTP] server error:', err.message));
     const port = Number(this.cfg.port) || 7860;
     const host = this.cfg.host || '0.0.0.0';
     this.server.listen(port, host, () => {
-      console.log(`[HTTP] listening on ${host}:${port}`);
-      console.log(`[READY] Tsukasa HTTP API aktif di port ${port}`);
+      log.info(`[HTTP] listening on ${host}:${port}`);
+      log.info(`[READY] Tsukasa HTTP API aktif di port ${port}`);
     });
     return this.server;
   }

@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('../logger');
 const path = require('path');
 const api = require('../animekita');
 const llm = require('../llm');
@@ -154,7 +155,7 @@ async function fetchRoulette(genre) {
     try {
       list = await requestRoulette(genre);
     } catch (err) {
-      console.warn('[ANIME] roulette genre gagal, fallback acak:', err.message);
+      log.warn('[ANIME] roulette genre gagal, fallback acak:', err.message);
     }
   }
   if (list.length === 0) list = await requestRoulette('');
@@ -558,7 +559,7 @@ class AnimeFeature {
           if (hasPixeldrain(streams)) {
             setImmediate(() => {
               this.deliverPixeldrain(m.key.remoteJid, streams).catch((err) => {
-                console.error('[ANIME] pixeldrain error:', err.message);
+                log.error('[ANIME] pixeldrain error:', err.message);
               });
             });
           }
@@ -601,7 +602,7 @@ class AnimeFeature {
           return true;
       }
     } catch (err) {
-      console.error('[ANIME] error:', err.message);
+      log.error('[ANIME] error:', err.message);
       const label =
         sub === 'new' || sub === 'baru' || sub === 'latest'
           ? 'data rilis terbaru'
@@ -649,7 +650,7 @@ class AnimeFeature {
         const caption = `Pixeldrain ${fallback(st.reso, filename)}`.trim();
         await wa.sendDocument(chat, buf, mime, filename, caption);
       } catch (err) {
-        console.error('[ANIME] pixeldrain gagal:', err.message);
+        log.error('[ANIME] pixeldrain gagal:', err.message);
         await wa
           .sendText(chat, `Gagal unduh Pixeldrain ${fallback(st.reso, st.link)}: ${err.message}`)
           .catch(() => {});

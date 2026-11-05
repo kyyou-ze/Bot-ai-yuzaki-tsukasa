@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('../logger');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -357,7 +358,7 @@ class BratFeature {
       const webp = await sharp(svg).webp({ lossless: true, effort: 4 }).toBuffer();
       await wa.sendSticker(chat, webp, m);
     } catch (err) {
-      console.error('[BRAT] gagal:', err.message);
+      log.error('[BRAT] gagal:', err.message);
       await wa.sendText(chat, 'Gagal membuat sticker brat 😔', m).catch(() => {});
     }
     return true;

@@ -87,6 +87,8 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `ENSIG_API_URL` / `ENSIG_DL_URL` / `ENSIG_API_KEY` | - | Endpoint gaya Ensig/EnsembleData, placeholder `{username}`, `{count}`, `{url}` (opsional) |
 | `TIKTOK_PROXY_URLS` | - | Daftar proxy dipisah koma untuk rotasi request (butuh paket `undici`) |
 | `TIKTOK_COOKIE` | - | Cookie browser TikTok opsional untuk mengurangi WAF |
+| `TIKTOK_JINA_KEY` / `JINA_API_KEY` | - | Key Jina Reader opsional; tanpa key tetap jalan dengan rate limit lebih kecil |
+| `TIKTOK_JINA_BASE` | `https://r.jina.ai/` | Base URL Jina Reader untuk membaca profil TikTok |
 | `TIKTOK_WAF_COOLDOWN_MIN` | `10` | Lama berhenti setelah kena 403/WAF; log peringatan hanya sekali |
 | `VERIF_DB` / `HISTORY_UP_DB` / `UP_TODAY_DB` / `SEEN_VIDEOS_DB` | `./database/*.json` | Lokasi database JSON fitur verif & detector |
 | `TIKTOK_ACCOUNTS_DB` | `./database/accounts.json` | Daftar akun hasil `/addakun` & `/delakun` |
@@ -106,6 +108,13 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `ANIME_CHANNEL_JAPAN_INFO` | `true` | Selipkan info budaya/fakta Jejepangan |
 | `ANIME_CHANNEL_INFO_EVERY` | `3` | Info Jejepangan muncul tiap N post |
 | `INFO_FOOTER` | `> yuzaki tsukasa by ren` | Footer output info channel & `!info` |
+| `LOG_LEVEL` | `info` | Level minimum yang tampil di panel (`debug`/`info`/`warn`/`error`) |
+| `LOG_DB_LEVEL` | `warn` | Level minimum yang disimpan ke database log (bug/error) |
+| `LOG_DB` | `./database/logs.json` | Lokasi database log JSON; isi `off` untuk menonaktifkan |
+| `LOG_DB_MAX` | `1000` | Jumlah entri log maksimum yang disimpan |
+| `LOG_CONSOLE` | `true` | `false` = matikan output panel (database tetap menulis) |
+| `LOG_STACK` | `false` | `true` = tampilkan stack trace di panel |
+| `BAILEYS_LOG` | `error` | Level log internal Baileys/pino (`error`/`warn`/`info`/`debug`) |
 | `BA_LINKS_LOCAL` / `BA_LINKS_URL` | - | Sumber gambar Blue Archive |
 | `PAP_LINKS_PATH` | - | Sumber gambar Pap |
 | `PERATURAN_APIKEY` | - | Diperlukan untuk fitur peraturan/moderasi |
@@ -193,7 +202,7 @@ Template info ada di `src/animeinfo.js` dan dipakai oleh auto-post channel maupu
 
 ## Detector TikTok & Verif ACC
 
-Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTOK_CHECK_MIN` menit. Akun dicek satu per satu dengan jeda acak 2-5 detik. Sumber data memakai rantai fallback anti-WAF: endpoint custom → TikHub → tiktok-api23 → Ensig → TikWM → scraping profil. Kalau semua sumber kena 403/WAF, bot berhenti selama `TIKTOK_WAF_COOLDOWN_MIN` menit dan hanya menulis satu log `[TIKTOK] WAF block, retry 10 menit`. Untuk tiap video baru, bot mengecek:
+Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTOK_CHECK_MIN` menit. Akun dicek satu per satu dengan jeda acak 2-5 detik. Sumber data memakai rantai fallback anti-WAF: endpoint custom/TikHub/tiktok-api23/Ensig (kalau diisi) → Jina Reader (membaca halaman profil dari server Jina, jadi IP bot tidak langsung diblokir) → TikWM → scraping profil langsung. Kalau semua sumber kena 403/WAF, bot berhenti selama `TIKTOK_WAF_COOLDOWN_MIN` menit dan hanya menulis satu log `[TIKTOK] WAF block, retry 10 menit`. Untuk tiap video baru, bot mengecek:
 
 - Caption mengandung hashtag `TIKTOK_HASHTAG` (default `#margaecn`, case-insensitive).
 - Nickname/display name akun mengandung `TIKTOK_CN_KEYWORD` (default `ECN`). Huruf Unicode seperti `𝙀𝘾𝙉`, `〆𝙀𝘾𝙉`, dan `ft 𝙀𝘾𝙉` otomatis dinormalisasi jadi `ECN` sebelum dicocokkan.
@@ -302,6 +311,21 @@ Fitur ini **hanya aktif di chat pribadi antara owner dan bot**. Tidak berjalan d
 - Owner dikenali lewat `OWNER_JID`/`OWNER_NUMBER`, termasuk saat chat memakai JID `@lid` (bot mencoba resolve ke nomor telepon otomatis).
 - Batas aman: gaya **sugestif/flirty**, bukan adegan eksplisit; menolak konten yang melibatkan anak di bawah umur. Filter bawaan Gemini tetap berlaku.
 - Prompt overlay bisa diganti lewat `TSUKASA_ADULT_PROMPT` di `.env`.
+
+## Logging
+
+Semua output panel memakai format yang sama:
+
+```
+[2026-11-05 12:34:56] [INFO ] [TIKTOK] @kang_zenith baseline 31 video
+[2026-11-05 12:35:10] [WARN ] [WA] Terputus (code=428). Reconnect dalam 4000ms...
+[2026-11-05 12:35:12] [ERROR] [ROUTER] error: ...
+```
+
+- `LOG_LEVEL` mengatur level yang tampil; `LOG_DB_LEVEL` mengatur level yang disimpan.
+- Bug/error (`warn` ke atas) otomatis masuk ke `database/logs.json` (maksimal `LOG_DB_MAX` entri) sehingga tetap bisa diperiksa walau log panel sudah lewat.
+- Log internal Baileys/pino ikut dirapikan dengan tag `WA`, sehingga tidak lagi berupa JSON mentah.
+- Set `LOG_STACK=false` untuk panel yang ringkas; ubah ke `true` saat sedang menelusuri bug.
 
 ## HTTP API
 

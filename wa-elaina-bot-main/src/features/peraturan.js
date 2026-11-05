@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('../logger');
 const wa = require('../wa');
 const llm = require('../llm');
 const { WARN_LIMIT } = require('../state');
@@ -59,7 +60,7 @@ class PeraturanFeature {
         }
       }
     } catch (err) {
-      console.error('[PERATURAN] isAdmin error:', err.message);
+      log.error('[PERATURAN] isAdmin error:', err.message);
     }
     return false;
   }
@@ -151,7 +152,7 @@ class PeraturanFeature {
         await this.handleWarn(sock, m, state, content);
       }
     } catch (err) {
-      console.error('[PERATURAN] evaluate error:', err.message);
+      log.error('[PERATURAN] evaluate error:', err.message);
     }
   }
 
@@ -184,7 +185,7 @@ class PeraturanFeature {
       try {
         await sock.groupParticipantsUpdate(chat, [bareJid(sender)], 'remove');
       } catch (err) {
-        console.error(`[PERATURAN] gagal keluarkan ${sender}:`, err.message);
+        log.error(`[PERATURAN] gagal keluarkan ${sender}:`, err.message);
         return;
       }
       await this.store.clearWarns(chat, sender);
@@ -333,7 +334,7 @@ class PeraturanFeature {
     try {
       await sock.sendMessage(m.key.remoteJid, { delete: m.key });
     } catch (err) {
-      console.error('[PERATURAN] gagal hapus pesan:', err.message);
+      log.error('[PERATURAN] gagal hapus pesan:', err.message);
     }
   }
 }

@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('../logger');
 const fs = require('fs');
 const path = require('path');
 
@@ -89,7 +90,7 @@ class BaImageFeature {
       await wa.sendImage(chat, data, caption, m, mime || 'image/jpeg');
       return true;
     } catch (err) {
-      console.error('[BA] gagal kirim gambar:', err.message);
+      log.error('[BA] gagal kirim gambar:', err.message);
       return false;
     }
   }
@@ -147,7 +148,7 @@ class PapFeature {
         .map((u) => String(u || '').trim())
         .filter((u) => /^https?:\/\//i.test(u));
     } catch (err) {
-      console.error(`[PAP] gagal memuat ${cfg.papLinksPath}:`, err.message);
+      log.error(`[PAP] gagal memuat ${cfg.papLinksPath}:`, err.message);
     }
   }
 
@@ -165,7 +166,7 @@ class PapFeature {
         await wa.sendImage(chat, data, this.caption, m, mime || 'image/jpeg');
         return true;
       } catch (err) {
-        console.error(`[PAP] gagal ${url}:`, err.message);
+        log.error(`[PAP] gagal ${url}:`, err.message);
         this.urls.splice(idx, 1);
       }
     }

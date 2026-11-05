@@ -1,9 +1,51 @@
 'use strict';
 
+const { Writable } = require('stream');
 const pino = require('pino');
+const log = require('./logger');
 const { destJid, isGroupJid } = require('./util');
 
-const logger = pino({ level: process.env.BAILEYS_LOG || 'warn' });
+// Pino menulis JSON per baris. Alihkan semuanya ke logger aplikasi supaya
+// output panel tetap satu format: [waktu] [LEVEL] [TAG] pesan.
+function forwardBaileysLine(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return;
+  try {
+    const entry = JSON.parse(text);
+    const levelNum = Number(entry.level);
+    const level =
+      levelNum >= 50 ? 'error' : levelNum >= 40 ? 'warn' : levelNum >= 30 ? 'info' : 'debug';
+    let message = String(entry.msg || entry.message || 'baileys');
+    const detail = entry.err || entry.error;
+    if (detail && detail.message) message += ` | ${detail.message}`;
+    const tag = entry.name ? `WA:${entry.name}` : 'WA';
+
+    if (detail && detail.stack) {
+      const err = new Error(message);
+      err.stack = String(detail.stack);
+      log[level](tag, err);
+    } else {
+      log[level](tag, message);
+    }
+  } catch {
+    log.debug('WA', text);
+  }
+}
+
+const baileysStream = new Writable({
+  write(chunk, _encoding, done) {
+    String(chunk)
+      .split('\n')
+      .forEach(forwardBaileysLine);
+    done();
+  },
+});
+baileysStream.on('error', () => {});
+
+const logger = pino(
+  { level: process.env.BAILEYS_LOG || 'error', base: null },
+  baileysStream
+);
 
 let sock = null;
 let baileys = null;

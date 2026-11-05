@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('./logger');
 const { OwnerDetector, WelcomeHandler, TagAllHandler, RvoHandler } = require('./features/basic');
 const { StickerFeature, BratFeature } = require('./features/media');
 const { BaImageFeature, PapFeature } = require('./features/images');
@@ -16,6 +17,7 @@ const llm = require('./llm');
 const memory = require('./memory');
 const wa = require('./wa');
 const { isGroupJid } = require('./util');
+const { shortError } = require('./logfmt');
 const { isHotCue, isStopCue } = require('./adultmode');
 
 const RE_REPLY_CUE = /\b(balas(in|lah)?|reply|jawab(in|lah)?)(\s+ini)?\b/i;
@@ -202,7 +204,7 @@ class Router {
     try {
       await this.welcome.handle(this.sock, ev);
     } catch (err) {
-      console.error('[WELCOME] error:', err.message);
+      log.error('[WELCOME] error:', err.message);
     }
   }
 
@@ -269,7 +271,7 @@ class Router {
     const quoted = wa.quotedContent(wa.contextInfoOf(content));
     const q = quotedInfo(quoted);
     if (q.img || q.aud || q.text) {
-      console.log(
+      log.info(
         `[REPLY] chat=${chat} quoted{img:${q.img} aud:${q.aud} textLen:${q.text.length}}`
       );
     }
@@ -592,7 +594,7 @@ class Router {
         return;
       }
     } catch (err) {
-      console.error('[TIKTOK] detect error:', err.message);
+      log.error(`[TIKTOK] baca link gagal: ${shortError(err)}`);
     }
 
     // Perintah bang (!ba, !pap, !s, !stiker, dll) juga harus jalan di grup
@@ -658,7 +660,7 @@ class Router {
     if (ownerDm && isStopCue(txt)) {
       if (state.adult) await this.store.setAdult(chat, false);
       adult = false;
-      console.log(`[ADULT] nonaktif untuk chat=${chat}`);
+      log.info(`[ADULT] nonaktif untuk chat=${chat}`);
     } else if (ownerDm && isHotCue(txt)) {
       if (!state.adult) {
         await wa
@@ -667,12 +669,12 @@ class Router {
       }
       adult = true;
       await this.store.setAdult(chat, true);
-      console.log(`[ADULT] aktif untuk chat=${chat} sender=${sender}`);
+      log.info(`[ADULT] aktif untuk chat=${chat} sender=${sender}`);
     } else if (adult) {
       // Perpanjang selama owner masih mengobrol (sliding 30 menit).
       await this.store.refreshAdult(chat).catch(() => {});
     } else if (!isGroupJid(chat) && isHotCue(txt)) {
-      console.log(
+      log.info(
         `[ADULT] cue terdeteksi tapi bukan owner. chat=${chat} sender=${sender} ` +
           `kandidat=${ownerCandidates.join(',')}`
       );
@@ -771,7 +773,7 @@ class Router {
             const got = await tiktok.downloadBytes(url, this.cfg.ttMaxImage);
             await wa.sendImage(chat, got.data, `TikTok 🖼️ slide ${i + 1}/${max}`, m, got.mime);
           } catch (err) {
-            console.error('[TIKTOK] slide error:', err.message);
+            log.error(`[TIKTOK] slide ${i + 1} gagal: ${shortError(err)}`);
           }
         }
         if (data.audio) await wa.sendText(chat, `🔊 Audio: ${data.audio}`, m);
@@ -808,7 +810,7 @@ class Router {
           if (data.audio) await wa.sendText(chat, `🔊 Audio: ${data.audio}`, m);
           return;
         } catch (err) {
-          console.error('[TIKTOK] video error:', err.message);
+          log.error(`[TIKTOK] video gagal: ${shortError(err)}`);
         }
       }
 
@@ -819,7 +821,7 @@ class Router {
 
       await wa.sendText(chat, 'Maaf, tidak menemukan media valid dari TikTok.', m);
     } catch (err) {
-      console.error('[TIKTOK] gagal:', err.message);
+      log.error(`[TIKTOK] download gagal: ${shortError(err)}`);
       await wa.sendText(chat, 'Maaf, gagal mengambil media TikTok. Coba kirim lagi ya.', m);
     }
   }

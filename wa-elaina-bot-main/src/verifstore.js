@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('./logger');
 const { atomicWriteJson, safeReadJson } = require('./util');
 
 const HISTORY_MAX = 5000;
@@ -141,7 +142,7 @@ class VerifStore {
   _queue(file, data) {
     this._writing = this._writing
       .then(() => atomicWriteJson(file, data))
-      .catch((err) => console.error('[VERIF] gagal menyimpan:', err.message));
+      .catch((err) => log.error('[VERIF] gagal menyimpan:', err.message));
     return this._writing;
   }
 

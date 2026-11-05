@@ -1,6 +1,6 @@
 'use strict';
 
-const pino = require('pino');
+const log = require('./src/logger');
 const qrcode = require('qrcode-terminal');
 
 const { load } = require('./src/config');
@@ -17,7 +17,8 @@ const { VerifStore } = require('./src/verifstore');
 const { TikTokAccounts } = require('./src/tiktokaccounts');
 const { TikTokMonitor } = require('./src/tiktokmonitor');
 
-const logger = pino({ level: process.env.BAILEYS_LOG || 'warn' });
+// Logger Baileys sudah diarahkan ke logger aplikasi (lihat src/wa.js).
+const logger = wa.logger;
 
 async function main() {
   const cfg = load();
@@ -30,7 +31,7 @@ async function main() {
   try {
     baileys = await import('@whiskeysockets/baileys');
   } catch (err) {
-    console.error('[FATAL] Gagal memuat @whiskeysockets/baileys:', err.message);
+    log.error('[FATAL] Gagal memuat @whiskeysockets/baileys:', err.message);
     process.exit(1);
   }
   wa.setBaileys(baileys);
@@ -50,10 +51,12 @@ async function main() {
   const api = new HttpApi(cfg, isReady);
   api.start();
 
-  console.log(`[BOOT] Bot ${cfg.botName} | Mode: ${cfg.mode} | Trigger: "${cfg.trigger}"`);
-  console.log(`[BOOT] Session dir: ${cfg.sessionDir}`);
-  console.log(`[BOOT] State file: ${cfg.stateDb}`);
-  console.log(`[BOOT] HTTP: ${cfg.host || '0.0.0.0'}:${cfg.port}`);
+  log.info(`[BOOT] ${cfg.botName} | mode ${cfg.mode} | trigger "${cfg.trigger}"`);
+  log.info(
+    `[BOOT] session ${cfg.sessionDir} | state ${cfg.stateDb} | http ${
+      cfg.host || '0.0.0.0'
+    }:${cfg.port}`
+  );
 
   let reconnectAttempts = 0;
   let reconnectTimer = null;
@@ -80,7 +83,7 @@ async function main() {
     try {
       ({ version } = await fetchLatestBaileysVersion());
     } catch (err) {
-      console.warn('[WA] gagal cek versi Baileys, pakai default:', err.message);
+      log.warn('[WA] gagal cek versi Baileys, pakai default:', err.message);
     }
 
     const sock = makeWASocket({
@@ -121,17 +124,17 @@ async function main() {
             sock
               .requestPairingCode(cfg.pairingNumber)
               .then((code) => {
-                console.log('[WA] Pairing code untuk ' + cfg.pairingNumber + ': ' + code);
-                console.log('[WA] Buka WhatsApp > Perangkat Tertaut > Tautkan dengan nomor telepon.');
+                log.info('[WA] Pairing code untuk ' + cfg.pairingNumber + ': ' + code);
+                log.info('[WA] Buka WhatsApp > Perangkat Tertaut > Tautkan dengan nomor telepon.');
               })
               .catch((err) => {
-                console.error('[WA] Gagal minta pairing code:', err.message);
-                console.log('[WA] Fallback ke QR:');
+                log.error('[WA] Gagal minta pairing code:', err.message);
+                log.info('[WA] Fallback ke QR:');
                 qrcode.generate(qr, { small: true });
               });
           }
         } else {
-          console.log('[WA] Scan QR berikut dengan WhatsApp (Perangkat Tertaut):');
+          log.info('[WA] Scan QR berikut dengan WhatsApp (Perangkat Tertaut):');
           qrcode.generate(qr, { small: true });
         }
       }
@@ -143,8 +146,7 @@ async function main() {
           clearTimeout(reconnectTimer);
           reconnectTimer = null;
         }
-        console.log('[WA] Terhubung. Bot siap menerima pesan.');
-        console.log('[READY] Tsukasa siap menerima pesan.');
+        log.info(`[WA] Terhubung | ${cfg.botName} siap menerima pesan`);
         animeChannel.start();
         reminders.start();
         groupTools.start();
@@ -156,7 +158,7 @@ async function main() {
         animeChannel.stop();
         groupTools.stop();
         tiktokMonitor.stop();
-        console.log('[WA] Menghubungkan...');
+        log.info('[WA] Menghubungkan...');
       }
 
       if (connection === 'close') {
@@ -174,18 +176,18 @@ async function main() {
           lastDisconnect.error.output.statusCode;
 
         if (statusCode === DisconnectReason.loggedOut) {
-          console.error('[WA] Sesi logout. Hapus folder sesi lalu jalankan ulang untuk scan QR.');
+          log.error('[WA] Sesi logout. Hapus folder sesi lalu jalankan ulang untuk scan QR.');
           process.exit(1);
         }
 
         reconnectAttempts += 1;
         const delay = Math.min(30000, 2000 * reconnectAttempts);
-        console.warn(`[WA] Terputus (code=${statusCode || '?'}). Reconnect dalam ${delay}ms...`);
+        log.warn(`[WA] Terputus (code=${statusCode || '?'}). Reconnect dalam ${delay}ms...`);
         if (reconnectTimer) return;
         reconnectTimer = setTimeout(() => {
           reconnectTimer = null;
           startSocket().catch((err) => {
-            console.error('[WA] reconnect gagal:', err.message);
+            log.error('[WA] reconnect gagal:', err.message);
             setTimeout(() => startSocket().catch(() => {}), 5000);
           });
         }, delay);
@@ -203,8 +205,8 @@ async function main() {
         try {
           await router.handleMessage(msg);
         } catch (err) {
-          console.error('[ROUTER] error:', err.message);
-          if (process.env.ROUTER_DEBUG === 'true') console.error(err.stack);
+          log.error('[ROUTER] error:', err);
+          if (process.env.ROUTER_DEBUG === 'true') log.error('[ROUTER] stack:', err.stack);
         }
       }
     });
@@ -213,14 +215,14 @@ async function main() {
       try {
         await router.handleGroupParticipantsUpdate(ev);
       } catch (err) {
-        console.error('[GROUP] error:', err.message);
+        log.error('[GROUP] error:', err.message);
       }
     });
   }
 
   process.on('SIGINT', () => {
     shuttingDown = true;
-    console.log('[BOOT] SIGINT diterima, menutup...');
+    log.info('[BOOT] SIGINT | menutup...');
     animeChannel.stop();
     groupTools.stop();
     tiktokMonitor.stop();
@@ -234,7 +236,7 @@ async function main() {
 
   process.on('SIGTERM', () => {
     shuttingDown = true;
-    console.log('[BOOT] SIGTERM diterima, menutup...');
+    log.info('[BOOT] SIGTERM | menutup...');
     animeChannel.stop();
     groupTools.stop();
     tiktokMonitor.stop();
@@ -250,14 +252,14 @@ async function main() {
 }
 
 process.on('unhandledRejection', (err) => {
-  console.error('[UNHANDLED]', err && err.message ? err.message : err);
+  log.error('[UNHANDLED]', err || 'promise ditolak tanpa alasan');
 });
 
 process.on('uncaughtException', (err) => {
-  console.error('[UNCAUGHT]', err && err.stack ? err.stack : err);
+  log.error('[UNCAUGHT]', err);
 });
 
 main().catch((err) => {
-  console.error('[FATAL]', err && err.stack ? err.stack : err);
+  log.error('[FATAL]', err);
   process.exit(1);
 });

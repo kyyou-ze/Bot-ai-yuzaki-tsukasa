@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('../logger');
 const wa = require('../wa');
 const llm = require('../llm');
 const { fetchWithTimeout, trimWords } = require('../util');
@@ -30,7 +31,7 @@ class VisionFeature {
         ? await wa.downloadQuoted(quoted, chat, sender)
         : await wa.downloadMedia({ key: m.key, message: content });
     } catch (err) {
-      console.error('[VISION] download error:', err.message);
+      log.error('[VISION] download error:', err.message);
     }
     if (!blob) {
       await wa.sendText(chat, 'Maaf, gagal mengunduh gambar 😔', m).catch(() => {});
@@ -90,7 +91,7 @@ class VnFeature {
         ? await wa.downloadQuoted(quoted, chat, sender)
         : await wa.downloadMedia({ key: m.key, message: content });
     } catch (err) {
-      console.error('[VN] download error:', err.message);
+      log.error('[VN] download error:', err.message);
     }
     if (!blob) {
       await wa.sendText(chat, 'Maaf, gagal mengambil voice note 😔', m).catch(() => {});
@@ -144,7 +145,7 @@ class TtsFeature {
     this.rateHint = String(process.env.ELEVEN_RATE_HINT || 'normal').trim().toLowerCase();
     this.enabled = Boolean(this.key && this.voice);
     if (this.enabled) {
-      console.log(
+      log.info(
         `[TTS] Enabled voiceID=${this.voice} model=${this.model} fmt=${this.outFmt} latency=${this.latency}`
       );
     }
@@ -233,7 +234,7 @@ class TtsFeature {
       );
       if (!res.ok) {
         const err = await res.text().catch(() => '');
-        console.error('[TTS] elevenlabs error:', res.status, err.slice(0, 150));
+        log.error('[TTS] elevenlabs error:', res.status, err.slice(0, 150));
         await wa.sendText(chat, 'TTS gagal. Pastikan kredensial ElevenLabs & voice ID benar.', m).catch(
           () => {}
         );
@@ -242,7 +243,7 @@ class TtsFeature {
       const buf = Buffer.from(await res.arrayBuffer());
       await wa.sendAudio(chat, buf, this.outputMime(), true, m);
     } catch (err) {
-      console.error('[TTS] gagal:', err.message);
+      log.error('[TTS] gagal:', err.message);
       await wa.sendText(chat, 'TTS gagal. Coba lagi ya.', m).catch(() => {});
     }
     return true;
@@ -297,7 +298,7 @@ class ImgGenFeature {
           );
           if (!res.ok) {
             const err = await res.text().catch(() => '');
-            console.error('[IMGGEN]', model, res.status, err.slice(0, 80));
+            log.error('[IMGGEN]', model, res.status, err.slice(0, 80));
             continue;
           }
           const json = await res.json();
@@ -312,7 +313,7 @@ class ImgGenFeature {
             }
           }
         } catch (err) {
-          console.error('[IMGGEN] error:', err.message);
+          log.error('[IMGGEN] error:', err.message);
         }
       }
     }
@@ -390,7 +391,7 @@ class HijabinFeature {
         ? await wa.downloadQuoted(quoted, chat, sender)
         : await wa.downloadMedia({ key: m.key, message: content });
     } catch (err) {
-      console.error('[HIJABIN] download error:', err.message);
+      log.error('[HIJABIN] download error:', err.message);
     }
     if (!blob) {
       await wa.sendText(chat, 'Gagal mengunduh gambar 😔', m).catch(() => {});
@@ -401,7 +402,7 @@ class HijabinFeature {
       const out = await this.process(blob, mt);
       await wa.sendImage(chat, out, '*Selamat, gambar sudah berhijab.*', m);
     } catch (err) {
-      console.error('[HIJABIN] gagal:', err.message);
+      log.error('[HIJABIN] gagal:', err.message);
       if (err.message === 'NOT_CONFIGURED') {
         await wa.sendText(
           chat,

@@ -33,6 +33,9 @@ temp/
 # ===== Logs & runtime =====
 *.log
 logs/
+# Database log/bug (dibuat otomatis oleh src/logger.js)
+database/logs.json
+database/logs.json.*.tmp
 pids/
 *.pid
 *.seed
