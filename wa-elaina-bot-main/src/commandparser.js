@@ -17,6 +17,7 @@ const KNOWN_COMMANDS = new Set([
   'peraturan', 'rules',
   'health', 'status', 'ping',
   'config', 'setting', 'pengaturan', 'set', 'isi',
+  'update', 'upgrade', 'autoupdate',
   'geminikey', 'gkey',
   'hot', 'tsukasa', 'persona', 'mode',
   'tagall', 'rvo',

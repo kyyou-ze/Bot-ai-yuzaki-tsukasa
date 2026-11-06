@@ -12,6 +12,7 @@ const { GroupTools } = require('./features/grouptools');
 const { GroupGuard } = require('./features/groupguard');
 const { NewsFeature } = require('./features/news');
 const { ConfigFeature } = require('./features/configcmd');
+const { UpdateFeature } = require('./features/updatecmd');
 const { VerifFeature } = require('./features/verif');
 const { TikTokAdminFeature } = require('./features/tiktokadmin');
 const { VerifStore } = require('./verifstore');
@@ -141,7 +142,8 @@ class Router {
     verifStore,
     tiktokMonitor,
     tiktokAccounts,
-    groupGuard
+    groupGuard,
+    updater
   ) {
     this.cfg = cfg;
     this.sock = sock;
@@ -170,6 +172,7 @@ class Router {
     this.info = new InfoFeature(this.reTrig);
     this.news = new NewsFeature(cfg);
     this.configCmd = new ConfigFeature(cfg);
+    this.updateCmd = new UpdateFeature(updater || null);
     this.peraturan = new PeraturanFeature(store);
     this.guard = groupGuard || new GroupGuard(cfg, store);
     this.heavyLimiter = new RateLimiter({ maxEntries: 2000 });
@@ -375,6 +378,7 @@ class Router {
           '- !news [topik] : berita anime/manga/gacha/cosplay terbaru + gambar',
           '- !cosplay <link IG> : ambil semua foto dari satu post Instagram',
           '- !config / !set <KEY> <nilai> : isi pengaturan bot lewat chat (owner)',
+          '- !update status|check|now|auto on|off : auto-update GitHub lalu restart panel (owner)',
           '- !health : status koneksi, uptime, RAM, cache, dan antrean unduhan',
           '- !jadwal buka 06:00 / !jadwal tutup 22:00 : buka-tutup grup otomatis (admin)',
           '- !jadwal weekend on|off / !jadwal test : jadwal akhir pekan & uji (admin)',
@@ -418,6 +422,10 @@ class Router {
 
       if (ConfigFeature.isCommand(bang.cmd)) {
         if (await this.configCmd.handle(this.sock, m, bang.rest, isOwner)) return;
+      }
+
+      if (UpdateFeature.isCommand(bang.cmd)) {
+        if (await this.updateCmd.handle(this.sock, m, bang.rest, isOwner)) return;
       }
 
       if (bang.cmd === 'ingatkan' || bang.cmd === 'remind' || bang.cmd === 'pengingat') {

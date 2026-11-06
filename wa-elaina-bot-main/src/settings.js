@@ -115,6 +115,13 @@ function parseValue(def, raw) {
       if (!list.length && !def.allowEmpty) throw new Error('Daftar tidak boleh kosong');
       return [...new Set(list)];
     }
+    case 'enum': {
+      const v = String(raw ?? '').trim().toLowerCase();
+      if (!def.values.includes(v)) {
+        throw new Error(`Pilihan: ${def.values.join(', ')}`);
+      }
+      return v;
+    }
     case 'string':
     default: {
       const s = String(raw ?? '').trim();
@@ -158,6 +165,10 @@ function typedFromRaw(def, raw) {
     } catch {
       return def.defaultTyped;
     }
+  }
+  if (def.type === 'enum') {
+    const v = String(raw).trim().toLowerCase();
+    return def.values.includes(v) ? v : def.defaultTyped;
   }
   if (def.item === 'jid') return normalizeJid(raw);
   return String(raw).trim();
@@ -706,6 +717,96 @@ const DEFS = [
       cfg.ttMaxSlides = v;
     },
   },
+
+  // --- Auto-update dari GitHub ---
+  {
+    key: 'AUTO_UPDATE_ENABLED',
+    group: 'update',
+    label: 'Aktifkan auto-update dari GitHub',
+    type: 'bool',
+    default: false,
+  },
+  {
+    key: 'AUTO_UPDATE_CHECK_MIN',
+    group: 'update',
+    label: 'Interval cek update GitHub (menit)',
+    type: 'int',
+    min: 1,
+    max: 1440,
+    default: 10,
+  },
+  {
+    key: 'UPDATE_BRANCH',
+    group: 'update',
+    label: 'Branch GitHub yang dipantau',
+    type: 'string',
+    default: 'main',
+  },
+  {
+    key: 'UPDATE_REMOTE',
+    group: 'update',
+    label: 'Nama remote git (biasanya origin)',
+    type: 'string',
+    default: 'origin',
+  },
+  {
+    key: 'GITHUB_USER',
+    group: 'update',
+    label: 'Username GitHub pemilik repo',
+    type: 'string',
+    allowEmpty: true,
+    default: '',
+  },
+  {
+    key: 'GITHUB_REPO',
+    group: 'update',
+    label: 'Nama repository GitHub',
+    type: 'string',
+    allowEmpty: true,
+    default: '',
+  },
+  {
+    key: 'GITHUB_TOKEN',
+    group: 'update',
+    label: 'Token GitHub (opsional, untuk repo privat)',
+    type: 'string',
+    allowEmpty: true,
+    secret: true,
+    default: '',
+  },
+  {
+    key: 'PTERO_URL',
+    group: 'update',
+    label: 'URL panel Pterodactyl (tanpa / di akhir)',
+    type: 'string',
+    allowEmpty: true,
+    default: '',
+  },
+  {
+    key: 'PTERO_CLIENT_KEY',
+    group: 'update',
+    label: 'Client API key Pterodactyl (ptlc_...)',
+    type: 'string',
+    allowEmpty: true,
+    secret: true,
+    default: '',
+  },
+  {
+    key: 'PTERO_SERVER_ID',
+    group: 'update',
+    label: 'ID server Pterodactyl (8 karakter)',
+    type: 'string',
+    allowEmpty: true,
+    default: '',
+  },
+  {
+    key: 'AUTO_UPDATE_RESTART_MODE',
+    group: 'update',
+    label: 'Cara restart setelah update',
+    type: 'enum',
+    values: ['api', 'exit', 'none'],
+    default: 'api',
+  },
 ];
 
 const BY_KEY = new Map();
@@ -722,6 +823,7 @@ const GROUPS = {
   rate: 'Rate Limit',
   anime: 'Unduhan Anime',
   tiktok: 'Detector TikTok',
+  update: 'Auto Update',
 };
 
 let overrides = {};
@@ -883,6 +985,11 @@ function formatValue(def, typed) {
   if (def.type === 'bool') return typed ? 'on' : 'off';
   if (def.type === 'list') return typed.length ? typed.join(', ') : '(kosong)';
   if (typed === '' || typed === undefined || typed === null) return '(kosong)';
+  if (def.secret) {
+    const s = String(typed);
+    if (s.length <= 8) return '********';
+    return `${s.slice(0, 4)}…${s.slice(-4)}`;
+  }
   return String(typed);
 }
 

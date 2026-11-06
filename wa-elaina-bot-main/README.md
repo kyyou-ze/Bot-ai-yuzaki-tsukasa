@@ -63,6 +63,10 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `PAIRING_NUMBER` | - | Nomor WhatsApp bot untuk pairing code, mis. `6281234567890` |
 | `STATE_DB` | `./tsukasa_state.json` | State JSON (persona/pro/warn/peraturan) |
 | `SETTINGS_DB` | `./database/settings.json` | Override pengaturan yang diisi lewat chat (`!config`) |
+| `AUTO_UPDATE_ENABLED` | `false` | Aktifkan cek & tarik update GitHub otomatis |
+| `AUTO_UPDATE_CHECK_MIN` | `10` | Interval cek update (menit) |
+| `PTERO_URL` / `PTERO_CLIENT_KEY` / `PTERO_SERVER_ID` | - | Client API panel untuk restart otomatis |
+| `AUTO_UPDATE_RESTART_MODE` | `api` | `api`, `exit`, atau `none` |
 | `PORT` / `SERVER_PORT` | `7860` | Port HTTP API. Di Pterodactyl, `SERVER_PORT` otomatis dipakai |
 | `HOST` | `0.0.0.0` | Host bind HTTP API |
 | `SEND_API_KEY` | - | API key untuk `/send` |
@@ -284,12 +288,87 @@ Contoh yang sering dipakai:
 !config set TIKTOK_CHECK_MIN 3
 ```
 
-Grup setting yang tersedia: `cosplay`, `news`, `channel`, `moderation`, `rate`, `anime`, `tiktok`. Gunakan `!config list` untuk melihat key lengkapnya.
+Grup setting yang tersedia: `cosplay`, `news`, `channel`, `moderation`, `rate`, `anime`, `tiktok`, `update`. Gunakan `!config list` untuk melihat key lengkapnya.
 
 Catatan:
 - Perintah ini **khusus owner**. Admin grup tetap memakai perintah grup seperti `!antilink`, `!antispam`, `!jadwal`, `!mute`, dan `!resetwarn`.
 - Nilai dari chat disimpan terpisah dari `.env`. Jika ingin kembali ke isi `.env`, gunakan `!config reset KEY`.
 - Mengubah `ANIME_CHANNEL_ENABLED`, `ANIME_CHANNEL_INTERVAL_MIN`, `ANIME_CHANNEL_JID`, `TIKTOK_MONITOR_ENABLED`, dan `TIKTOK_CHECK_MIN` langsung diterapkan ke scheduler yang sedang berjalan.
+
+## Auto-update GitHub ke Pterodactyl
+
+Bot bisa mengecek commit baru di GitHub, menariknya dengan `git pull`, lalu me-restart server lewat **Pterodactyl Client API**. Ini bekerja tanpa akses admin panel, cukup akun server yang kamu sewa.
+
+**Syarat:** folder server harus clone git dari repo ini, bukan hasil upload ZIP. Cek di panel/console:
+
+```bash
+git remote -v
+git log --oneline -1
+```
+
+Kalau `.git` tidak ada, minta pemilik panel clone ulang repo ke folder server.
+
+**Setup sekali saja:**
+
+1. Di panel, buka **Account Settings → API Credentials**, buat client API key (`ptlc_...`).
+2. Catat **URL panel** dan **ID server** (8 karakter dari URL `/server/xxxxxxxx`).
+3. Isi lewat chat (owner) atau `.env`:
+
+```text
+!config set PTERO_URL https://panel.domain.com
+!config set PTERO_CLIENT_KEY ptlc_xxxxxxxx
+!config set PTERO_SERVER_ID xxxxxxxx
+!config set AUTO_UPDATE_ENABLED on
+!config set AUTO_UPDATE_CHECK_MIN 5
+```
+
+Atau di `.env`:
+
+```env
+AUTO_UPDATE_ENABLED=true
+AUTO_UPDATE_CHECK_MIN=5
+UPDATE_BRANCH=main
+UPDATE_REMOTE=origin
+GITHUB_USER=kyyou-ze
+GITHUB_REPO=Bot-ai-yuzaki-tsukasa
+PTERO_URL=https://panel.domain.com
+PTERO_CLIENT_KEY=ptlc_xxxxxxxx
+PTERO_SERVER_ID=xxxxxxxx
+AUTO_UPDATE_RESTART_MODE=api
+```
+
+**Perintah owner:**
+
+```text
+!update status      # status repo, jadwal, dan kesiapan panel
+!update check       # cek commit baru tanpa menarik
+!update now         # tarik update + restart panel
+!update auto on|off # aktif/nonaktif cek otomatis
+!update interval 5  # cek tiap 5 menit
+!update mode api|exit|none
+```
+
+Cara kerja:
+
+- Setiap `AUTO_UPDATE_CHECK_MIN` menit bot menjalankan `git fetch` dan membandingkan commit.
+- Jika ada commit baru, bot `git stash` perubahan lokal (jika ada), lalu `git pull --ff-only`.
+- Jika `package.json`/`package-lock.json` berubah, bot menjalankan `npm install --omit=dev`.
+- Bot menjalankan `npm run check`; kalau sintaks rusak, update **dibatalkan dan di-rollback**.
+- Setelah sukses, bot memanggil `POST /api/client/servers/{id}/power` dengan signal `restart`.
+- Semua langkah dikirim ke owner lewat WhatsApp.
+
+Mode restart:
+
+- `api` — restart lewat Pterodactyl Client API (disarankan).
+- `exit` — bot keluar dengan kode 1; berguna jika panel dikonfigurasi auto-restart saat crash.
+- `none` — kode ditarik, tetapi restart manual lewat panel.
+
+Catatan penting:
+
+- Tanpa client API key, kode tetap bisa ditarik otomatis, tetapi bot tidak bisa restart sendiri. Restart manual lewat panel agar kode baru dipakai.
+- Interval minimal 1 menit. Ini polling, bukan webhook instan, karena mengubah egg/startup command butuh akses admin panel.
+- `.env`, `session/`, `database/`, dan state runtime tidak ikut terhapus karena diabaikan git dan tidak di-stash sembarangan.
+- Jika repo privat, isi `GITHUB_TOKEN` (read-only cukup) agar `git fetch` diizinkan.
 
 ## Berita Anime, Gacha & Carousel Instagram
 

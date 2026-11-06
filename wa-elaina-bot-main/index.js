@@ -20,14 +20,42 @@ const { GroupGuard } = require('./src/features/groupguard');
 const { VerifStore } = require('./src/verifstore');
 const { TikTokAccounts } = require('./src/tiktokaccounts');
 const { TikTokMonitor } = require('./src/tiktokmonitor');
+const { Updater } = require('./src/updater');
 
 // Logger Baileys sudah diarahkan ke logger aplikasi (lihat src/wa.js).
 const logger = wa.logger;
+
+function ownerTarget(cfg) {
+  const raw = String(
+    process.env.OWNER_JID ||
+      process.env.OWNER_NUMBER ||
+      process.env.PAIRING_NUMBER ||
+      cfg.ownerJid ||
+      ''
+  ).trim();
+  if (!raw) return '';
+  if (raw.includes('@')) return raw;
+  const digits = raw.replace(/\D+/g, '');
+  return digits ? `${digits}@s.whatsapp.net` : '';
+}
 
 async function main() {
   const cfg = load();
   llm.init(cfg);
   memory.loadAll();
+
+  const updater = new Updater(cfg, {
+    appDir: __dirname,
+    notify: async (text) => {
+      const to = ownerTarget(cfg);
+      if (!to) return;
+      try {
+        await wa.sendText(to, text);
+      } catch (err) {
+        log.warn('[UPDATE] gagal kirim notifikasi:', err.message);
+      }
+    },
+  });
 
   // Baileys 6.7.24 adalah paket ESM. Muat lewat dynamic import agar tetap
   // kompatibel dengan aplikasi CommonJS ini (dan Node 20/22 di Pterodactyl).
@@ -75,6 +103,10 @@ async function main() {
         tiktokMonitor.stop();
         tiktokMonitor.start();
       }
+    }
+    if (key === 'AUTO_UPDATE_ENABLED' || key === 'AUTO_UPDATE_CHECK_MIN') {
+      if (waReady) updater.reschedule();
+      else updater.stop();
     }
   });
 
@@ -148,7 +180,8 @@ async function main() {
       verifStore,
       tiktokMonitor,
       tiktokAccounts,
-      groupGuard
+      groupGuard,
+      updater
     );
 
     sock.ev.on('creds.update', saveCreds);
@@ -191,6 +224,7 @@ async function main() {
         groupTools.start();
         groupGuard.start();
         tiktokMonitor.start();
+        updater.start();
       }
 
       if (connection === 'connecting') {
@@ -199,6 +233,7 @@ async function main() {
         groupTools.stop();
         groupGuard.stop();
         tiktokMonitor.stop();
+        updater.stop();
         log.info('[WA] Menghubungkan...');
       }
 
@@ -209,6 +244,7 @@ async function main() {
         groupTools.stop();
         groupGuard.stop();
         tiktokMonitor.stop();
+        updater.stop();
         if (shuttingDown) return;
 
         const statusCode =
@@ -268,6 +304,7 @@ async function main() {
     groupTools.stop();
     groupGuard.stop();
     tiktokMonitor.stop();
+    updater.stop();
     try {
       wa.getSock()?.end?.(undefined);
     } catch {
@@ -283,6 +320,7 @@ async function main() {
     groupTools.stop();
     groupGuard.stop();
     tiktokMonitor.stop();
+    updater.stop();
     try {
       wa.getSock()?.end?.(undefined);
     } catch {
