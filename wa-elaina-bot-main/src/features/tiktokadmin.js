@@ -207,6 +207,21 @@ class TikTokAdminFeature {
 
     if (['status', 'cek', 'info'].includes(action)) {
       const list = this.accounts ? this.accounts.list() : [];
+      const health = this.monitor && typeof this.monitor.health === 'function'
+        ? this.monitor.health()
+        : null;
+      const when = (ts) =>
+        ts ? new Date(ts).toLocaleString('id-ID', { timeZone: this.cfg.timezone || 'Asia/Jakarta' }) : '-';
+      const healthLines = health
+        ? [
+            `Cek terakhir: ${when(health.lastCheckAt)}`,
+            `Sukses terakhir: ${when(health.lastOkAt)}`,
+            health.cooldownUntil > Date.now()
+              ? `Cooldown WAF sampai: ${when(health.cooldownUntil)}`
+              : 'Cooldown WAF: tidak ada',
+            health.lastError ? `Error terakhir: ${health.lastError}` : 'Error terakhir: -',
+          ]
+        : [];
       await this.reply(
         m,
         [
@@ -215,6 +230,7 @@ class TikTokAdminFeature {
           `Interval: tiap ${Math.max(1, Number(this.cfg.tiktokCheckMin) || 3)} menit`,
           `CN: ${this.cfg.tiktokCnKeyword || 'ECN'} • Hashtag: ${this.cfg.tiktokHashtag || '#margaecn'}`,
           `Sumber daftar: ${this.accounts && this.accounts.source() === 'file' ? 'database/accounts.json' : '.env'}`,
+          ...healthLines,
           '',
           list.length ? 'Akun: ' + list.join(', ') : 'Akun: (kosong)',
         ].join('\n')

@@ -8,11 +8,14 @@ const { Store } = require('./src/state');
 const memory = require('./src/memory');
 const llm = require('./src/llm');
 const wa = require('./src/wa');
+const { messageCache } = require('./src/messagecache');
+const { TaskQueue } = require('./src/taskqueue');
 const { Router } = require('./src/router');
 const { HttpApi } = require('./src/httpapi');
 const { Reminders } = require('./src/reminders');
 const { AnimeChannelPoster } = require('./src/features/animechannel');
 const { GroupTools } = require('./src/features/grouptools');
+const { GroupGuard } = require('./src/features/groupguard');
 const { VerifStore } = require('./src/verifstore');
 const { TikTokAccounts } = require('./src/tiktokaccounts');
 const { TikTokMonitor } = require('./src/tiktokmonitor');
@@ -44,6 +47,7 @@ async function main() {
   const animeChannel = new AnimeChannelPoster(cfg, store, isReady);
   const reminders = new Reminders(cfg);
   const groupTools = new GroupTools(cfg, store);
+  const groupGuard = new GroupGuard(cfg, store);
   const verifStore = new VerifStore(cfg);
   const tiktokAccounts = new TikTokAccounts(cfg);
   const tiktokMonitor = new TikTokMonitor(cfg, verifStore, isReady, tiktokAccounts);
@@ -62,6 +66,14 @@ async function main() {
   let reconnectTimer = null;
   let currentSock = null;
   let shuttingDown = false;
+
+  const messageQueue = new TaskQueue({
+    concurrency: Math.max(1, Number(process.env.MSG_CONCURRENCY) || 4),
+    onError: (err) => {
+      log.error('[ROUTER] error:', err);
+      if (process.env.ROUTER_DEBUG === 'true') log.error('[ROUTER] stack:', err.stack);
+    },
+  });
 
   async function startSocket() {
     // Bersihkan socket lama agar listener-nya tidak ikut memicu reconnect
@@ -95,7 +107,7 @@ async function main() {
       syncFullHistory: false,
       generateHighQualityLinkPreview: false,
       markOnlineOnConnect: true,
-      getMessage: async () => undefined,
+      getMessage: async (key) => messageCache.get(key),
     });
 
     wa.setSock(sock);
@@ -109,7 +121,8 @@ async function main() {
       groupTools,
       verifStore,
       tiktokMonitor,
-      tiktokAccounts
+      tiktokAccounts,
+      groupGuard
     );
 
     sock.ev.on('creds.update', saveCreds);
@@ -150,6 +163,7 @@ async function main() {
         animeChannel.start();
         reminders.start();
         groupTools.start();
+        groupGuard.start();
         tiktokMonitor.start();
       }
 
@@ -157,6 +171,7 @@ async function main() {
         waReady = false;
         animeChannel.stop();
         groupTools.stop();
+        groupGuard.stop();
         tiktokMonitor.stop();
         log.info('[WA] Menghubungkan...');
       }
@@ -166,6 +181,7 @@ async function main() {
         animeChannel.stop();
         reminders.stop();
         groupTools.stop();
+        groupGuard.stop();
         tiktokMonitor.stop();
         if (shuttingDown) return;
 
@@ -202,12 +218,11 @@ async function main() {
       if (!Array.isArray(messages)) return;
 
       for (const msg of messages) {
-        try {
-          await router.handleMessage(msg);
-        } catch (err) {
-          log.error('[ROUTER] error:', err);
-          if (process.env.ROUTER_DEBUG === 'true') log.error('[ROUTER] stack:', err.stack);
-        }
+        if (!msg || !msg.key || !msg.message) continue;
+        // Simpan pesan masuk agar bisa dipakai saat ada retry/quote.
+        messageCache.put(msg.key, msg.message);
+        const chatKey = msg.key.remoteJid || msg.key.id || 'unknown';
+        messageQueue.push(chatKey, () => router.handleMessage(msg));
       }
     });
 
@@ -225,6 +240,7 @@ async function main() {
     log.info('[BOOT] SIGINT | menutup...');
     animeChannel.stop();
     groupTools.stop();
+    groupGuard.stop();
     tiktokMonitor.stop();
     try {
       wa.getSock()?.end?.(undefined);
@@ -239,6 +255,7 @@ async function main() {
     log.info('[BOOT] SIGTERM | menutup...');
     animeChannel.stop();
     groupTools.stop();
+    groupGuard.stop();
     tiktokMonitor.stop();
     try {
       wa.getSock()?.end?.(undefined);

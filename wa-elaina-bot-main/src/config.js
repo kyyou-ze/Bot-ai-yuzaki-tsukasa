@@ -148,6 +148,17 @@ function load() {
       japanInfo: boolEnv(getenv('ANIME_CHANNEL_JAPAN_INFO', 'true'), true),
       infoEvery: Math.max(1, intEnv(getenv('ANIME_CHANNEL_INFO_EVERY', '3'), 3)),
     },
+    // Berita anime/manga/gacha + carousel Instagram.
+    news: {
+      enabled: boolEnv(getenv('NEWS_ENABLED', 'true'), true),
+      sources: getenv('NEWS_SOURCES', 'ann,animecorner,gematsu,siliconera'),
+      // RSS tambahan, mis. RSS X/Twitter dari layanan pihak ketiga.
+      xRss: splitKeys(getenv('NEWS_X_RSS', '')),
+      perSource: Math.max(1, Math.min(20, intEnv(getenv('NEWS_PER_SOURCE', '8'), 8))),
+      items: Math.max(1, Math.min(5, intEnv(getenv('NEWS_ITEMS', '2'), 2))),
+      // Setiap N post channel, selipkan satu berita bergambar.
+      every: intEnv(getenv('ANIME_CHANNEL_NEWS_EVERY', '2'), 2),
+    },
   };
 
   let keys = splitKeys(process.env.GEMINI_API_KEYS);

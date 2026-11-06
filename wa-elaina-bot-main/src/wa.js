@@ -4,6 +4,7 @@ const { Writable } = require('stream');
 const pino = require('pino');
 const log = require('./logger');
 const { destJid, isGroupJid } = require('./util');
+const { messageCache } = require('./messagecache');
 
 // Pino menulis JSON per baris. Alihkan semuanya ke logger aplikasi supaya
 // output panel tetap satu format: [waktu] [LEVEL] [TAG] pesan.
@@ -164,7 +165,15 @@ async function downloadQuoted(quoted, chatJid, senderJid) {
 async function sendMessage(jid, content, quoted) {
   const to = destJid(jid);
   const opts = quoted ? { quoted } : {};
-  return sock.sendMessage(to, content, opts);
+  const res = await sock.sendMessage(to, content, opts);
+  // Simpan pesan keluar supaya Baileys bisa menyajikannya ulang saat
+  // penerima meminta retry (mencegah "Menunggu pesan ini...").
+  try {
+    if (res && res.key && res.message) messageCache.put(res.key, res.message);
+  } catch {
+    /* cache bersifat best-effort */
+  }
+  return res;
 }
 
 async function sendText(jid, text, quoted, mentions) {
@@ -172,8 +181,12 @@ async function sendText(jid, text, quoted, mentions) {
   const str = String(text);
   try {
     await sock.sendPresenceUpdate('composing', to);
-    const delay = Math.min(8000, Math.max(800, Math.ceil(str.length / 40) * 1000));
-    await new Promise((r) => setTimeout(r, delay));
+    // Delay dipangkas: sebelumnya bisa sampai 8 detik per pesan dan membuat
+    // bot terasa hang, apalagi saat banyak chat masuk bersamaan.
+    const maxDelay = Math.max(0, Number(process.env.TYPING_MAX_MS) || 1500);
+    const minDelay = Math.min(250, maxDelay);
+    const delay = Math.min(maxDelay, Math.max(minDelay, Math.ceil(str.length / 120) * 200));
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
   } catch {
     /* ignore */
   }

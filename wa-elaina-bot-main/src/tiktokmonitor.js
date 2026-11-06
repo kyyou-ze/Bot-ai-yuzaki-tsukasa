@@ -2,7 +2,7 @@
 
 const log = require('./logger');
 const wa = require('./wa');
-const { sleep } = require('./util');
+const { sleep, downloadBytes } = require('./util');
 const { shortError } = require('./logfmt');
 const {
   desktopHeaders,
@@ -38,6 +38,26 @@ function normalizeCreateTime(value) {
   const n = Math.floor(Number(value) || 0);
   if (n > 0 && n > 1e12) return Math.floor(n / 1000);
   return n;
+}
+
+function pickUrl(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const url = pickUrl(item);
+      if (url) return url;
+    }
+    return '';
+  }
+  if (typeof value !== 'object') return '';
+  return (
+    pickUrl(value.url_list) ||
+    pickUrl(value.urlList) ||
+    pickUrl(value.url) ||
+    pickUrl(value.src) ||
+    ''
+  );
 }
 
 function normalizeVideo(v, fallbackUnique) {
@@ -87,6 +107,15 @@ function normalizeVideo(v, fallbackUnique) {
     /tiktok\.com\/@[^/]+\/(video|photo)\/\d{6,}/i
   );
   const kind = kindMatch ? kindMatch[1].toLowerCase() : 'video';
+  const cover =
+    pickUrl(v.cover) ||
+    pickUrl(v.origin_cover) ||
+    pickUrl(v.originCover) ||
+    pickUrl(v.dynamic_cover) ||
+    pickUrl(v.dynamicCover) ||
+    pickUrl(v.video && (v.video.cover || v.video.origin_cover || v.video.dynamic_cover)) ||
+    pickUrl(v.image_post_info && v.image_post_info.images && v.image_post_info.images[0]) ||
+    '';
 
   return {
     id,
@@ -94,6 +123,7 @@ function normalizeVideo(v, fallbackUnique) {
     nickname,
     caption,
     createTime,
+    cover,
     link: `https://www.tiktok.com/@${uniqueId}/${kind}/${id}`,
   };
 }
@@ -260,11 +290,13 @@ function parseProfileMarkdown(markdown, unique) {
     }
 
     seen.add(id);
+    const thumb = line.match(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/i);
     out.push({
       aweme_id: id,
       author: { unique_id: acc, nickname },
       desc: cleanJinaCaption(caption),
       create_time: timestampFromVideoId(id),
+      cover: thumb ? thumb[1] : '',
       link: `https://www.tiktok.com/@${acc}/${link[2].toLowerCase()}/${id}`,
     });
   }
@@ -392,6 +424,7 @@ function buildVideoData(video, cfg) {
     hashtagStatus: hashtagOk ? 'Ada' : 'Tidak Ada',
     cnStatus: cnOk ? 'Cocok' : 'Tidak Cocok',
     link: video.link,
+    cover: video.cover || '',
     timestamp: video.createTime ? video.createTime * 1000 : Date.now(),
   };
 }
@@ -431,10 +464,25 @@ class TikTokMonitor {
     this.wafLogged = false;
     this.wafCooldownMs =
       Math.max(1, Number(this.cfg.tiktokWafCooldownMin) || 10) * 60 * 1000;
+    this.lastCheckAt = 0;
+    this.lastOkAt = 0;
+    this.lastError = '';
+  }
+
+  health() {
+    return {
+      enabled: this.isEnabled(),
+      lastCheckAt: this.lastCheckAt,
+      lastOkAt: this.lastOkAt,
+      lastError: this.lastError,
+      cooldownUntil: this.wafUntil,
+      accounts: this.getAccounts().length,
+    };
   }
 
   enterWafCooldown() {
     this.wafUntil = Date.now() + this.wafCooldownMs;
+    this.lastError = 'WAF/rate limit TikTok';
     if (!this.wafLogged) {
       const minutes = Math.max(1, Math.round(this.wafCooldownMs / 60000));
       log.warn(`[TIKTOK] WAF block, retry ${minutes} menit`);
@@ -449,6 +497,7 @@ class TikTokMonitor {
 
   logCheckError(account, err) {
     const now = Date.now();
+    this.lastError = shortError(err);
     const last = this.errorLogAt.get(account) || 0;
     if (now - last < ERROR_LOG_EVERY_MS) return;
     this.errorLogAt.set(account, now);
@@ -538,6 +587,7 @@ class TikTokMonitor {
       this.wafLogged = false;
     }
     this.ticking = true;
+    this.lastCheckAt = Date.now();
     try {
       const accounts = this.getAccounts();
       for (let i = 0; i < accounts.length; i += 1) {
@@ -578,6 +628,8 @@ class TikTokMonitor {
     this.missingAccounts.delete(account);
     this.errorLogAt.delete(account);
     this.clearWafCooldown();
+    this.lastOkAt = Date.now();
+    this.lastError = '';
     if (!videos.length) return;
 
     const state = this.store.getSeenState(account);
@@ -631,7 +683,21 @@ class TikTokMonitor {
     for (const jid of targets) {
       if (!jid) continue;
       try {
-        await wa.sendText(jid, text);
+        // Kirim cover sebagai preview supaya notifikasi terlihat seperti post
+        // TikTok, bukan cuma teks. Kalau cover gagal diunduh, fallback teks.
+        let sent = false;
+        if (video.cover) {
+          try {
+            const got = await downloadBytes(video.cover, 8 * 1024 * 1024, 20000);
+            if (/^image\//i.test(got.mime || '')) {
+              await wa.sendImage(jid, got.data, text, null, got.mime);
+              sent = true;
+            }
+          } catch (err) {
+            log.debug(`[TIKTOK] cover ${video.id} gagal: ${shortError(err)}`);
+          }
+        }
+        if (!sent) await wa.sendText(jid, text);
       } catch (err) {
         log.error(`[TIKTOK] notif ke ${jid} gagal: ${shortError(err)}`);
       }

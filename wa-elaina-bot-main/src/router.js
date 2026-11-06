@@ -9,6 +9,8 @@ const { AnimeFeature } = require('./features/anime');
 const { InfoFeature } = require('./features/info');
 const { PeraturanFeature } = require('./features/peraturan');
 const { GroupTools } = require('./features/grouptools');
+const { GroupGuard } = require('./features/groupguard');
+const { NewsFeature } = require('./features/news');
 const { VerifFeature } = require('./features/verif');
 const { TikTokAdminFeature } = require('./features/tiktokadmin');
 const { VerifStore } = require('./verifstore');
@@ -19,54 +21,19 @@ const wa = require('./wa');
 const { isGroupJid } = require('./util');
 const { shortError } = require('./logfmt');
 const { isHotCue, isStopCue } = require('./adultmode');
+const {
+  escapeRegExp,
+  KNOWN_COMMANDS,
+  parseCommand,
+  normalizeCommand,
+  stripLeadingTrigger,
+} = require('./commandparser');
 
 const RE_REPLY_CUE = /\b(balas(in|lah)?|reply|jawab(in|lah)?)(\s+ini)?\b/i;
 
 function normalizeTrigger(cfg) {
   const trig = String(cfg.trigger || 'tsukasa').trim();
   return new RegExp('\\b' + trig.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
-}
-
-function parseBang(s) {
-  const t = String(s || '').trim();
-  if (!t || !t.startsWith('!')) return null;
-  const parts = t.slice(1).trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return null;
-  return { cmd: parts[0].toLowerCase(), rest: parts.slice(1).join(' ') };
-}
-
-function escapeRegExp(value) {
-  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/**
- * Perintah verif/UP bisa dipanggil dengan /verif, .verif, !verif, atau
- * "Tsukasa verif". Hanya nama perintah yang dikenal yang dikembalikan supaya
- * perintah lain tetap mengalir ke handler lama.
- */
-function parseFeatureCommand(text, trigger) {
-  const raw = String(text || '').trim();
-  if (!raw) return null;
-
-  let cmd = '';
-  let rest = '';
-  const prefixed = raw.match(/^[\/.!]\s*([a-zA-Z]+)(?:\s+([\s\S]*))?$/);
-  if (prefixed) {
-    cmd = prefixed[1].toLowerCase();
-    rest = String(prefixed[2] || '').trim();
-  } else {
-    const re = new RegExp(
-      '^' + escapeRegExp(trigger || 'tsukasa') + '\\s+([a-zA-Z]+)(?:\\s+([\\s\\S]*))?$',
-      'i'
-    );
-    const match = raw.match(re);
-    if (!match) return null;
-    cmd = match[1].toLowerCase();
-    rest = String(match[2] || '').trim();
-  }
-
-  if (!VerifFeature.isCommand(cmd) && !TikTokAdminFeature.isCommand(cmd)) return null;
-  return { cmd, rest };
 }
 
 /**
@@ -170,7 +137,8 @@ class Router {
     groupTools,
     verifStore,
     tiktokMonitor,
-    tiktokAccounts
+    tiktokAccounts,
+    groupGuard
   ) {
     this.cfg = cfg;
     this.sock = sock;
@@ -197,7 +165,9 @@ class Router {
     this.hijab = new HijabinFeature(cfg);
     this.anime = new AnimeFeature(this.reTrig);
     this.info = new InfoFeature(this.reTrig);
+    this.news = new NewsFeature(cfg);
     this.peraturan = new PeraturanFeature(store);
+    this.guard = groupGuard || new GroupGuard(cfg, store);
   }
 
   async handleGroupParticipantsUpdate(ev) {
@@ -252,13 +222,33 @@ class Router {
     }
     this.owner.debugLog(sender, chat, isOwner);
 
+    // Parser perintah tunggal: !help, /help, .help, atau "tsukasa help".
+    const parsed = normalizeCommand(parseCommand(origTxt, this.cfg.trigger));
+    // Abaikan prefix yang isinya bukan nama perintah (mis. "..." atau "!!").
+    const explicitCmd = Boolean(
+      parsed && parsed.explicit && parsed.cmd && /^[a-z0-9]/i.test(parsed.cmd)
+    );
+    const knownCmd = Boolean(parsed && parsed.cmd && KNOWN_COMMANDS.has(parsed.cmd));
+    const isCmd = Boolean(explicitCmd || knownCmd);
+    const cmdName = isCmd && parsed ? parsed.cmd : '';
+    const cmdRest = isCmd && parsed ? parsed.rest : '';
+
+    // Moderasi ringan (antilink/antispam) untuk pesan biasa di grup.
+    // Perintah yang dikenal dikecualikan supaya admin tetap bisa memakai bot,
+    // tetapi teks berawalan "!" yang bukan perintah tetap ikut dimoderasi.
+    if (!knownCmd && !isOwner && isGroupJid(chat)) {
+      if (await this.guard.handleMessage(this.sock, m, content, origTxt)) return;
+    }
+
     // Perintah verif/UP dan kelola akun detector (bisa tanpa trigger di grup).
-    const featureCmd = parseFeatureCommand(origTxt, this.cfg.trigger);
-    if (featureCmd) {
-      if (await this.verif.handle(this.sock, m, featureCmd.cmd, featureCmd.rest, isOwner)) return;
-      if (await this.tiktokAdmin.handle(this.sock, m, featureCmd.cmd, featureCmd.rest, isOwner)) {
-        return;
-      }
+    if (isCmd && (VerifFeature.isCommand(cmdName) || TikTokAdminFeature.isCommand(cmdName))) {
+      if (await this.verif.handle(this.sock, m, cmdName, cmdRest, isOwner)) return;
+      if (await this.tiktokAdmin.handle(this.sock, m, cmdName, cmdRest, isOwner)) return;
+    }
+
+    // Moderasi grup: antilink, antispam, jadwal buka/tutup.
+    if (isCmd && GroupGuard.isCommand(cmdName)) {
+      if (await this.guard.handleCommand(this.sock, m, cmdName, cmdRest, isOwner)) return;
     }
 
     // "Tsukasa hot on/off/status" dan "Tsukasa mode dewasa ..." (owner DM).
@@ -279,17 +269,21 @@ class Router {
     // PRIORITAS TERTINGGI: image generation
     if (await this.imggen.handle(this.sock, m, content, origTxt)) return;
 
-    const bang = parseBang(txt);
+    const bang = isCmd ? { cmd: cmdName, rest: cmdRest } : null;
     // Simpan metadata pesan di memori untuk fitur rangkuman & statistik.
     // Tidak ditulis ke disk dan tidak dipakai untuk membalas otomatis.
     this.groupTools.recordMessage(chat, sender, txt, { isCommand: Boolean(bang) });
 
     if (bang) {
-      if (bang.cmd === 'help') {
+      if (bang.cmd === 'help' || bang.cmd === 'menu') {
         const userName = memory.getUserName(sender) || '';
         const greeting = userName ? `Hai ${userName}!` : 'Hai!';
         const lines = [
           greeting + ' Ini perintah yang bisa kamu gunakan:',
+          '',
+          'Semua perintah bisa ditulis dengan !, /, ., atau awalan "' +
+            this.cfg.trigger +
+            '" (contoh: tsukasa help).',
           '',
           '- !help : bantuan ringkas',
           '- !whoami : lihat JID kamu',
@@ -305,6 +299,10 @@ class Router {
           '- tsukasa buatin gambar <prompt> / !gambar <prompt> : generate gambar AI',
           '- !anime ... : info anime (new/movie/schedule/search/detail)',
           '- !info <topik> : info apa saja (anime/film/Jepang/fakta absurd) dalam Bahasa Indonesia',
+          '- !news [topik] : berita anime/manga/gacha/cosplay terbaru + gambar',
+          '- !cosplay <link IG> : ambil semua foto dari satu post Instagram',
+          '- !jadwal buka 06:00 / !jadwal tutup 22:00 : buka-tutup grup otomatis (admin)',
+          '- !antilink on|off / !antispam on|off : moderasi grup (admin)',
           '- !animechannel status|test|info|check <judul> : cek/tes auto-post & info Jejepangan (owner/admin)',
           '- !anime roulette [genre] : rekomendasi anime acak',
           '- !ingatkan <waktu> <teks> : pengingat (contoh: !ingatkan 10m minum air)',
@@ -358,11 +356,15 @@ class Router {
       }
 
       if (bang.cmd === 'anime') {
-        if (await this.anime.handle(this.sock, m, origTxt)) return;
+        if (await this.anime.handle(this.sock, m, `!${bang.cmd}${bang.rest ? ` ${bang.rest}` : ''}`)) return;
       }
 
       if (bang.cmd === 'info') {
-        if (await this.info.handle(this.sock, m, origTxt)) return;
+        if (await this.info.handle(this.sock, m, `!${bang.cmd}${bang.rest ? ` ${bang.rest}` : ''}`)) return;
+      }
+
+      if (NewsFeature.isCommand(bang.cmd)) {
+        if (await this.news.handle(this.sock, m, bang.cmd, bang.rest)) return;
       }
 
       if (bang.cmd === 'animechannel' || bang.cmd === 'anime-channel') {
@@ -429,7 +431,12 @@ class Router {
           try {
             const res = await this.animeChannel.postOne({ force: true, reason: 'manual' });
             if (res.ok) {
-              const kind = res.type === 'info' ? 'Info Jejepangan' : 'Anime';
+              const kind =
+                res.type === 'info'
+                  ? 'Info Jejepangan'
+                  : res.type === 'news'
+                    ? 'Berita bergambar'
+                    : 'Anime';
               await wa.sendText(
                 chat,
                 `✅ ${kind} terkirim ke channel: *${res.item.title}* (${res.mode}).\nSumber: ${res.item.sourceLabel || '-'}`,
@@ -443,11 +450,33 @@ class Router {
           }
           return;
         }
+        if (sub === 'news' || sub === 'berita') {
+          try {
+            const res = await this.animeChannel.postOne({
+              force: true,
+              type: 'news',
+              reason: 'manual-news',
+            });
+            if (res.ok) {
+              await wa.sendText(
+                chat,
+                `✅ Berita terkirim ke channel: *${res.item.title}* (${res.mode}).`,
+                m
+              );
+            } else {
+              await wa.sendText(chat, `ℹ️ Tidak ada berita: ${res.message}`, m);
+            }
+          } catch (err) {
+            await wa.sendText(chat, `❌ Gagal post berita ke channel: ${err.message}`, m);
+          }
+          return;
+        }
         await wa.sendText(
           chat,
           'Gunakan:\n' +
             '!animechannel status\n' +
             '!animechannel test\n' +
+            '!animechannel news\n' +
             '!animechannel info\n' +
             '!animechannel check <judul>',
           m
@@ -553,7 +582,6 @@ class Router {
       this.peraturan.handleMessage(this.sock, m, origTxt).catch(() => {});
     }
 
-    const isCmd = Boolean(bang);
     const cmd = bang ? bang.cmd : '';
     const isGroup = isGroupJid(chat);
     const hasTrig = this.reTrig.test(origTxt);
@@ -625,10 +653,18 @@ class Router {
       }
     }
 
+    // Untuk obrolan biasa, buang awalan trigger agar AI tidak menerima kata
+    // "tsukasa" sebagai bagian dari pertanyaan.
+    if (hasTrig && !isCmd) {
+      const stripped = stripLeadingTrigger(origTxt, this.cfg.trigger);
+      if (stripped) txt = stripped;
+      else txt = '';
+    }
+
     // Mode MANUAL di grup
     if (isGroup && String(this.cfg.mode || '').toUpperCase() === 'MANUAL') {
       if (!hasTrig && !isTagAllCmd) return;
-      const clean = origTxt.toLowerCase().replace(this.reTrig, '').trim();
+      const clean = stripLeadingTrigger(origTxt, this.cfg.trigger);
       if (!clean && q.text) {
         txt = q.text;
       } else if (clean && txt === origTxt) {

@@ -1,6 +1,7 @@
 'use strict';
 
 const log = require('./logger');
+const fs = require('fs');
 const memory = require('./memory');
 
 let keys = [];

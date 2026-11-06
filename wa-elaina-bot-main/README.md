@@ -107,6 +107,14 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `ANIME_CHANNEL_DEDUPE_MAX` | `5000` | Batas jumlah entri riwayat dedupe |
 | `ANIME_CHANNEL_JAPAN_INFO` | `true` | Selipkan info budaya/fakta Jejepangan |
 | `ANIME_CHANNEL_INFO_EVERY` | `3` | Info Jejepangan muncul tiap N post |
+| `ANIME_CHANNEL_NEWS_EVERY` | `2` | Selipkan berita bergambar tiap N post channel; `0` = nonaktif |
+| `NEWS_ENABLED` | `true` | Aktifkan fitur `!news` dan berita di channel |
+| `NEWS_SOURCES` | `ann,animecorner,gematsu,siliconera` | Sumber RSS berita |
+| `NEWS_X_RSS` | - | RSS tambahan untuk sumber X/Twitter (pisahkan koma, opsional) |
+| `NEWS_PER_SOURCE` | `8` | Kandidat berita per sumber |
+| `NEWS_ITEMS` | `2` | Jumlah berita yang dikirim per `!news` |
+| `ANIME_EP_MAX_MB` | `190` | Batas ukuran episode yang diunduh otomatis |
+| `ANIME_EP_TIMEOUT_SEC` | `240` | Timeout unduh episode (detik) |
 | `INFO_FOOTER` | `> yuzaki tsukasa by ren` | Footer output info channel & `!info` |
 | `LOG_LEVEL` | `info` | Level minimum yang tampil di panel (`debug`/`info`/`warn`/`error`) |
 | `LOG_DB_LEVEL` | `warn` | Level minimum yang disimpan ke database log (bug/error) |
@@ -200,6 +208,43 @@ Template info ada di `src/animeinfo.js` dan dipakai oleh auto-post channel maupu
 !info <topik>               # info apa saja (anime, film, Jepang, fakta absurd, dll)
 ```
 
+## Berita Anime, Gacha & Carousel Instagram
+
+Perintah berita mengambil RSS dari Anime News Network, Anime Corner, Gematsu, dan Siliconera. Berita tanpa gambar akan dicoba dilengkapi lewat `og:image` artikel; kalau tetap tidak ada gambar, berita itu dilewati supaya setiap post selalu bergambar. Tautan X/Twitter yang disebut di artikel ikut ditampilkan.
+
+```text
+!news                 # 2 berita terbaru + gambar
+!news gacha           # khusus update gacha (Azur Lane, Nikke, Genshin, dll)
+!news manga           # berita manga/manhwa
+!cosplay <link IG>    # ambil semua foto dari satu post Instagram
+```
+
+`!cosplay` memakai Jina Reader (tanpa login Instagram) dan mendukung carousel 2+ foto. Caption mengikuti format:
+
+```text
+*Name Karakter* *『Sandrone』*
+*Name Anime/Game* ```|Genshin Impact|```
+*SC:https://www.instagram.com/p/xxxx/*
+```
+
+Nama karakter dan anime ditebak dari hashtag/caption. Untuk override, tambahkan opsi:
+
+```text
+!cosplay https://www.instagram.com/p/xxxx/ --karakter Furina --anime "Genshin Impact"
+```
+
+Auto-post channel juga menyelipkan berita bergambar tiap `ANIME_CHANNEL_NEWS_EVERY` post. Paksa manual dengan `!animechannel news`.
+
+## Unduh Episode Anime
+
+`!anime episode <slug> [reso]` menampilkan link streaming sekaligus mencoba mengunduh episode secara otomatis. Mirror langsung (mp4) diprioritaskan, lalu Pixeldrain sebagai cadangan. Kalau resolusi yang diminta terlalu besar, bot mencoba resolusi lebih rendah. Batas ukuran diatur lewat `ANIME_EP_MAX_MB` (default 190 MB) dan timeout lewat `ANIME_EP_TIMEOUT_SEC`.
+
+```text
+!anime download <slug> 720p   # langsung unduh episode
+```
+
+Jika semua mirror gagal, bot mengirim alasan kegagalan beserta link yang bisa dibuka manual.
+
 ## Detector TikTok & Verif ACC
 
 Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTOK_CHECK_MIN` menit. Akun dicek satu per satu dengan jeda acak 2-5 detik. Sumber data memakai rantai fallback anti-WAF: endpoint custom/TikHub/tiktok-api23/Ensig (kalau diisi) → Jina Reader (membaca halaman profil dari server Jina, jadi IP bot tidak langsung diblokir) → TikWM → scraping profil langsung. Kalau semua sumber kena 403/WAF, bot berhenti selama `TIKTOK_WAF_COOLDOWN_MIN` menit dan hanya menulis satu log `[TIKTOK] WAF block, retry 10 menit`. Untuk tiap video baru, bot mengecek:
@@ -207,7 +252,7 @@ Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTO
 - Caption mengandung hashtag `TIKTOK_HASHTAG` (default `#margaecn`, case-insensitive).
 - Nickname/display name akun mengandung `TIKTOK_CN_KEYWORD` (default `ECN`). Huruf Unicode seperti `𝙀𝘾𝙉`, `〆𝙀𝘾𝙉`, dan `ft 𝙀𝘾𝙉` otomatis dinormalisasi jadi `ECN` sebelum dicocokkan.
 
-Notifikasi otomatis dikirim ke grup yang sudah memverifikasi ACC terkait, dengan format:
+Notifikasi otomatis dikirim ke grup yang sudah memverifikasi ACC terkait. Bot mencoba mengirim cover video sebagai gambar preview; kalau cover gagal diunduh, notifikasi jatuh ke teks biasa. Formatnya:
 
 ```text
 🎬 Tsukasa Detector
@@ -240,7 +285,7 @@ Tanpa edit `.env` dan tanpa restart (owner atau admin grup):
 /addakun @username   # tambah akun ke daftar pantauan
 /delakun @username   # hapus akun dari daftar pantauan
 /listakun            # lihat semua akun + status detector
-/detector status     # info detector (CN, hashtag, interval)
+/detector status     # status detector + kesehatan (cek/sukses terakhir, cooldown WAF, error)
 /detector on         # aktifkan detector (khusus owner)
 /detector off        # matikan detector (khusus owner)
 ```
@@ -288,6 +333,22 @@ Mengirim poll native WhatsApp (satu pilihan, maksimal 12 opsi). Jika poll gagal 
 - Bot menyimpan **metadata pesan di memori** (maksimal 150 pesan terakhir per chat) untuk fitur ini. Tidak ditulis ke disk dan hilang saat restart.
 - `!rangkum` mengirim transkrip ke Gemini; `!statistik` dihitung lokal tanpa AI.
 - Gunakan di grup yang memang memperbolehkan bot membaca percakapan.
+
+### Moderasi & jadwal grup
+
+Perintah moderasi hanya untuk admin grup (owner juga boleh). Bot harus menjadi admin grup agar bisa menghapus pesan atau membuka/menutup grup.
+
+```text
+!antilink on|off          # hapus link selain WhatsApp
+!antispam on|off          # hapus & beri peringatan saat spam
+!moderasi                 # ringkasan status moderasi grup
+!jadwal status            # lihat jadwal buka/tutup
+!jadwal buka 06:00        # jam buka grup
+!jadwal tutup 22:00       # jam tutup grup
+!jadwal on|off            # aktifkan/nonaktifkan jadwal
+```
+
+Peserta yang melanggar akan diberi peringatan; setelah 5 peringatan bot mencoba mengeluarkan peserta dari grup. Jadwal buka/tutup dicek tiap 30 detik dan hanya dijalankan sekali per hari per aksi.
 
 ### Anime Roulette
 

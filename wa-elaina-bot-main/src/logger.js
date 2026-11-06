@@ -121,17 +121,56 @@ function loadDb() {
   return entries;
 }
 
-function saveDb() {
+let flushTimer = null;
+let flushing = false;
+let dirty = false;
+
+// Tulis ke disk secara batch. Sebelumnya setiap warn/error memanggil
+// writeFileSync sehingga event loop bisa tersendat saat log ramai.
+function scheduleFlush(delayMs = 800) {
   if (!dbEnabled) return;
+  dirty = true;
+  if (flushTimer || flushing) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    flushDb();
+  }, Math.max(50, delayMs));
+  if (flushTimer.unref) flushTimer.unref();
+}
+
+async function flushDb() {
+  if (!dbEnabled || flushing || !dirty) return;
+  dirty = false;
+  flushing = true;
+  const data = loadDb();
+  const tmp = `${dbPath}.${process.pid}.tmp`;
   try {
+    await fs.promises.mkdir(path.dirname(dbPath), { recursive: true });
+    await fs.promises.writeFile(tmp, JSON.stringify(data, null, 2));
+    await fs.promises.rename(tmp, dbPath);
+  } catch (err) {
+    dirty = true;
+    original.error(`[LOGGER] gagal menulis ${dbPath}: ${err.message}`);
+  } finally {
+    flushing = false;
+    if (dirty && !flushTimer) scheduleFlush(500);
+  }
+}
+
+function flushSync() {
+  if (!dbEnabled || !dirty) return;
+  try {
+    const tmp = `${dbPath}.${process.pid}.sync.tmp`;
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    const tmp = `${dbPath}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(entries, null, 2));
+    fs.writeFileSync(tmp, JSON.stringify(loadDb(), null, 2));
     fs.renameSync(tmp, dbPath);
+    dirty = false;
   } catch (err) {
     original.error(`[LOGGER] gagal menulis ${dbPath}: ${err.message}`);
   }
 }
+
+process.on('exit', flushSync);
 
 function store(entry) {
   if (!dbEnabled || LEVELS[entry.level] < LEVELS[dbLevel]) return;
@@ -139,7 +178,7 @@ function store(entry) {
   data.push(entry);
   if (data.length > dbMax) data.splice(0, data.length - dbMax);
   sequence = (sequence + 1) % 100000;
-  saveDb();
+  scheduleFlush();
 }
 
 function write(level, args) {
@@ -183,5 +222,7 @@ module.exports = {
     const data = loadDb();
     return data.slice(-Math.max(1, Number(limit) || 20));
   },
+  flush: flushDb,
+  flushSync,
   dbPath,
 };

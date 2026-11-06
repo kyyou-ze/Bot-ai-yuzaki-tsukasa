@@ -222,12 +222,64 @@ function parsePage(args) {
   return Number.isFinite(p) && p >= 1 ? p : 1;
 }
 
-function hasPixeldrain(streams) {
-  return streams.some((s) => isPixeldrainLink(s && s.link));
+function isPixeldrainLink(link) {
+  return /pixeldrain\.com\/(?:api\/file|u)\//i.test(String(link || ''));
 }
 
-function isPixeldrainLink(link) {
-  return String(link || '').toLowerCase().includes('pixeldrain.com/api/file/');
+function isDirectVideoLink(link) {
+  const raw = String(link || '').trim();
+  if (!/^https?:\/\//i.test(raw)) return false;
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.toLowerCase();
+    if (host.includes('pixeldrain.com')) return false;
+    // Hampir semua mirror AnimeKita memakai URL file langsung. Cek ekstensi
+    // dulu, lalu host CDN yang memang menyajikan video.
+    if (/\.(mp4|webm|mkv|mov|m4v)(?:$|[?#])/i.test(url.pathname + url.search)) return true;
+    return /(^|\.)animeverse\.id$/i.test(host) || /(^|\.)desudrive\.com$/i.test(host);
+  } catch {
+    return false;
+  }
+}
+
+function normalizePixeldrain(link) {
+  const raw = String(link || '').trim();
+  const m = raw.match(/pixeldrain\.com\/(?:api\/file|u)\/([A-Za-z0-9_-]+)/i);
+  if (!m) return raw;
+  return `https://pixeldrain.com/api/file/${m[1]}?download`;
+}
+
+function hasDownloadable(streams) {
+  return (Array.isArray(streams) ? streams : []).some(
+    (s) => isDirectVideoLink(s && s.link) || isPixeldrainLink(s && s.link)
+  );
+}
+
+/**
+ * Urutkan tautan yang bisa diunduh. Mirror langsung (mp4) didahulukan karena
+ * tidak kena rate limit Pixeldrain, lalu Pixeldrain sebagai cadangan.
+ */
+function streamCandidates(streams) {
+  const out = [];
+  const seen = new Set();
+  for (const stream of Array.isArray(streams) ? streams : []) {
+    const link = String((stream && stream.link) || '').trim();
+    if (!link) continue;
+    const direct = isDirectVideoLink(link);
+    const pixel = isPixeldrainLink(link);
+    if (!direct && !pixel) continue;
+
+    const normalized = pixel ? normalizePixeldrain(link) : link;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+
+    out.push({
+      link: normalized,
+      reso: String((stream && stream.reso) || '').trim() || '?',
+      score: direct ? 2 : 1,
+    });
+  }
+  return out.sort((a, b) => b.score - a.score);
 }
 
 function formatSimpleList(title, entries) {
@@ -388,6 +440,23 @@ function filenameFor(link, disposition) {
   return 'pixeldrain.bin';
 }
 
+function formatBytes(bytes) {
+  const n = Number(bytes) || 0;
+  if (n >= 1024 * 1024 * 1024) return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${n} B`;
+}
+
+function qualityNumber(reso) {
+  const raw = String(reso || '').trim().toLowerCase();
+  if (!raw) return NaN;
+  if (raw === '4k' || raw === '2160p') return 2160;
+  if (raw === '2k' || raw === '1440p') return 1440;
+  const m = raw.match(/(\d{3,4})/);
+  return m ? Number(m[1]) : NaN;
+}
+
 class AnimeFeature {
   constructor(reTrigger) {
     this.reTrigger = reTrigger;
@@ -425,7 +494,8 @@ class AnimeFeature {
       'anime genre <nama> [page] - daftar berdasarkan genre',
       'anime search <keyword> - cari anime',
       'anime detail <slug>    - info detail + daftar chapter',
-      'anime episode <slug> [reso] - link streaming per episode',
+      'anime episode <slug> [reso] - link streaming + unduh otomatis',
+      'anime download <slug> [reso] - langsung unduh episode',
       'anime roulette [genre] - rekomendasi anime acak (contoh: anime roulette romance)',
       '',
       'Gunakan slug/link dari hasil detail untuk mengambil episode.',
@@ -539,7 +609,9 @@ class AnimeFeature {
         }
 
         case 'episode':
-        case 'stream': {
+        case 'stream':
+        case 'download':
+        case 'unduh': {
           if (rest.length === 0) {
             await this.reply(
               sock,
@@ -552,14 +624,14 @@ class AnimeFeature {
           const reso = rest.length > 1 ? rest[1] : '720p';
           const ep = await api.episode(slug, reso);
           const streams = Array.isArray(ep.stream) ? ep.stream : [];
-          const note = hasPixeldrain(streams)
-            ? `\n${botName()} akan mencoba unduh tautan Pixeldrain otomatis.`
+          const note = hasDownloadable(streams)
+            ? `\n${botName()} akan mencoba mengunduh episode ini otomatis (mp4/Pixeldrain).`
             : '';
           await this.reply(sock, m, formatEpisode(slug, ep, note));
-          if (hasPixeldrain(streams)) {
+          if (hasDownloadable(streams)) {
             setImmediate(() => {
-              this.deliverPixeldrain(m.key.remoteJid, streams).catch((err) => {
-                log.error('[ANIME] pixeldrain error:', err.message);
+              this.deliverEpisode(m.key.remoteJid, slug, ep, streams).catch((err) => {
+                log.error('[ANIME] unduh episode error:', err.message);
               });
             });
           }
@@ -626,37 +698,123 @@ class AnimeFeature {
     }
   }
 
-  async deliverPixeldrain(chat, streams) {
-    const MAX_BYTES = 200 * 1024 * 1024;
-    for (const st of streams) {
-      if (!isPixeldrainLink(st && st.link)) continue;
-      try {
-        const res = await fetchWithTimeout(
-          st.link,
-          {
-            headers: { 'User-Agent': 'wa-tsukasa-bot/1.0' },
-            redirect: 'follow',
-          },
-          120000
-        );
-        if (res.status >= 300) throw new Error(`http ${res.status} ${res.statusText}`);
-        const len = Number(res.headers.get('content-length') || 0);
-        if (len > MAX_BYTES) throw new Error(`file terlalu besar (${len} byte)`);
-        const buf = Buffer.from(await res.arrayBuffer());
-        if (buf.length > MAX_BYTES) throw new Error(`file terlalu besar (${buf.length} byte)`);
-        const filename = filenameFor(st.link, res.headers.get('content-disposition'));
-        const mime = (res.headers.get('content-type') || '').split(';')[0].trim() ||
-          'application/octet-stream';
-        const caption = `Pixeldrain ${fallback(st.reso, filename)}`.trim();
-        await wa.sendDocument(chat, buf, mime, filename, caption);
-      } catch (err) {
-        log.error('[ANIME] pixeldrain gagal:', err.message);
-        await wa
-          .sendText(chat, `Gagal unduh Pixeldrain ${fallback(st.reso, st.link)}: ${err.message}`)
-          .catch(() => {});
+  async deliverEpisode(chat, slug, ep, streams) {
+    const maxMb = Math.max(10, Number(process.env.ANIME_EP_MAX_MB) || 190);
+    const maxBytes = maxMb * 1024 * 1024;
+    const duration = Math.max(60, Number(process.env.ANIME_EP_TIMEOUT_SEC) || 240) * 1000;
+
+    const qualities = [];
+    const seenQuality = new Set();
+    for (const raw of [...(Array.isArray(streams) ? streams.map((s) => s && s.reso) : []), ...(Array.isArray(ep.reso) ? ep.reso : [])]) {
+      const reso = String(raw || '').trim();
+      const num = qualityNumber(reso);
+      if (!reso || !Number.isFinite(num) || seenQuality.has(reso)) continue;
+      seenQuality.add(reso);
+      qualities.push({ reso, num });
+    }
+    const requested = String((streams[0] && streams[0].reso) || qualities[0]?.reso || '720p');
+    const requestedNum = qualityNumber(requested);
+    // Coba resolusi yang diminta dulu, lalu turun ke resolusi lebih rendah
+    // kalau file terlalu besar untuk dikirim lewat WhatsApp.
+    const plan = qualities
+      .filter((q) => !Number.isFinite(requestedNum) || q.num <= requestedNum)
+      .sort((a, b) => b.num - a.num);
+    if (!plan.some((q) => q.reso === requested)) plan.unshift({ reso: requested, num: requestedNum || 0 });
+
+    const failures = [];
+    for (const { reso } of plan) {
+      let list = streams;
+      if (reso !== requested) {
+        try {
+          const next = await api.episode(slug, reso);
+          list = Array.isArray(next.stream) ? next.stream : [];
+        } catch (err) {
+          failures.push(`${reso}: ${err.message}`);
+          continue;
+        }
+      }
+
+      for (const candidate of streamCandidates(list)) {
+        try {
+          await this.downloadAndSendEpisode(chat, slug, reso, candidate, maxBytes, duration);
+          return true;
+        } catch (err) {
+          failures.push(`${reso}: ${err.message}`);
+          if (err && err.code === 'TOO_LARGE') break;
+        }
       }
     }
+
+    const reason = failures.length
+      ? failures[failures.length - 1]
+      : 'tidak ada tautan yang bisa diunduh';
+    const best = streamCandidates(streams)[0];
+    log.warn(`[ANIME] gagal unduh ${slug}: ${reason}`);
+    await wa
+      .sendText(
+        chat,
+        [
+          `❌ Gagal mengunduh episode *${slug}* otomatis.`,
+          `Alasan: ${reason}`,
+          `Batas ukuran: ${maxMb} MB (atur lewat ANIME_EP_MAX_MB).`,
+          best ? `Coba manual: ${best.link}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n')
+      )
+      .catch(() => {});
+    return false;
+  }
+
+  async downloadAndSendEpisode(chat, slug, reso, candidate, maxBytes, timeoutMs) {
+    const link = candidate.link;
+    const res = await fetchWithTimeout(
+      link,
+      {
+        headers: {
+          'User-Agent': 'wa-tsukasa-bot/1.0',
+          Accept: 'video/*,application/octet-stream,*/*',
+        },
+        redirect: 'follow',
+      },
+      timeoutMs
+    );
+    if (res.status >= 300) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+
+    const len = Number(res.headers.get('content-length') || 0);
+    if (len > maxBytes) {
+      const err = new Error(`ukuran ${formatBytes(len)} melebihi batas ${formatBytes(maxBytes)}`);
+      err.code = 'TOO_LARGE';
+      throw err;
+    }
+
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > maxBytes) {
+      const err = new Error(`ukuran ${formatBytes(buf.length)} melebihi batas ${formatBytes(maxBytes)}`);
+      err.code = 'TOO_LARGE';
+      throw err;
+    }
+    if (buf.length < 1024) throw new Error('file kosong/terlalu kecil');
+
+    const type = (res.headers.get('content-type') || '').split(';')[0].trim();
+    if (type && !/^(video\/|application\/octet-stream$|binary\/octet-stream$)/i.test(type)) {
+      throw new Error(`bukan file video (${type})`);
+    }
+
+    let filename = filenameFor(link, res.headers.get('content-disposition'));
+    if (!path.extname(filename)) filename += type === 'video/webm' ? '.webm' : '.mp4';
+    filename = filename.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 120);
+
+    await wa.sendDocument(
+      chat,
+      buf,
+      type && type !== 'application/octet-stream' ? type : 'video/mp4',
+      filename,
+      `📺 ${slug} • ${reso} (${formatBytes(buf.length)})`
+    );
+    log.info(`[ANIME] episode terkirim: ${slug} ${reso} ${formatBytes(buf.length)}`);
+    return true;
   }
 }
 
-module.exports = { AnimeFeature, formatSimpleList, formatDetail, formatEpisode };
+module.exports = { AnimeFeature, formatSimpleList, formatDetail, formatEpisode, streamCandidates, isDirectVideoLink, normalizePixeldrain };

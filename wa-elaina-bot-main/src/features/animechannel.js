@@ -4,6 +4,7 @@ const log = require('../logger');
 const crypto = require('crypto');
 const feeds = require('../animefeeds');
 const animekita = require('../animekita');
+const newsfeeds = require('../newsfeeds');
 const llm = require('../llm');
 const wa = require('../wa');
 const { buildAnimeInfo, buildInfo } = require('../animeinfo');
@@ -400,6 +401,11 @@ Aturan:
   }
 
   _caption(item, description) {
+    if (item.type === 'news') {
+      return newsfeeds
+        .formatNewsCaption({ ...item, description })
+        .slice(0, CAPTION_LIMIT);
+    }
     const isInfo = item.type === 'info' || item.source === 'japaninfo';
     const options = isInfo
       ? {
@@ -483,6 +489,29 @@ Aturan:
     await sock.query(node);
   }
 
+  async _pickNews(posted) {
+    const conf = (this.cfg && this.cfg.news) || {};
+    if (conf.enabled === false) return { item: null, errors: [] };
+
+    const { items, errors } = await newsfeeds.fetchAll(conf.sources, {
+      perSource: Math.max(1, Math.min(20, Number(conf.perSource) || 8)),
+      extraRss: Array.isArray(conf.xRss) ? conf.xRss : [],
+    });
+
+    for (const raw of items.slice(0, 24)) {
+      const post = newsfeeds.toPostItem(raw);
+      if (this._isPosted(post, posted)) continue;
+      if (!raw.image) await newsfeeds.enrichItem(raw);
+      if (!raw.image) continue;
+
+      // enrichItem() hanya mengubah objek mentah, jadi bentuk ulang item post
+      // agar gambar dan tautan X ikut terbawa.
+      return { item: newsfeeds.toPostItem(raw), errors };
+    }
+
+    return { item: null, errors };
+  }
+
   async postOne(options = {}) {
     const force = Boolean(options.force);
     const reason = options.reason || 'manual';
@@ -517,16 +546,48 @@ Aturan:
     const maxYear = yearNow() + 1;
     const infoEvery = Math.max(1, Number(this.conf.infoEvery) || 3);
     const japanInfo = this.conf.japanInfo !== false;
+    const newsEvery = Math.max(0, Number((this.cfg && this.cfg.news && this.cfg.news.every) || 0));
 
-    // Selipkan info Jejepangan setiap N post, atau paksa lewat options.type.
+    // Selipkan berita bergambar dan info Jejepangan secara bergantian.
+    // options.type bisa memaksa salah satu: anime | info | news.
+    let wantNews =
+      options.type === 'news' ||
+      (options.type !== 'anime' &&
+        options.type !== 'info' &&
+        newsEvery > 0 &&
+        (todayCount + 1) % newsEvery === 0);
     let wantInfo =
-      options.type === 'info' ||
-      (options.type !== 'anime' && japanInfo && (todayCount + 1) % infoEvery === 0);
+      !wantNews &&
+      (options.type === 'info' ||
+        (options.type !== 'anime' && japanInfo && (todayCount + 1) % infoEvery === 0));
 
     let item = null;
     let usedInfo = false;
+    let usedNews = false;
+    let result = { errors: [] };
 
-    if (wantInfo) {
+    if (wantNews) {
+      const picked = await this._pickNews(state.posted);
+      item = picked.item;
+      result = { errors: picked.errors };
+      usedNews = Boolean(item);
+      if (!item && options.type === 'news') {
+        this.lastError = '';
+        return {
+          ok: false,
+          skipped: true,
+          message: 'tidak ada berita bergambar yang belum pernah diposting',
+          sourceErrors: picked.errors,
+        };
+      }
+      if (picked.errors.length) {
+        for (const e of picked.errors) {
+          log.warn(`[ANIME] Sumber berita ${e.source} gagal: ${e.error}`);
+        }
+      }
+    }
+
+    if (!item && wantInfo) {
       item = await this._generateJapanInfo(state.posted);
       usedInfo = Boolean(item);
       if (!item && options.type === 'info') {
@@ -539,7 +600,6 @@ Aturan:
       }
     }
 
-    let result = { errors: [] };
     if (!item) {
       result = await feeds.fetchAll(sources, perSource, { minYear, maxYear });
       if (result.errors.length) {
@@ -616,7 +676,7 @@ Aturan:
       ok: true,
       mode,
       reason,
-      type: usedInfo ? 'info' : 'anime',
+      type: usedNews ? 'news' : usedInfo ? 'info' : 'anime',
       item: item.title,
       source: item.sourceLabel,
       channelJid: jid,
@@ -626,7 +686,7 @@ Aturan:
       ok: true,
       mode,
       item,
-      type: usedInfo ? 'info' : 'anime',
+      type: usedNews ? 'news' : usedInfo ? 'info' : 'anime',
       channelJid: jid,
       sourceErrors: result.errors,
     };

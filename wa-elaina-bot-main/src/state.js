@@ -26,6 +26,7 @@ class Store {
       warns: raw.warns || {},
       animeChannel: raw.animeChannel || {},
       reminders: Array.isArray(raw.reminders) ? raw.reminders : [],
+      groupGuard: raw.groupGuard || {},
     };
     this._writing = Promise.resolve();
   }
@@ -118,6 +119,55 @@ class Store {
       rules: String(rules || ''),
       updated: Date.now(),
     };
+    return this._save();
+  }
+
+  getGroupGuard(chat) {
+    const g = this.data.groupGuard[chat] || {};
+    return {
+      schedule: {
+        enabled: Boolean(g.schedule && g.schedule.enabled),
+        open: (g.schedule && g.schedule.open) || '',
+        close: (g.schedule && g.schedule.close) || '',
+      },
+      antilink: Boolean(g.antilink),
+      antispam: Boolean(g.antispam),
+      events: g.events || {},
+      updated: Number(g.updated) || 0,
+    };
+  }
+
+  setGroupGuard(chat, patch) {
+    const cur = this.data.groupGuard[chat] || {};
+    this.data.groupGuard[chat] = {
+      ...cur,
+      ...(patch || {}),
+      updated: Date.now(),
+    };
+    return this._save();
+  }
+
+  listGroupGuards() {
+    return Object.entries(this.data.groupGuard || {}).map(([chat, g]) => [
+      chat,
+      {
+        schedule: {
+          enabled: Boolean(g.schedule && g.schedule.enabled),
+          open: (g.schedule && g.schedule.open) || '',
+          close: (g.schedule && g.schedule.close) || '',
+        },
+        antilink: Boolean(g.antilink),
+        antispam: Boolean(g.antispam),
+        events: g.events || {},
+        updated: Number(g.updated) || 0,
+      },
+    ]);
+  }
+
+  markGroupGuardEvent(chat, action, token) {
+    const cur = this.data.groupGuard[chat] || {};
+    const events = { ...(cur.events || {}), [action]: String(token || '') };
+    this.data.groupGuard[chat] = { ...cur, events, updated: Date.now() };
     return this._save();
   }
 
