@@ -5,10 +5,12 @@ const crypto = require('crypto');
 const feeds = require('../animefeeds');
 const animekita = require('../animekita');
 const newsfeeds = require('../newsfeeds');
+const instagram = require('../instagram');
 const llm = require('../llm');
 const wa = require('../wa');
 const { buildAnimeInfo, buildInfo } = require('../animeinfo');
-const { downloadBytes, randomPick, normaliseTitle, canonicalTitle } = require('../util');
+const { randomPick, normaliseTitle, canonicalTitle } = require('../util');
+const { downloadImage } = require('../imageutil');
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const CAPTION_LIMIT = 1000;
@@ -96,6 +98,10 @@ class AnimeChannelPoster {
 
   get conf() {
     return (this.cfg && this.cfg.animeChannel) || {};
+  }
+
+  get cosplayConf() {
+    return (this.cfg && this.cfg.cosplay) || {};
   }
 
   get enabled() {
@@ -401,6 +407,9 @@ Aturan:
   }
 
   _caption(item, description) {
+    if (item.type === 'cosplay') {
+      return String(item.caption || description || item.title || 'Cosplay').slice(0, CAPTION_LIMIT);
+    }
     if (item.type === 'news') {
       return newsfeeds
         .formatNewsCaption({ ...item, description })
@@ -442,13 +451,14 @@ Aturan:
   async _sendWithFallback(sock, jid, item, caption) {
     let mode = '';
 
-    if (this.conf.images !== false && item.image) {
+    const images = Array.isArray(item.images)
+      ? item.images.filter(Boolean)
+      : item.image
+        ? [item.image]
+        : [];
+    if (this.conf.images !== false && images.length) {
       try {
-        const got = await downloadBytes(item.image, MAX_IMAGE_BYTES, 20000);
-        const mime = got.mime || 'image/jpeg';
-        if (!/^image\//i.test(mime)) throw new Error(`bukan gambar (${mime})`);
-        await sock.sendMessage(jid, { image: got.data, caption, mimetype: mime });
-        mode = 'image';
+        mode = await this._sendImages(sock, jid, images, caption);
       } catch (err) {
         log.warn('[ANIME] Gagal kirim gambar, fallback teks:', err.message);
       }
@@ -471,6 +481,30 @@ Aturan:
     return mode;
   }
 
+  async _sendImages(sock, jid, images, caption) {
+    let sent = 0;
+    const total = images.length;
+    for (let i = 0; i < total; i++) {
+      try {
+        const got = await downloadImage(images[i], {
+          maxBytes: MAX_IMAGE_BYTES,
+          timeoutMs: 20000,
+        });
+        const cap = i === 0 ? caption : `📸 Foto ${i + 1}/${total}`;
+        await sock.sendMessage(jid, {
+          image: got.data,
+          caption: cap,
+          mimetype: got.mime,
+        });
+        sent += 1;
+      } catch (err) {
+        log.warn(`[ANIME] Gambar ${i + 1}/${total} gagal:`, err.message);
+      }
+    }
+    if (sent === 0) throw new Error('semua gambar gagal dikirim');
+    return total > 1 ? 'carousel' : 'image';
+  }
+
   async _sendRawText(sock, jid, text) {
     const b = wa.getBaileys();
     if (!b || !b.proto || !b.proto.Message) {
@@ -489,7 +523,88 @@ Aturan:
     await sock.query(node);
   }
 
-  async _pickNews(posted) {
+  async _cosplayUrls() {
+    const conf = this.cosplayConf || {};
+    if (conf.enabled === false) return [];
+    const urls = [...(Array.isArray(conf.posts) ? conf.posts : [])];
+
+    for (const rss of Array.isArray(conf.rss) ? conf.rss : []) {
+      try {
+        const items = await newsfeeds.fetchCustom(rss, 'Cosplay RSS', 10);
+        for (const item of items) {
+          const text = `${item.link || ''} ${item.description || ''}`;
+          const re =
+            /https?:\/\/(?:www\.)?instagram\.com\/(?:p|reel|reels|tv)\/[A-Za-z0-9_-]{5,}/gi;
+          let m;
+          while ((m = re.exec(text))) urls.push(m[0]);
+        }
+      } catch (err) {
+        log.warn('[ANIME] Cosplay RSS gagal:', err.message);
+      }
+    }
+
+    const seen = new Set();
+    const out = [];
+    for (const raw of urls) {
+      const url = instagram.normalizePostUrl(raw);
+      if (!url) continue;
+      const key = instagram.extractShortcode(url);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(url);
+    }
+    return out;
+  }
+
+  async _pickCosplay(posted) {
+    const urls = await this._cosplayUrls();
+    if (!urls.length) return { item: null };
+    const pool = urls.slice();
+
+    while (pool.length) {
+      const idx = Math.floor(Math.random() * pool.length);
+      const url = pool.splice(idx, 1)[0];
+      try {
+        const post = await instagram.fetchPost(url);
+        const key = `cosplay:${post.shortcode || instagram.extractShortcode(url)}`;
+        if (!post.images.length || (posted && posted[key])) continue;
+
+        const caption = instagram.formatCaption(post);
+        return {
+          item: {
+            key,
+            source: 'instagram',
+            sourceLabel: 'Cosplay',
+            title: `Cosplay ${post.character || 'Instagram'}`,
+            altTitle: post.anime || '',
+            description: post.caption || '',
+            image: post.images[0] || '',
+            images: post.images,
+            caption,
+            url: post.url,
+            genres: post.tags || [],
+            score: 0,
+            episodes: 0,
+            status: 'Cosplay',
+            year: yearNow(),
+            type: 'cosplay',
+            kind: 'Cosplayer',
+            facts: [],
+            studio: '',
+            releaseDate: '',
+            extra: `🔗 ${post.url}`,
+            slug: '',
+          },
+        };
+      } catch (err) {
+        log.warn(`[ANIME] Cosplay ${url} gagal:`, err.message);
+      }
+    }
+
+    return { item: null };
+  }
+
+  async _pickNews(posted, newsCount = 0) {
     const conf = (this.cfg && this.cfg.news) || {};
     if (conf.enabled === false) return { item: null, errors: [] };
 
@@ -498,7 +613,17 @@ Aturan:
       extraRss: Array.isArray(conf.xRss) ? conf.xRss : [],
     });
 
-    for (const raw of items.slice(0, 24)) {
+    let list = items.slice(0, 40);
+    const gachaEvery = Math.max(0, Number(conf.gachaEvery) || 0);
+    if (gachaEvery > 0 && (Number(newsCount) + 1) % gachaEvery === 0) {
+      const gacha = list.filter((it) => it.kind === 'Gacha');
+      if (gacha.length) {
+        const rest = list.filter((it) => it.kind !== 'Gacha');
+        list = [...gacha, ...rest];
+      }
+    }
+
+    for (const raw of list) {
       const post = newsfeeds.toPostItem(raw);
       if (this._isPosted(post, posted)) continue;
       if (!raw.image) await newsfeeds.enrichItem(raw);
@@ -547,16 +672,29 @@ Aturan:
     const infoEvery = Math.max(1, Number(this.conf.infoEvery) || 3);
     const japanInfo = this.conf.japanInfo !== false;
     const newsEvery = Math.max(0, Number((this.cfg && this.cfg.news && this.cfg.news.every) || 0));
+    const cosplayEvery = Math.max(
+      0,
+      Number(this.cosplayConf.every) || 0
+    );
 
-    // Selipkan berita bergambar dan info Jejepangan secara bergantian.
-    // options.type bisa memaksa salah satu: anime | info | news.
-    let wantNews =
-      options.type === 'news' ||
+    // Selipkan cosplay, berita bergambar, dan info Jejepangan secara bergantian.
+    // options.type bisa memaksa salah satu: anime | info | news | cosplay.
+    let wantCosplay =
+      options.type === 'cosplay' ||
       (options.type !== 'anime' &&
         options.type !== 'info' &&
-        newsEvery > 0 &&
-        (todayCount + 1) % newsEvery === 0);
+        options.type !== 'news' &&
+        cosplayEvery > 0 &&
+        (todayCount + 1) % cosplayEvery === 0);
+    let wantNews =
+      !wantCosplay &&
+      (options.type === 'news' ||
+        (options.type !== 'anime' &&
+          options.type !== 'info' &&
+          newsEvery > 0 &&
+          (todayCount + 1) % newsEvery === 0));
     let wantInfo =
+      !wantCosplay &&
       !wantNews &&
       (options.type === 'info' ||
         (options.type !== 'anime' && japanInfo && (todayCount + 1) % infoEvery === 0));
@@ -564,10 +702,25 @@ Aturan:
     let item = null;
     let usedInfo = false;
     let usedNews = false;
+    let usedCosplay = false;
     let result = { errors: [] };
 
-    if (wantNews) {
-      const picked = await this._pickNews(state.posted);
+    if (wantCosplay) {
+      const picked = await this._pickCosplay(state.posted);
+      item = picked.item;
+      usedCosplay = Boolean(item);
+      if (!item && options.type === 'cosplay') {
+        this.lastError = '';
+        return {
+          ok: false,
+          skipped: true,
+          message: 'tidak ada post cosplay baru (cek COSPLAY_POSTS/COSPLAY_RSS)',
+        };
+      }
+    }
+
+    if (!item && wantNews) {
+      const picked = await this._pickNews(state.posted, state.newsCount);
       item = picked.item;
       result = { errors: picked.errors };
       usedNews = Boolean(item);
@@ -633,9 +786,10 @@ Aturan:
       }
     }
 
-    if (!usedInfo) await this._enrich(item);
-    // Info Jejepangan sudah dibuat dalam Bahasa Indonesia, tidak perlu diterjemahkan.
-    const description = usedInfo ? item.description : await this._translate(item.description);
+    if (!usedInfo && !usedCosplay) await this._enrich(item);
+    // Info Jejepangan & caption cosplay sudah dalam bahasa yang tepat.
+    const description =
+      usedInfo || usedCosplay ? item.description : await this._translate(item.description);
     const caption = this._caption(item, description);
 
     this.lastAttemptAt = Date.now();
@@ -669,14 +823,22 @@ Aturan:
     await this.store.recordAnimeChannelPost(keys, today, {
       maxAgeDays: Number(this.conf.dedupeDays) || 0,
       maxEntries: Number(this.conf.dedupeMax) || 5000,
+      news: usedNews,
     });
 
+    const postType = usedCosplay
+      ? 'cosplay'
+      : usedNews
+        ? 'news'
+        : usedInfo
+          ? 'info'
+          : 'anime';
     this.lastError = '';
     this.lastResult = {
       ok: true,
       mode,
       reason,
-      type: usedNews ? 'news' : usedInfo ? 'info' : 'anime',
+      type: postType,
       item: item.title,
       source: item.sourceLabel,
       channelJid: jid,
@@ -686,7 +848,7 @@ Aturan:
       ok: true,
       mode,
       item,
-      type: usedNews ? 'news' : usedInfo ? 'info' : 'anime',
+      type: postType,
       channelJid: jid,
       sourceErrors: result.errors,
     };
@@ -716,6 +878,9 @@ Aturan:
       dedupeMax: Math.max(100, Number(this.conf.dedupeMax) || 5000),
       japanInfo: this.conf.japanInfo !== false,
       infoEvery: Math.max(1, Number(this.conf.infoEvery) || 3),
+      cosplayEvery: Math.max(0, Number(this.cosplayConf.every) || 0),
+      cosplayPosts: Array.isArray(this.cosplayConf.posts) ? this.cosplayConf.posts.length : 0,
+      newsCount: state.newsCount,
       lastAttemptAt: this.lastAttemptAt,
       lastError: this.lastError,
       lastResult: this.lastResult,
@@ -737,11 +902,20 @@ Aturan:
       `• Sumber       : ${s.sources.join(', ')}`,
       `• Min tahun    : ${s.minYear} (maks ${s.maxYear})`,
       `• Info Jepang  : ${s.japanInfo ? `ya, tiap ${s.infoEvery} post` : 'tidak'}`,
+      `• Cosplay      : ${s.cosplayEvery > 0 ? `ya, tiap ${s.cosplayEvery} post (${s.cosplayPosts} sumber)` : 'tidak'}`,
+      `• Berita gacha : ${s.newsCount > 0 ? `${s.newsCount} berita terkirim` : 'belum ada'}`,
       `• Dedupe       : ${s.dedupeDays > 0 ? `${s.dedupeDays} hari` : 'permanen'} (maks ${s.dedupeMax})`,
       `• Gambar       : ${s.images ? 'ya' : 'tidak'} | Terjemah: ${s.translate ? 'ya' : 'tidak'}`,
     ];
     if (s.lastResult && s.lastResult.ok) {
-      const kind = s.lastResult.type === 'info' ? 'info' : 'anime';
+      const kind =
+        s.lastResult.type === 'info'
+          ? 'info'
+          : s.lastResult.type === 'news'
+            ? 'berita'
+            : s.lastResult.type === 'cosplay'
+              ? 'cosplay'
+              : 'anime';
       lines.push(`• Terakhir     : ${s.lastResult.item} (${kind}/${s.lastResult.mode})`);
     }
     if (s.lastError) lines.push(`• Error        : ${s.lastError}`);

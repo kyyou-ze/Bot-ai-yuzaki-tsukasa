@@ -20,8 +20,9 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **AnimeKita** — `!anime ...` (new/movie/schedule/list/genre/search/detail/episode/roulette). Episode dengan link Pixeldrain bisa diunduh otomatis.
 - **Anime Roulette** — `!anime roulette [genre]` memilih anime acak dari AniList lengkap dengan sinopsis (diterjemahkan ke Indonesia bila Gemini tersedia), skor, episode, tahun, dan link.
 - **Grup Toolkit** — `!ingatkan` (pengingat persisten dengan waktu natural), `!poll` (polling native WhatsApp), `!rangkum` (ringkasan percakapan terakhir via AI), dan `!statistik` (anggota paling aktif, jam tersibuk, jumlah pesan).
-- **Auto-post Anime & Info Jejepangan ke Channel** — Bot otomatis mencari info anime terbaru dari **AniList, Kitsu, AnimeKita, dan MyAnimeList (Jikan)**, lalu memposting ke channel WhatsApp (default `NimaCoRe - Latest Info`) lengkap dengan cover, genre, skor, dan link. Hanya anime dengan tahun rilis baru yang lolos (bisa diatur), riwayat dedupe disimpan permanen, dan info budaya/fakta Jejepangan diselipkan tiap beberapa post. Cek/tes manual: `!animechannel status`, `!animechannel test`, `!animechannel info`, `!animechannel check <judul>` (owner/admin grup).
-- **Peraturan/Moderasi** — `!peraturan on|off|sync|status|rules|clear @user`. Bot menilai pesan grup dengan Gemini moderation, memberi warn (max 5), bisa mengeluarkan otomatis. Bisa kurangi warn dengan "sebut nama bot + saya mau mengurangi warn + subhanallah" 5x.
+- **Auto-post Anime, Berita, Cosplay & Info Jejepangan ke Channel** — Bot otomatis mencari info anime terbaru dari **AniList, Kitsu, AnimeKita, dan MyAnimeList (Jikan)**, berita bergambar dari RSS otaku, serta cosplay Instagram dari `COSPLAY_POSTS`/`COSPLAY_RSS`, lalu memposting ke channel WhatsApp (default `NimaCoRe - Latest Info`) lengkap dengan cover, genre, skor, dan link. Riwayat dedupe disimpan permanen, info budaya/fakta Jejepangan diselipkan tiap beberapa post, dan berita gacha diprioritaskan. Cek/tes manual: `!animechannel status`, `!animechannel test`, `!animechannel news`, `!animechannel cosplay`, `!animechannel info`, `!animechannel check <judul>` (owner/admin grup).
+- **Peraturan/Moderasi** — `!peraturan on|off|sync|status|rules|clear @user`. Bot menilai pesan grup dengan Gemini moderation, memberi warn (max 5), bisa mengeluarkan otomatis. Moderasi bawaan juga punya antilink + allowlist domain, antispam, mute sebelum kick, reset warn, log moderasi, dan jadwal buka/tutup (termasuk mode akhir pekan).
+- **Health & Rate Limit** — `!health` menampilkan status WhatsApp, uptime, RAM, cache berita, dan antrean unduhan. Command berat (`!news`, `!cosplay`, unduh episode, post channel) dibatasi agar tidak dispam.
 - **TagAll**, **RVO**, **Welcome**, **Owner features**.
 - **HTTP API** — `GET /`, `GET /healthz`, `GET /help`, `POST/GET /send` dengan `X-API-Key` + rate limit.
 
@@ -108,13 +109,27 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `ANIME_CHANNEL_JAPAN_INFO` | `true` | Selipkan info budaya/fakta Jejepangan |
 | `ANIME_CHANNEL_INFO_EVERY` | `3` | Info Jejepangan muncul tiap N post |
 | `ANIME_CHANNEL_NEWS_EVERY` | `2` | Selipkan berita bergambar tiap N post channel; `0` = nonaktif |
+| `ANIME_CHANNEL_COSPLAY_EVERY` | `4` | Selipkan post cosplay tiap N post channel; `0` = nonaktif |
+| `COSPLAY_ENABLED` | `true` | Aktifkan auto-post cosplay dari Instagram |
+| `COSPLAY_POSTS` | - | Daftar URL post Instagram untuk auto-cosplay (pisahkan koma) |
+| `COSPLAY_RSS` | - | RSS yang berisi tautan Instagram cosplay (pisahkan koma, opsional) |
 | `NEWS_ENABLED` | `true` | Aktifkan fitur `!news` dan berita di channel |
 | `NEWS_SOURCES` | `ann,animecorner,gematsu,siliconera` | Sumber RSS berita |
 | `NEWS_X_RSS` | - | RSS tambahan untuk sumber X/Twitter (pisahkan koma, opsional) |
 | `NEWS_PER_SOURCE` | `8` | Kandidat berita per sumber |
 | `NEWS_ITEMS` | `2` | Jumlah berita yang dikirim per `!news` |
+| `NEWS_GACHA_EVERY` | `2` | Setiap N berita, prioritaskan berita gacha; `0` = nonaktif |
+| `NEWS_CACHE_MIN` | `10` | Cache RSS berita (menit) agar `!news` tidak menembak feed terus |
+| `NEWS_REPOST_TTL_MIN` | `720` | Anti-repost berita per chat (menit) |
+| `MOD_LOG_JID` | - | JID tujuan log moderasi (default owner) |
+| `MOD_WARN_LIMIT` | `5` | Jumlah peringatan sebelum kick |
+| `MOD_MUTE_MINUTES` | `10` | Durasi mute sebelum kick (menit) |
+| `RATE_NEWS_SEC` | `15` | Jeda minimal `!news`/`!cosplay` per chat |
+| `RATE_DOWNLOAD_SEC` | `30` | Jeda minimal command unduh episode per chat |
+| `RATE_CHANNEL_SEC` | `30` | Jeda minimal post manual ke channel per chat |
 | `ANIME_EP_MAX_MB` | `190` | Batas ukuran episode yang diunduh otomatis |
 | `ANIME_EP_TIMEOUT_SEC` | `240` | Timeout unduh episode (detik) |
+| `ANIME_DL_CONCURRENCY` | `1` | Jumlah unduhan episode paralel |
 | `INFO_FOOTER` | `> yuzaki tsukasa by ren` | Footer output info channel & `!info` |
 | `LOG_LEVEL` | `info` | Level minimum yang tampil di panel (`debug`/`info`/`warn`/`error`) |
 | `LOG_DB_LEVEL` | `warn` | Level minimum yang disimpan ke database log (bug/error) |
@@ -204,13 +219,16 @@ Template info ada di `src/animeinfo.js` dan dipakai oleh auto-post channel maupu
 !animechannel status        # status scheduler, filter tahun, dedupe, jumlah post
 !animechannel test          # paksa satu post sekarang (melewati batas harian)
 !animechannel info          # paksa post info budaya/fakta Jejepangan
+!animechannel news          # paksa post berita bergambar
+!animechannel cosplay       # paksa post cosplay dari COSPLAY_POSTS/COSPLAY_RSS
 !animechannel check <judul> # cek apakah judul sudah pernah diposting
 !info <topik>               # info apa saja (anime, film, Jepang, fakta absurd, dll)
+!health                     # status koneksi, uptime, RAM, cache, antrean unduhan
 ```
 
 ## Berita Anime, Gacha & Carousel Instagram
 
-Perintah berita mengambil RSS dari Anime News Network, Anime Corner, Gematsu, dan Siliconera. Berita tanpa gambar akan dicoba dilengkapi lewat `og:image` artikel; kalau tetap tidak ada gambar, berita itu dilewati supaya setiap post selalu bergambar. Tautan X/Twitter yang disebut di artikel ikut ditampilkan.
+Perintah berita mengambil RSS dari Anime News Network, Anime Corner, Gematsu, dan Siliconera. Berita tanpa gambar akan dicoba dilengkapi lewat `og:image` artikel; kalau tetap tidak ada gambar, berita itu dilewati supaya setiap post selalu bergambar. Tautan X/Twitter yang disebut di artikel ikut ditampilkan. RSS di-cache `NEWS_CACHE_MIN` menit, dan setiap chat punya anti-repost sendiri (`NEWS_REPOST_TTL_MIN`) supaya `!news` berulang tidak mengirim berita yang sama. Berita gacha diprioritaskan tiap `NEWS_GACHA_EVERY` panggilan.
 
 ```text
 !news                 # 2 berita terbaru + gambar
@@ -235,15 +253,28 @@ Nama karakter dan anime ditebak dari hashtag/caption. Untuk override, tambahkan 
 
 Auto-post channel juga menyelipkan berita bergambar tiap `ANIME_CHANNEL_NEWS_EVERY` post. Paksa manual dengan `!animechannel news`.
 
+### Auto-post Cosplay
+
+Isi `COSPLAY_POSTS` dengan satu atau beberapa URL post Instagram (pisahkan koma):
+
+```env
+COSPLAY_POSTS=https://www.instagram.com/p/xxxx/,https://www.instagram.com/p/yyyy/
+COSPLAY_RSS=https://contoh.com/rss-cosplay
+ANIME_CHANNEL_COSPLAY_EVERY=4
+```
+
+Bot akan memilih post yang belum pernah dikirim, mengambil **semua foto carousel**, lalu mengirimkannya ke channel dengan caption format yang sama seperti `!cosplay`. Paksa manual dengan `!animechannel cosplay`. Gambar divalidasi magic-byte dan otomatis dikompres bila `sharp` tersedia.
+
 ## Unduh Episode Anime
 
 `!anime episode <slug> [reso]` menampilkan link streaming sekaligus mencoba mengunduh episode secara otomatis. Mirror langsung (mp4) diprioritaskan, lalu Pixeldrain sebagai cadangan. Kalau resolusi yang diminta terlalu besar, bot mencoba resolusi lebih rendah. Batas ukuran diatur lewat `ANIME_EP_MAX_MB` (default 190 MB) dan timeout lewat `ANIME_EP_TIMEOUT_SEC`.
 
 ```text
 !anime download <slug> 720p   # langsung unduh episode
+!anime queue                  # status antrean unduhan
 ```
 
-Jika semua mirror gagal, bot mengirim alasan kegagalan beserta link yang bisa dibuka manual.
+Unduhan masuk antrean dengan paralel default 1 (`ANIME_DL_CONCURRENCY`) dan permintaan episode yang sama tidak diduplikasi. Jika semua mirror gagal, bot mengirim alasan kegagalan beserta link yang bisa dibuka manual.
 
 ## Detector TikTok & Verif ACC
 
@@ -339,16 +370,26 @@ Mengirim poll native WhatsApp (satu pilihan, maksimal 12 opsi). Jika poll gagal 
 Perintah moderasi hanya untuk admin grup (owner juga boleh). Bot harus menjadi admin grup agar bisa menghapus pesan atau membuka/menutup grup.
 
 ```text
-!antilink on|off          # hapus link selain WhatsApp
+!antilink on|off          # hapus link selain WhatsApp/allowlist
+!antilink allow domain.com   # tambah domain yang diizinkan
+!antilink unallow domain.com # hapus domain dari allowlist
+!antilink list            # lihat allowlist
 !antispam on|off          # hapus & beri peringatan saat spam
 !moderasi                 # ringkasan status moderasi grup
 !jadwal status            # lihat jadwal buka/tutup
 !jadwal buka 06:00        # jam buka grup
 !jadwal tutup 22:00       # jam tutup grup
+!jadwal weekend on|off    # jadwal hanya Sabtu & Minggu
+!jadwal test              # dry-run: cek bot admin & mode jadwal
+!jadwal test open|close   # benar-benar uji buka/tutup
 !jadwal on|off            # aktifkan/nonaktifkan jadwal
+!mute 10 @user            # mute 10 menit (pesan dihapus otomatis)
+!unmute @user             # cabut mute
+!resetwarn @user          # reset peringatan satu pengguna
+!resetwarn all            # reset semua peringatan di grup
 ```
 
-Peserta yang melanggar akan diberi peringatan; setelah 5 peringatan bot mencoba mengeluarkan peserta dari grup. Jadwal buka/tutup dicek tiap 30 detik dan hanya dijalankan sekali per hari per aksi.
+Peserta yang melanggar akan diberi peringatan. Saat mencapai `MOD_WARN_LIMIT - 1`, peserta dimute `MOD_MUTE_MINUTES` menit; pelanggaran berikutnya dikeluarkan dari grup. Peringatan otomatis kedaluwarsa setelah 7 hari tanpa pelanggaran. Jadwal buka/tutup dicek tiap 30 detik, hanya dijalankan sekali per hari per aksi, mendukung jadwal lewat tengah malam, dan bisa dibatasi ke akhir pekan. Aksi moderasi dikirim ke `MOD_LOG_JID` (default owner).
 
 ### Anime Roulette
 

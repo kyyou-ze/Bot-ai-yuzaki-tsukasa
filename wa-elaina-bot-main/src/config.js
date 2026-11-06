@@ -147,6 +147,15 @@ function load() {
       // Selipkan info budaya/fakta Jejepangan setiap N post.
       japanInfo: boolEnv(getenv('ANIME_CHANNEL_JAPAN_INFO', 'true'), true),
       infoEvery: Math.max(1, intEnv(getenv('ANIME_CHANNEL_INFO_EVERY', '3'), 3)),
+      // Selipkan post cosplay Instagram setiap N post.
+      cosplayEvery: Math.max(0, intEnv(getenv('ANIME_CHANNEL_COSPLAY_EVERY', '4'), 4)),
+    },
+    // Auto-post cosplay dari daftar post Instagram / RSS.
+    cosplay: {
+      enabled: boolEnv(getenv('COSPLAY_ENABLED', 'true'), true),
+      posts: splitKeys(getenv('COSPLAY_POSTS', '')),
+      rss: splitKeys(getenv('COSPLAY_RSS', '')),
+      every: Math.max(0, intEnv(getenv('ANIME_CHANNEL_COSPLAY_EVERY', '4'), 4)),
     },
     // Berita anime/manga/gacha + carousel Instagram.
     news: {
@@ -158,6 +167,18 @@ function load() {
       items: Math.max(1, Math.min(5, intEnv(getenv('NEWS_ITEMS', '2'), 2))),
       // Setiap N post channel, selipkan satu berita bergambar.
       every: intEnv(getenv('ANIME_CHANNEL_NEWS_EVERY', '2'), 2),
+      // Setiap N berita, utamakan berita gacha.
+      gachaEvery: Math.max(0, intEnv(getenv('NEWS_GACHA_EVERY', '2'), 2)),
+    },
+    // Moderasi grup: log, batas warn, dan durasi mute sebelum kick.
+    modLogJid: getenv('MOD_LOG_JID', ''),
+    warnLimit: Math.max(1, intEnv(getenv('MOD_WARN_LIMIT', '5'), 5)),
+    muteMinutes: Math.max(1, intEnv(getenv('MOD_MUTE_MINUTES', '10'), 10)),
+    // Jeda command berat (detik) untuk mencegah spam.
+    rateLimit: {
+      newsSec: Math.max(0, intEnv(getenv('RATE_NEWS_SEC', '15'), 15)),
+      downloadSec: Math.max(0, intEnv(getenv('RATE_DOWNLOAD_SEC', '30'), 30)),
+      channelSec: Math.max(0, intEnv(getenv('RATE_CHANNEL_SEC', '30'), 30)),
     },
   };
 

@@ -4,6 +4,8 @@ const log = require('./logger');
 const { atomicWriteJson, safeReadJson } = require('./util');
 
 const WARN_LIMIT = 5;
+// Peringatan otomatis dianggap basi setelah 7 hari tanpa pelanggaran baru.
+const WARN_RESET_MS = 7 * 24 * 60 * 60 * 1000;
 // Mode dewasa otomatis berakhir setelah 30 menit tanpa pemicu baru.
 const ADULT_TTL_MS = 30 * 60 * 1000;
 
@@ -129,9 +131,14 @@ class Store {
         enabled: Boolean(g.schedule && g.schedule.enabled),
         open: (g.schedule && g.schedule.open) || '',
         close: (g.schedule && g.schedule.close) || '',
+        weekendOnly: Boolean(g.schedule && g.schedule.weekendOnly),
       },
       antilink: Boolean(g.antilink),
       antispam: Boolean(g.antispam),
+      linkAllow: Array.isArray(g.linkAllow) ? g.linkAllow.slice() : [],
+      mutes: g.mutes && typeof g.mutes === 'object' ? { ...g.mutes } : {},
+      warnLimit: Math.max(1, Number(g.warnLimit) || WARN_LIMIT),
+      muteMinutes: Math.max(1, Number(g.muteMinutes) || 10),
       events: g.events || {},
       updated: Number(g.updated) || 0,
     };
@@ -155,13 +162,45 @@ class Store {
           enabled: Boolean(g.schedule && g.schedule.enabled),
           open: (g.schedule && g.schedule.open) || '',
           close: (g.schedule && g.schedule.close) || '',
+          weekendOnly: Boolean(g.schedule && g.schedule.weekendOnly),
         },
         antilink: Boolean(g.antilink),
         antispam: Boolean(g.antispam),
+        linkAllow: Array.isArray(g.linkAllow) ? g.linkAllow.slice() : [],
+        mutes: g.mutes && typeof g.mutes === 'object' ? { ...g.mutes } : {},
+        warnLimit: Math.max(1, Number(g.warnLimit) || WARN_LIMIT),
+        muteMinutes: Math.max(1, Number(g.muteMinutes) || 10),
         events: g.events || {},
         updated: Number(g.updated) || 0,
       },
     ]);
+  }
+
+  getGroupMute(chat, user) {
+    const g = this.data.groupGuard[chat] || {};
+    const until = Number((g.mutes || {})[user]) || 0;
+    if (!until) return { muted: false, until: 0 };
+    if (until <= Date.now()) {
+      this.clearGroupMute(chat, user);
+      return { muted: false, until: 0 };
+    }
+    return { muted: true, until };
+  }
+
+  muteGroupUser(chat, user, until) {
+    const cur = this.data.groupGuard[chat] || {};
+    const mutes = { ...(cur.mutes || {}), [user]: Number(until) || 0 };
+    this.data.groupGuard[chat] = { ...cur, mutes, updated: Date.now() };
+    return this._save();
+  }
+
+  clearGroupMute(chat, user) {
+    const cur = this.data.groupGuard[chat] || {};
+    if (!cur.mutes || !cur.mutes[user]) return Promise.resolve(false);
+    const mutes = { ...cur.mutes };
+    delete mutes[user];
+    this.data.groupGuard[chat] = { ...cur, mutes, updated: Date.now() };
+    return this._save().then(() => true);
   }
 
   markGroupGuardEvent(chat, action, token) {
@@ -189,7 +228,10 @@ class Store {
 
   addWarn(group, user, reason) {
     const key = this._warnKey(group, user);
-    const w = this.data.warns[key] || { count: 0 };
+    let w = this.data.warns[key] || { count: 0 };
+    if (w.updated && Date.now() - Number(w.updated) > WARN_RESET_MS) {
+      w = { count: 0 };
+    }
     const rec = {
       group,
       user,
@@ -307,6 +349,7 @@ class Store {
       lastPostAt: Number(st && st.lastPostAt) || 0,
       day: (st && st.day) || '',
       dayCount: Number(st && st.dayCount) || 0,
+      newsCount: Number(st && st.newsCount) || 0,
     };
   }
 
@@ -363,11 +406,14 @@ class Store {
     let dayCount = Number(st.dayCount) || 0;
     if (st.day !== today) dayCount = 0;
 
+    const newsCount = (Number(st.newsCount) || 0) + (options.news ? 1 : 0);
+
     this.data.animeChannel = {
       posted,
       lastPostAt: now,
       day: today,
       dayCount: dayCount + 1,
+      newsCount,
     };
     return this._save();
   }

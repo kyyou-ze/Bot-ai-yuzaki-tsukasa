@@ -4,15 +4,60 @@ const log = require('../logger');
 const wa = require('../wa');
 const newsfeeds = require('../newsfeeds');
 const instagram = require('../instagram');
-const { downloadBytes } = require('../util');
+const { canonicalTitle } = require('../util');
+const { downloadImage } = require('../imageutil');
 
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const MAX_NEWS_ITEMS = 5;
+const REPOST_TTL_MS =
+  Math.max(5, Number(process.env.NEWS_REPOST_TTL_MIN) || 12 * 60) * 60 * 1000;
 
 class NewsFeature {
   constructor(cfg) {
     this.cfg = cfg || {};
     this.news = this.cfg.news || {};
+    // Anti-repost per chat: link/judul yang baru dikirim tidak langsung
+    // dikirim lagi saat user memanggil !news berulang kali.
+    this.recent = new Map();
+    this.gachaCounter = new Map();
+  }
+
+  _recent(chat) {
+    const now = Date.now();
+    let bucket = this.recent.get(chat);
+    if (!bucket) {
+      bucket = new Map();
+      this.recent.set(chat, bucket);
+    }
+    for (const [key, at] of bucket) {
+      if (now - at > REPOST_TTL_MS) bucket.delete(key);
+    }
+    if (bucket.size > 500) {
+      const oldest = [...bucket.entries()].sort((a, b) => a[1] - b[1]);
+      for (const [key] of oldest.slice(0, bucket.size - 400)) bucket.delete(key);
+    }
+    return bucket;
+  }
+
+  _keysOf(item) {
+    const keys = [];
+    if (item.link) keys.push(`u:${item.link}`);
+    if (item.id) keys.push(`i:${item.id}`);
+    const title = canonicalTitle(item.title);
+    if (title) keys.push(`t:${title}`);
+    for (const link of item.xLinks || []) keys.push(`x:${link}`);
+    return keys.filter(Boolean);
+  }
+
+  _isRecent(chat, item) {
+    const bucket = this._recent(chat);
+    return this._keysOf(item).some((key) => bucket.has(key));
+  }
+
+  _markRecent(chat, item) {
+    const bucket = this._recent(chat);
+    const now = Date.now();
+    for (const key of this._keysOf(item)) bucket.set(key, now);
   }
 
   static isCommand(name) {
@@ -76,13 +121,17 @@ class NewsFeature {
       return true;
     }
 
-    const { items, errors } = await this.pickItems(topic, limit);
+    const { items, errors, skippedRecent } = await this.pickItems(
+      m.key.remoteJid,
+      topic,
+      limit
+    );
     if (!items.length) {
       const detail = errors.length ? `\nSumber gagal: ${errors.map((e) => e.source).join(', ')}` : '';
-      await this.reply(
-        m,
-        `ℹ️ Belum ada berita bergambar${topic ? ` untuk topik *${topic}*` : ''}. Coba lagi nanti.${detail}`
-      );
+      const reason = skippedRecent
+        ? 'Semua berita terbaru sudah dikirim di chat ini. Coba lagi beberapa saat lagi.'
+        : `Belum ada berita bergambar${topic ? ` untuk topik *${topic}*` : ''}. Coba lagi nanti.`;
+      await this.reply(m, `ℹ️ ${reason}${detail}`);
       return true;
     }
 
@@ -90,6 +139,7 @@ class NewsFeature {
     for (const item of items) {
       try {
         await wa.sendImage(chat, item._imageData, newsfeeds.formatNewsCaption(item), m, item._imageMime);
+        this._markRecent(chat, item);
       } catch (err) {
         log.warn('[NEWS] gagal kirim item:', err.message);
       }
@@ -113,8 +163,10 @@ class NewsFeature {
     const sent = [];
     for (let i = 0; i < post.images.length; i++) {
       try {
-        const got = await downloadBytes(post.images[i], MAX_IMAGE_BYTES, 30000);
-        if (!/^image\//i.test(got.mime || '')) throw new Error(`bukan gambar (${got.mime || '?'})`);
+        const got = await downloadImage(post.images[i], {
+          maxBytes: MAX_IMAGE_BYTES,
+          timeoutMs: 30000,
+        });
         sent.push({ data: got.data, mime: got.mime });
       } catch (err) {
         log.warn(`[COSPLAY] foto ${i + 1} gagal diunduh:`, err.message);
@@ -136,7 +188,7 @@ class NewsFeature {
     return true;
   }
 
-  async pickItems(topic, limit) {
+  async pickItems(chat, topic, limit) {
     const { items, errors } = await newsfeeds.fetchAll(this.sources, {
       perSource: this.perSource,
       extraRss: this.xRss,
@@ -145,22 +197,47 @@ class NewsFeature {
     let candidates = newsfeeds.filterByTopic(items, topic);
     if (!candidates.length && topic) candidates = items;
 
+    // Prioritas gacha: setiap N panggilan tanpa topik, dahulukan berita gacha
+    // supaya update banner/event tidak tenggelam oleh berita anime biasa.
+    if (!topic) {
+      const every = Math.max(0, Number(this.news.gachaEvery) || 0);
+      if (every > 0) {
+        const count = (this.gachaCounter.get(chat) || 0) + 1;
+        this.gachaCounter.set(chat, count % Math.max(every * 10, 100));
+        if (count % every === 0) {
+          const gacha = candidates.filter((it) => it.kind === 'Gacha');
+          if (gacha.length) candidates = [...gacha, ...candidates];
+        }
+      }
+    }
+
     const out = [];
-    for (const item of candidates.slice(0, Math.max(24, limit * 8))) {
+    const seen = new Set();
+    let skippedRecent = false;
+    for (const item of candidates.slice(0, Math.max(60, limit * 12))) {
+      const keys = this._keysOf(item);
+      if (keys.some((key) => seen.has(key))) continue;
+      if (this._isRecent(chat, item)) {
+        skippedRecent = true;
+        continue;
+      }
       if (!item.image) await newsfeeds.enrichItem(item);
       if (!item.image) continue;
 
       try {
-        const got = await downloadBytes(item.image, MAX_IMAGE_BYTES, 20000);
-        if (!/^image\//i.test(got.mime || '')) continue;
+        const got = await downloadImage(item.image, {
+          maxBytes: MAX_IMAGE_BYTES,
+          timeoutMs: 20000,
+        });
         out.push({ ...item, _imageData: got.data, _imageMime: got.mime });
+        for (const key of keys) seen.add(key);
       } catch (err) {
         log.debug('[NEWS] gambar gagal diunduh:', err.message);
       }
       if (out.length >= limit) break;
     }
 
-    return { items: out, errors };
+    return { items: out, errors, skippedRecent };
   }
 }
 

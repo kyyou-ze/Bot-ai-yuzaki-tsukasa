@@ -14,6 +14,8 @@ const { NewsFeature } = require('./features/news');
 const { VerifFeature } = require('./features/verif');
 const { TikTokAdminFeature } = require('./features/tiktokadmin');
 const { VerifStore } = require('./verifstore');
+const newsfeeds = require('./newsfeeds');
+const { RateLimiter } = require('./ratelimit');
 const tiktok = require('./tiktok');
 const llm = require('./llm');
 const memory = require('./memory');
@@ -168,6 +170,70 @@ class Router {
     this.news = new NewsFeature(cfg);
     this.peraturan = new PeraturanFeature(store);
     this.guard = groupGuard || new GroupGuard(cfg, store);
+    this.heavyLimiter = new RateLimiter({ maxEntries: 2000 });
+  }
+
+  heavyGate(chat, key, seconds) {
+    const win = Math.max(0, Number(seconds) || 0) * 1000;
+    if (win <= 0) return { allowed: true, retryMs: 0 };
+    return this.heavyLimiter.take(`${key}|${chat}`, win);
+  }
+
+  async denyHeavy(chat, gate, m, label) {
+    const wait = Math.max(1, Math.ceil((gate.retryMs || 0) / 1000));
+    await wa
+      .sendText(
+        chat,
+        `⏳ Command *${label}* terlalu sering. Coba lagi dalam ${wait} detik.`,
+        m
+      )
+      .catch(() => {});
+  }
+
+  formatUptime(sec) {
+    const total = Math.max(0, Math.floor(Number(sec) || 0));
+    const d = Math.floor(total / 86400);
+    const h = Math.floor((total % 86400) / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return [d ? `${d}h` : '', h ? `${h}j` : '', m ? `${m}m` : '', `${s}d`]
+      .filter(Boolean)
+      .join(' ');
+  }
+
+  healthReport() {
+    const mem = process.memoryUsage();
+    const mb = (n) => `${(Number(n) / 1024 / 1024).toFixed(1)} MB`;
+    const ready = Boolean(this.ready());
+    const sock = wa.getSock();
+    const anime = this.anime && this.anime.downloadStatus
+      ? this.anime.downloadStatus()
+      : { active: [], queued: [], max: 0 };
+    const channel = this.animeChannel ? this.animeChannel.status() : null;
+    const cache = newsfeeds.cacheStats();
+    const guardCount = this.store && this.store.listGroupGuards
+      ? this.store.listGroupGuards().length
+      : 0;
+
+    const lines = [
+      '🩺 *Health Tsukasa*',
+      `• WhatsApp   : ${ready ? 'terhubung' : 'belum terhubung'}${sock ? '' : ' (sock kosong)'}`,
+      `• Uptime     : ${this.formatUptime(process.uptime())}`,
+      `• RAM        : ${mb(mem.rss)} (heap ${mb(mem.heapUsed)})`,
+      `• Node       : ${process.version}`,
+      `• Berita     : cache ${cache.entries} entri (TTL ${cache.ttlMin} menit)`,
+      `• Unduhan    : ${anime.active.length} aktif, ${anime.queued.length} antre (paralel ${anime.max})`,
+      `• Moderasi   : ${guardCount} grup dipantau`,
+    ];
+    if (channel) {
+      lines.push(
+        `• Channel    : ${channel.running ? 'scheduler jalan' : 'scheduler berhenti'}`,
+        `• Post hari  : ${channel.todayCount}/${channel.maxPerDay}`,
+        `• Post total : ${channel.postedCount}`
+      );
+      if (channel.lastError) lines.push(`• Error      : ${channel.lastError}`);
+    }
+    return lines.join('\n');
   }
 
   async handleGroupParticipantsUpdate(ev) {
@@ -275,6 +341,11 @@ class Router {
     this.groupTools.recordMessage(chat, sender, txt, { isCommand: Boolean(bang) });
 
     if (bang) {
+      if (bang.cmd === 'health' || bang.cmd === 'ping' || bang.cmd === 'status') {
+        await wa.sendText(chat, this.healthReport(), m);
+        return;
+      }
+
       if (bang.cmd === 'help' || bang.cmd === 'menu') {
         const userName = memory.getUserName(sender) || '';
         const greeting = userName ? `Hai ${userName}!` : 'Hai!';
@@ -301,8 +372,11 @@ class Router {
           '- !info <topik> : info apa saja (anime/film/Jepang/fakta absurd) dalam Bahasa Indonesia',
           '- !news [topik] : berita anime/manga/gacha/cosplay terbaru + gambar',
           '- !cosplay <link IG> : ambil semua foto dari satu post Instagram',
+          '- !health : status koneksi, uptime, RAM, cache, dan antrean unduhan',
           '- !jadwal buka 06:00 / !jadwal tutup 22:00 : buka-tutup grup otomatis (admin)',
-          '- !antilink on|off / !antispam on|off : moderasi grup (admin)',
+          '- !jadwal weekend on|off / !jadwal test : jadwal akhir pekan & uji (admin)',
+          '- !antilink on|off / !antilink allow domain.com / !antispam on|off : moderasi grup (admin)',
+          '- !mute [menit] @user / !unmute @user / !resetwarn @user|all : moderasi member (admin)',
           '- !animechannel status|test|info|check <judul> : cek/tes auto-post & info Jejepangan (owner/admin)',
           '- !anime roulette [genre] : rekomendasi anime acak',
           '- !ingatkan <waktu> <teks> : pengingat (contoh: !ingatkan 10m minum air)',
@@ -356,6 +430,18 @@ class Router {
       }
 
       if (bang.cmd === 'anime') {
+        const animeSub = String(bang.rest || '').trim().split(/\s+/)[0].toLowerCase();
+        if (['episode', 'stream', 'download', 'unduh'].includes(animeSub)) {
+          const gate = this.heavyGate(
+            chat,
+            'anime-download',
+            this.cfg.rateLimit && this.cfg.rateLimit.downloadSec
+          );
+          if (!gate.allowed) {
+            await this.denyHeavy(chat, gate, m, 'anime download');
+            return;
+          }
+        }
         if (await this.anime.handle(this.sock, m, `!${bang.cmd}${bang.rest ? ` ${bang.rest}` : ''}`)) return;
       }
 
@@ -364,6 +450,16 @@ class Router {
       }
 
       if (NewsFeature.isCommand(bang.cmd)) {
+        const key = bang.cmd === 'cosplay' ? 'cosplay' : 'news';
+        const gate = this.heavyGate(
+          chat,
+          `news-${key}`,
+          this.cfg.rateLimit && this.cfg.rateLimit.newsSec
+        );
+        if (!gate.allowed) {
+          await this.denyHeavy(chat, gate, m, bang.cmd);
+          return;
+        }
         if (await this.news.handle(this.sock, m, bang.cmd, bang.rest)) return;
       }
 
@@ -380,6 +476,17 @@ class Router {
         if (!this.animeChannel) {
           await wa.sendText(chat, 'Fitur auto-post anime tidak tersedia.', m);
           return;
+        }
+        if (['test', 'post', 'news', 'berita', 'info', 'cosplay'].includes(sub)) {
+          const gate = this.heavyGate(
+            chat,
+            `channel-${sub}`,
+            this.cfg.rateLimit && this.cfg.rateLimit.channelSec
+          );
+          if (!gate.allowed) {
+            await this.denyHeavy(chat, gate, m, `animechannel ${sub}`);
+            return;
+          }
         }
         if (sub === 'status') {
           await wa.sendText(chat, this.animeChannel.formatStatus(), m);
@@ -436,7 +543,9 @@ class Router {
                   ? 'Info Jejepangan'
                   : res.type === 'news'
                     ? 'Berita bergambar'
-                    : 'Anime';
+                    : res.type === 'cosplay'
+                      ? 'Cosplay'
+                      : 'Anime';
               await wa.sendText(
                 chat,
                 `✅ ${kind} terkirim ke channel: *${res.item.title}* (${res.mode}).\nSumber: ${res.item.sourceLabel || '-'}`,
@@ -471,6 +580,31 @@ class Router {
           }
           return;
         }
+        if (sub === 'cosplay' || sub === 'cosplayer') {
+          try {
+            const res = await this.animeChannel.postOne({
+              force: true,
+              type: 'cosplay',
+              reason: 'manual-cosplay',
+            });
+            if (res.ok) {
+              await wa.sendText(
+                chat,
+                `✅ Cosplay terkirim ke channel: *${res.item.title}* (${res.mode}).`,
+                m
+              );
+            } else {
+              await wa.sendText(
+                chat,
+                `ℹ️ Tidak ada post cosplay: ${res.message}\nIsi COSPLAY_POSTS/COSPLAY_RSS di .env.`,
+                m
+              );
+            }
+          } catch (err) {
+            await wa.sendText(chat, `❌ Gagal post cosplay ke channel: ${err.message}`, m);
+          }
+          return;
+        }
         await wa.sendText(
           chat,
           'Gunakan:\n' +
@@ -478,6 +612,7 @@ class Router {
             '!animechannel test\n' +
             '!animechannel news\n' +
             '!animechannel info\n' +
+            '!animechannel cosplay\n' +
             '!animechannel check <judul>',
           m
         );

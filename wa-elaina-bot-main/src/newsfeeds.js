@@ -37,6 +37,28 @@ const SOURCES = {
 
 const DEFAULT_SOURCES = ['ann', 'animecorner', 'gematsu', 'siliconera'];
 
+// Cache RSS singkat supaya `!news` dan auto-post channel tidak menembak
+// semua feed berkali-kali dalam satu menit.
+const CACHE_TTL_MS =
+  Math.max(0, Number(process.env.NEWS_CACHE_MIN) || 10) * 60 * 1000;
+const feedCache = new Map();
+
+function cacheKey(sources, options = {}) {
+  return JSON.stringify({
+    sources: Array.isArray(sources) ? sources : String(sources || ''),
+    perSource: Number(options.perSource) || 0,
+    extraRss: Array.isArray(options.extraRss) ? options.extraRss : [],
+  });
+}
+
+function cacheStats() {
+  return { entries: feedCache.size, ttlMin: Math.round(CACHE_TTL_MS / 60000) };
+}
+
+function clearCache() {
+  feedCache.clear();
+}
+
 const GACHA_WORDS = [
   'azur lane', 'nikke', 'blue archive', 'genshin', 'honkai', 'star rail',
   'arknights', 'fate/grand order', 'fgo', 'wuthering waves', 'zenless',
@@ -256,6 +278,14 @@ async function fetchAll(sources, options = {}) {
   const list = normalizeSources(sources);
   const active = list.length ? list : DEFAULT_SOURCES;
   const perSource = Math.max(1, Math.min(20, Number(options.perSource) || 6));
+  const key = cacheKey(active, { perSource, extraRss: options.extraRss });
+
+  if (CACHE_TTL_MS > 0) {
+    const hit = feedCache.get(key);
+    if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
+      return { items: hit.items.slice(), errors: hit.errors.slice(), cached: true };
+    }
+  }
 
   const results = await Promise.allSettled(
     active.map((key) => fetchSource(key, perSource))
@@ -287,7 +317,15 @@ async function fetchAll(sources, options = {}) {
     deduped.push(item);
   }
 
-  return { items: deduped, errors };
+  if (CACHE_TTL_MS > 0) {
+    feedCache.set(key, { at: Date.now(), items: deduped, errors });
+    if (feedCache.size > 50) {
+      const oldest = [...feedCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+      if (oldest) feedCache.delete(oldest[0]);
+    }
+  }
+
+  return { items: deduped, errors, cached: false };
 }
 
 async function enrichItem(item) {
@@ -455,7 +493,10 @@ module.exports = {
   normalizeSources,
   parseFeed,
   fetchSource,
+  fetchCustom,
   fetchAll,
+  cacheStats,
+  clearCache,
   enrichItem,
   toPostItem,
   filterByTopic,

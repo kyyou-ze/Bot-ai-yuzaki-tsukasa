@@ -462,6 +462,68 @@ class AnimeFeature {
     this.reTrigger = reTrigger;
     this.genreAllow = new Set(GENRES);
     this.genreString = GENRES.join(', ');
+    // Antrean unduhan episode: batasi jumlah unduhan paralel agar RAM dan
+    // bandwidth tidak habis saat banyak permintaan masuk bersamaan.
+    this.downloads = new Map();
+    this.downloadQueue = [];
+    this.activeDownloads = 0;
+    this.maxDownloads = Math.max(1, Number(process.env.ANIME_DL_CONCURRENCY) || 1);
+  }
+
+  downloadStatus() {
+    return {
+      active: [...this.downloads.values()]
+        .filter((job) => job.startedAt)
+        .map((job) => ({ slug: job.slug, chat: job.chat, startedAt: job.startedAt })),
+      queued: this.downloadQueue.map((job) => ({ slug: job.slug, chat: job.chat })),
+      max: this.maxDownloads,
+    };
+  }
+
+  enqueueEpisode(chat, slug, ep, streams) {
+    const key = `${chat}|${slug}`;
+    if (this.downloads.has(key)) {
+      return { queued: false, reason: 'episode ini sudah sedang diunduh/diantrekan' };
+    }
+
+    const job = {
+      key,
+      chat,
+      slug,
+      ep,
+      streams,
+      createdAt: Date.now(),
+      startedAt: 0,
+    };
+    this.downloads.set(key, job);
+    this.downloadQueue.push(job);
+    const ahead = Math.max(0, this.downloadQueue.length - 1) + this.activeDownloads;
+    this._pumpDownloads();
+
+    if (ahead > 0) {
+      wa.sendText(
+        chat,
+        `📥 Episode *${slug}* masuk antrean (posisi ${ahead + 1}). ` +
+          'Bot akan mengirim otomatis setelah unduhan lain selesai.'
+      ).catch(() => {});
+    }
+    return { queued: true, position: ahead + 1 };
+  }
+
+  _pumpDownloads() {
+    while (this.activeDownloads < this.maxDownloads && this.downloadQueue.length) {
+      const job = this.downloadQueue.shift();
+      job.startedAt = Date.now();
+      this.activeDownloads += 1;
+      Promise.resolve()
+        .then(() => this.deliverEpisode(job.chat, job.slug, job.ep, job.streams))
+        .catch((err) => log.error('[ANIME] unduh episode error:', err.message))
+        .finally(() => {
+          this.activeDownloads = Math.max(0, this.activeDownloads - 1);
+          this.downloads.delete(job.key);
+          this._pumpDownloads();
+        });
+    }
   }
 
   extractCommand(text) {
@@ -496,6 +558,7 @@ class AnimeFeature {
       'anime detail <slug>    - info detail + daftar chapter',
       'anime episode <slug> [reso] - link streaming + unduh otomatis',
       'anime download <slug> [reso] - langsung unduh episode',
+      'anime queue            - status antrean unduhan episode',
       'anime roulette [genre] - rekomendasi anime acak (contoh: anime roulette romance)',
       '',
       'Gunakan slug/link dari hasil detail untuk mengambil episode.',
@@ -608,6 +671,28 @@ class AnimeFeature {
           return true;
         }
 
+        case 'queue':
+        case 'antrean':
+        case 'downloads':
+        case 'unduhan': {
+          const s = this.downloadStatus();
+          const lines = [
+            '*Antrean Unduhan Episode*',
+            `Paralel : ${s.max}`,
+            `Aktif   : ${s.active.length}`,
+            `Menunggu: ${s.queued.length}`,
+          ];
+          for (const job of s.active) {
+            lines.push(`• ⬇️ ${job.slug} (${job.chat})`);
+          }
+          for (let i = 0; i < s.queued.length; i++) {
+            lines.push(`• ${i + 1}. ${s.queued[i].slug} (${s.queued[i].chat})`);
+          }
+          if (!s.active.length && !s.queued.length) lines.push('', 'Tidak ada unduhan berjalan.');
+          await this.reply(sock, m, lines.join('\n'));
+          return true;
+        }
+
         case 'episode':
         case 'stream':
         case 'download':
@@ -629,11 +714,7 @@ class AnimeFeature {
             : '';
           await this.reply(sock, m, formatEpisode(slug, ep, note));
           if (hasDownloadable(streams)) {
-            setImmediate(() => {
-              this.deliverEpisode(m.key.remoteJid, slug, ep, streams).catch((err) => {
-                log.error('[ANIME] unduh episode error:', err.message);
-              });
-            });
+            this.enqueueEpisode(m.key.remoteJid, slug, ep, streams);
           }
           return true;
         }
