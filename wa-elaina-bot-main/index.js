@@ -4,6 +4,7 @@ const log = require('./src/logger');
 const qrcode = require('qrcode-terminal');
 
 const { load } = require('./src/config');
+const settings = require('./src/settings');
 const { Store } = require('./src/state');
 const memory = require('./src/memory');
 const llm = require('./src/llm');
@@ -51,6 +52,31 @@ async function main() {
   const verifStore = new VerifStore(cfg);
   const tiktokAccounts = new TikTokAccounts(cfg);
   const tiktokMonitor = new TikTokMonitor(cfg, verifStore, isReady, tiktokAccounts);
+
+  // Terapkan perubahan !config ke layanan yang sedang berjalan.
+  settings.setHook((key) => {
+    if (key === 'ANIME_CHANNEL_ENABLED') {
+      if (cfg.animeChannel.enabled && waReady) animeChannel.start();
+      else animeChannel.stop();
+    }
+    if (key === 'ANIME_CHANNEL_JID' || key === 'ANIME_CHANNEL_INVITE') {
+      animeChannel.channelJid = '';
+      animeChannel.channelName = '';
+    }
+    if (key === 'ANIME_CHANNEL_INTERVAL_MIN') {
+      animeChannel.reschedule();
+    }
+    if (key === 'TIKTOK_MONITOR_ENABLED') {
+      if (cfg.tiktokMonitorEnabled && waReady) tiktokMonitor.start();
+      else tiktokMonitor.stop();
+    }
+    if (key === 'TIKTOK_CHECK_MIN') {
+      if (cfg.tiktokMonitorEnabled && waReady) {
+        tiktokMonitor.stop();
+        tiktokMonitor.start();
+      }
+    }
+  });
 
   const api = new HttpApi(cfg, isReady);
   api.start();

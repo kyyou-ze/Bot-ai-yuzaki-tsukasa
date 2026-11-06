@@ -16,6 +16,7 @@ const KNOWN_COMMANDS = new Set([
   'animechannel', 'anime-channel',
   'peraturan', 'rules',
   'health', 'status', 'ping',
+  'config', 'setting', 'pengaturan', 'set', 'isi',
   'geminikey', 'gkey',
   'hot', 'tsukasa', 'persona', 'mode',
   'tagall', 'rvo',

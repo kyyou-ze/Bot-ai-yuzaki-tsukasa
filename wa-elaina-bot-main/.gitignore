@@ -36,6 +36,8 @@ logs/
 # Database log/bug (dibuat otomatis oleh src/logger.js)
 database/logs.json
 database/logs.json.*.tmp
+database/settings.json
+database/settings.json.*.tmp
 pids/
 *.pid
 *.seed

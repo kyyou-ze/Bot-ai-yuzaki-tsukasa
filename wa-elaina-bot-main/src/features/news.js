@@ -4,13 +4,18 @@ const log = require('../logger');
 const wa = require('../wa');
 const newsfeeds = require('../newsfeeds');
 const instagram = require('../instagram');
+const settings = require('../settings');
 const { canonicalTitle } = require('../util');
 const { downloadImage } = require('../imageutil');
 
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const MAX_NEWS_ITEMS = 5;
-const REPOST_TTL_MS =
-  Math.max(5, Number(process.env.NEWS_REPOST_TTL_MIN) || 12 * 60) * 60 * 1000;
+
+function repostTtlMs() {
+  const raw = process.env.NEWS_REPOST_TTL_MIN;
+  const minutes = raw === undefined ? 12 * 60 : Number(raw);
+  return Math.max(5, Number.isFinite(minutes) ? minutes : 12 * 60) * 60 * 1000;
+}
 
 class NewsFeature {
   constructor(cfg) {
@@ -24,13 +29,14 @@ class NewsFeature {
 
   _recent(chat) {
     const now = Date.now();
+    const ttl = repostTtlMs();
     let bucket = this.recent.get(chat);
     if (!bucket) {
       bucket = new Map();
       this.recent.set(chat, bucket);
     }
     for (const [key, at] of bucket) {
-      if (now - at > REPOST_TTL_MS) bucket.delete(key);
+      if (now - at > ttl) bucket.delete(key);
     }
     if (bucket.size > 500) {
       const oldest = [...bucket.entries()].sort((a, b) => a[1] - b[1]);
@@ -89,16 +95,23 @@ class NewsFeature {
       '!news manga          - berita manga/manhwa',
       '*!cosplay <link IG>* - ambil semua foto dari satu post Instagram',
       '',
+      '*Kelola cosplay (owner):*',
+      '!cosplay add <link>  - simpan post untuk auto-post channel',
+      '!cosplay del <link>  - hapus dari daftar',
+      '!cosplay list        - lihat daftar & status',
+      '!cosplay on|off      - aktifkan/nonaktifkan auto-post',
+      '!cosplay every 4     - selipkan cosplay tiap N post',
+      '',
       'Contoh:',
       '!cosplay https://www.instagram.com/p/DePI-QHlEhR/',
       '!news gacha',
     ].join('\n');
   }
 
-  async handle(sock, m, cmd, rest) {
+  async handle(sock, m, cmd, rest, isOwner = false) {
     const name = String(cmd || '').toLowerCase();
     try {
-      if (name === 'cosplay') return await this.handleCosplay(m, rest);
+      if (name === 'cosplay') return await this.handleCosplay(m, rest, isOwner);
       return await this.handleNews(m, name, rest);
     } catch (err) {
       const msg = err && err.message ? err.message : String(err);
@@ -147,7 +160,25 @@ class NewsFeature {
     return true;
   }
 
-  async handleCosplay(m, rest) {
+  async handleCosplay(m, rest, isOwner = false) {
+    const text = String(rest || '').trim();
+    const parts = text.split(/\s+/).filter(Boolean);
+    const sub = (parts[0] || '').toLowerCase();
+    const configSubs = [
+      'add', 'tambah', 'simpan',
+      'del', 'remove', 'hapus',
+      'list', 'daftar',
+      'on', 'off', 'aktif', 'mati',
+      'every', 'interval',
+    ];
+    if (configSubs.includes(sub)) {
+      if (!isOwner) {
+        await this.reply(m, '⚙️ Pengaturan cosplay hanya bisa diubah owner.');
+        return true;
+      }
+      return this.handleCosplayConfig(m, sub, parts.slice(1));
+    }
+
     const { url, meta } = instagram.parseArgs(rest);
     if (!url) {
       await this.reply(m, this.helpMessage());
@@ -184,6 +215,82 @@ class NewsFeature {
 
     log.info(
       `[COSPLAY] ${post.username || post.author || 'post'} -> ${sent.length} foto (${post.character} / ${post.anime})`
+    );
+    return true;
+  }
+
+  async handleCosplayConfig(m, sub, args) {
+    if (sub === 'list' || sub === 'daftar') {
+      const posts = settings.describe('COSPLAY_POSTS');
+      const rss = settings.describe('COSPLAY_RSS');
+      const enabled = settings.describe('COSPLAY_ENABLED');
+      const every = settings.describe('ANIME_CHANNEL_COSPLAY_EVERY');
+      const lines = [
+        '*Pengaturan Cosplay*',
+        `Auto-post : ${enabled.text}`,
+        `Tiap      : ${every.text} post channel`,
+        '',
+        `*COSPLAY_POSTS* (${posts.value.length})`,
+        ...(posts.value.length ? posts.value.map((u) => `• ${u}`) : ['• (kosong)']),
+        '',
+        `*COSPLAY_RSS* (${rss.value.length})`,
+        ...(rss.value.length ? rss.value.map((u) => `• ${u}`) : ['• (kosong)']),
+        '',
+        '!cosplay add <link IG>',
+        '!cosplay del <link IG>',
+        '!cosplay on|off',
+        '!cosplay every 4',
+      ];
+      await this.reply(m, lines.join('\n'));
+      return true;
+    }
+
+    if (['on', 'off', 'aktif', 'mati'].includes(sub)) {
+      const res = settings.set('COSPLAY_ENABLED', ['on', 'aktif'].includes(sub) ? 'on' : 'off');
+      await this.reply(
+        m,
+        res.ok
+          ? `✅ Auto-post cosplay: *${settings.describe('COSPLAY_ENABLED').text}*`
+          : `❌ ${res.error}`
+      );
+      return true;
+    }
+
+    if (sub === 'every' || sub === 'interval') {
+      const res = settings.set('ANIME_CHANNEL_COSPLAY_EVERY', args[0] || '');
+      await this.reply(
+        m,
+        res.ok
+          ? `✅ Cosplay diselipkan tiap *${settings.describe('ANIME_CHANNEL_COSPLAY_EVERY').text}* post channel.`
+          : `❌ ${res.error}`
+      );
+      return true;
+    }
+
+    if (sub === 'del' || sub === 'remove' || sub === 'hapus') {
+      const value = args.join(' ');
+      const res = settings.remove('COSPLAY_POSTS', value);
+      await this.reply(
+        m,
+        res.ok
+          ? res.unchanged
+            ? 'ℹ️ Link itu tidak ada di COSPLAY_POSTS.'
+            : `🗑️ Dihapus. Sisa ${settings.describe('COSPLAY_POSTS').value.length} post cosplay.`
+          : `❌ ${res.error}`
+      );
+      return true;
+    }
+
+    // add
+    const value = args.join(' ');
+    const res = settings.add('COSPLAY_POSTS', value);
+    await this.reply(
+      m,
+      res.ok
+        ? res.unchanged
+          ? 'ℹ️ Link itu sudah ada di COSPLAY_POSTS.'
+          : `✅ Ditambahkan. Total ${settings.describe('COSPLAY_POSTS').value.length} post cosplay.`
+        : `❌ ${res.error}\nContoh: !cosplay add https://www.instagram.com/p/xxxx/`
     );
     return true;
   }

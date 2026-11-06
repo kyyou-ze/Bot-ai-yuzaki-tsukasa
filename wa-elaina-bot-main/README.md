@@ -23,6 +23,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Auto-post Anime, Berita, Cosplay & Info Jejepangan ke Channel** — Bot otomatis mencari info anime terbaru dari **AniList, Kitsu, AnimeKita, dan MyAnimeList (Jikan)**, berita bergambar dari RSS otaku, serta cosplay Instagram dari `COSPLAY_POSTS`/`COSPLAY_RSS`, lalu memposting ke channel WhatsApp (default `NimaCoRe - Latest Info`) lengkap dengan cover, genre, skor, dan link. Riwayat dedupe disimpan permanen, info budaya/fakta Jejepangan diselipkan tiap beberapa post, dan berita gacha diprioritaskan. Cek/tes manual: `!animechannel status`, `!animechannel test`, `!animechannel news`, `!animechannel cosplay`, `!animechannel info`, `!animechannel check <judul>` (owner/admin grup).
 - **Peraturan/Moderasi** — `!peraturan on|off|sync|status|rules|clear @user`. Bot menilai pesan grup dengan Gemini moderation, memberi warn (max 5), bisa mengeluarkan otomatis. Moderasi bawaan juga punya antilink + allowlist domain, antispam, mute sebelum kick, reset warn, log moderasi, dan jadwal buka/tutup (termasuk mode akhir pekan).
 - **Health & Rate Limit** — `!health` menampilkan status WhatsApp, uptime, RAM, cache berita, dan antrean unduhan. Command berat (`!news`, `!cosplay`, unduh episode, post channel) dibatasi agar tidak dispam.
+- **Pengaturan lewat Chat** — Owner bisa mengisi/mengubah setting penting langsung dari WhatsApp dengan `!config` atau `!set`, tanpa edit `.env` dan tanpa restart. Cocok untuk menambah link cosplay, ganti channel, atur sumber berita, batas warn, rate limit, dan lain-lain.
 - **TagAll**, **RVO**, **Welcome**, **Owner features**.
 - **HTTP API** — `GET /`, `GET /healthz`, `GET /help`, `POST/GET /send` dengan `X-API-Key` + rate limit.
 
@@ -61,6 +62,7 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `SESSION_DIR` | `./session` | Folder auth Baileys (bisa jadi `*_auth` jika diisi nama file) |
 | `PAIRING_NUMBER` | - | Nomor WhatsApp bot untuk pairing code, mis. `6281234567890` |
 | `STATE_DB` | `./tsukasa_state.json` | State JSON (persona/pro/warn/peraturan) |
+| `SETTINGS_DB` | `./database/settings.json` | Override pengaturan yang diisi lewat chat (`!config`) |
 | `PORT` / `SERVER_PORT` | `7860` | Port HTTP API. Di Pterodactyl, `SERVER_PORT` otomatis dipakai |
 | `HOST` | `0.0.0.0` | Host bind HTTP API |
 | `SEND_API_KEY` | - | API key untuk `/send` |
@@ -224,7 +226,70 @@ Template info ada di `src/animeinfo.js` dan dipakai oleh auto-post channel maupu
 !animechannel check <judul> # cek apakah judul sudah pernah diposting
 !info <topik>               # info apa saja (anime, film, Jepang, fakta absurd, dll)
 !health                     # status koneksi, uptime, RAM, cache, antrean unduhan
+!config                     # ringkasan semua pengaturan yang bisa diubah lewat chat
 ```
+
+## Pengaturan lewat Chat (owner)
+
+Semua setting penting bisa diisi dari WhatsApp. Nilai yang diubah lewat chat disimpan di `SETTINGS_DB` (default `database/settings.json`), menimpa `.env`, dan langsung berlaku tanpa restart.
+
+```text
+!config                          # ringkasan grup setting
+!config list                     # semua key + nilai + sumber (chat/env/default)
+!config list cosplay             # hanya grup tertentu
+!config get COSPLAY_POSTS        # lihat satu setting
+!config set KEY NILAI            # ubah nilai
+!config add KEY NILAI            # tambah item ke daftar
+!config del KEY NILAI            # hapus item dari daftar
+!config reset KEY                # kembali ke nilai .env/default
+!config help                     # contoh lengkap
+```
+
+Bentuk singkat `!set KEY NILAI` sama dengan `!config set KEY NILAI`.
+
+Contoh yang sering dipakai:
+
+```text
+# Cosplay
+!config add COSPLAY_POSTS https://www.instagram.com/p/DePI-QHlEhR/
+!config del COSPLAY_POSTS https://www.instagram.com/p/DePI-QHlEhR/
+!config set COSPLAY_ENABLED on
+!config set ANIME_CHANNEL_COSPLAY_EVERY 4
+
+# Berita
+!config set NEWS_ENABLED on
+!config add NEWS_SOURCES gematsu
+!config del NEWS_SOURCES siliconera
+!config add NEWS_X_RSS https://rss.app/feeds/xxxx.xml
+!config set NEWS_ITEMS 3
+!config set NEWS_GACHA_EVERY 2
+
+# Channel tujuan
+!config set ANIME_CHANNEL_INVITE https://whatsapp.com/channel/xxxx
+!config set ANIME_CHANNEL_JID 1234567890@newsletter
+!config set ANIME_CHANNEL_INTERVAL_MIN 180
+!config set ANIME_CHANNEL_MAX_PER_DAY 8
+
+# Moderasi & rate limit
+!config set MOD_WARN_LIMIT 5
+!config set MOD_MUTE_MINUTES 10
+!config set MOD_LOG_JID 6281234567890
+!config set RATE_NEWS_SEC 15
+!config set RATE_DOWNLOAD_SEC 30
+
+# Unduhan & detector
+!config set ANIME_DL_CONCURRENCY 1
+!config set ANIME_EP_MAX_MB 190
+!config set TIKTOK_MONITOR_ENABLED on
+!config set TIKTOK_CHECK_MIN 3
+```
+
+Grup setting yang tersedia: `cosplay`, `news`, `channel`, `moderation`, `rate`, `anime`, `tiktok`. Gunakan `!config list` untuk melihat key lengkapnya.
+
+Catatan:
+- Perintah ini **khusus owner**. Admin grup tetap memakai perintah grup seperti `!antilink`, `!antispam`, `!jadwal`, `!mute`, dan `!resetwarn`.
+- Nilai dari chat disimpan terpisah dari `.env`. Jika ingin kembali ke isi `.env`, gunakan `!config reset KEY`.
+- Mengubah `ANIME_CHANNEL_ENABLED`, `ANIME_CHANNEL_INTERVAL_MIN`, `ANIME_CHANNEL_JID`, `TIKTOK_MONITOR_ENABLED`, dan `TIKTOK_CHECK_MIN` langsung diterapkan ke scheduler yang sedang berjalan.
 
 ## Berita Anime, Gacha & Carousel Instagram
 
@@ -264,6 +329,16 @@ ANIME_CHANNEL_COSPLAY_EVERY=4
 ```
 
 Bot akan memilih post yang belum pernah dikirim, mengambil **semua foto carousel**, lalu mengirimkannya ke channel dengan caption format yang sama seperti `!cosplay`. Paksa manual dengan `!animechannel cosplay`. Gambar divalidasi magic-byte dan otomatis dikompres bila `sharp` tersedia.
+
+Daftar cosplay juga bisa diisi langsung dari chat (owner), tanpa edit `.env`:
+
+```text
+!cosplay add https://www.instagram.com/p/xxxx/
+!cosplay del https://www.instagram.com/p/xxxx/
+!cosplay list
+!cosplay on|off
+!cosplay every 4
+```
 
 ## Unduh Episode Anime
 

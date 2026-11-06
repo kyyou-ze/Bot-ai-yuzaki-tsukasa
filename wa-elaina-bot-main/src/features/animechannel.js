@@ -146,6 +146,17 @@ class AnimeChannelPoster {
     if (this.timer.unref) this.timer.unref();
   }
 
+  // Dipakai saat interval diubah lewat !config agar jadwal berikutnya
+  // langsung memakai nilai baru tanpa perlu restart bot.
+  reschedule() {
+    if (this.stopped) return;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this._schedule();
+  }
+
   async _runOnce() {
     if (this.running || this.stopped) return;
     this.running = true;

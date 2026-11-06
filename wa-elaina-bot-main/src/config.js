@@ -3,6 +3,7 @@
 const log = require('./logger');
 const path = require('path');
 require('dotenv').config();
+const settings = require('./settings');
 
 function getenv(key, def) {
   const v = process.env[key];
@@ -38,6 +39,10 @@ function intEnv(value, def) {
 }
 
 function load() {
+  // Terapkan override dari chat (!config) sebelum config dibaca, supaya
+  // pengaturan yang disimpan lewat WhatsApp tetap berlaku setelah restart.
+  settings.load();
+
   const sessionRaw = getenv('SESSION_DIR', getenv('SESSION_PATH', './session'));
   // Baileys menyimpan sesi sebagai folder JSON. Jika user mengisi nama file
   // (mis. session.db), ubah menjadi folder dengan nama yang jelas.
@@ -197,6 +202,9 @@ function load() {
     log.warn('[WARN] MODE=PROD tapi SEND_API_KEY kosong. /send akan terbuka tanpa auth!');
   }
 
+  // Simpan referensi cfg agar perubahan lewat chat langsung diterapkan ke
+  // objek yang sedang dipakai fitur lain (tanpa restart).
+  settings.bindConfig(cfg);
   return cfg;
 }
 

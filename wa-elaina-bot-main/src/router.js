@@ -11,6 +11,7 @@ const { PeraturanFeature } = require('./features/peraturan');
 const { GroupTools } = require('./features/grouptools');
 const { GroupGuard } = require('./features/groupguard');
 const { NewsFeature } = require('./features/news');
+const { ConfigFeature } = require('./features/configcmd');
 const { VerifFeature } = require('./features/verif');
 const { TikTokAdminFeature } = require('./features/tiktokadmin');
 const { VerifStore } = require('./verifstore');
@@ -168,6 +169,7 @@ class Router {
     this.anime = new AnimeFeature(this.reTrig);
     this.info = new InfoFeature(this.reTrig);
     this.news = new NewsFeature(cfg);
+    this.configCmd = new ConfigFeature(cfg);
     this.peraturan = new PeraturanFeature(store);
     this.guard = groupGuard || new GroupGuard(cfg, store);
     this.heavyLimiter = new RateLimiter({ maxEntries: 2000 });
@@ -372,6 +374,7 @@ class Router {
           '- !info <topik> : info apa saja (anime/film/Jepang/fakta absurd) dalam Bahasa Indonesia',
           '- !news [topik] : berita anime/manga/gacha/cosplay terbaru + gambar',
           '- !cosplay <link IG> : ambil semua foto dari satu post Instagram',
+          '- !config / !set <KEY> <nilai> : isi pengaturan bot lewat chat (owner)',
           '- !health : status koneksi, uptime, RAM, cache, dan antrean unduhan',
           '- !jadwal buka 06:00 / !jadwal tutup 22:00 : buka-tutup grup otomatis (admin)',
           '- !jadwal weekend on|off / !jadwal test : jadwal akhir pekan & uji (admin)',
@@ -413,6 +416,10 @@ class Router {
         return;
       }
 
+      if (ConfigFeature.isCommand(bang.cmd)) {
+        if (await this.configCmd.handle(this.sock, m, bang.rest, isOwner)) return;
+      }
+
       if (bang.cmd === 'ingatkan' || bang.cmd === 'remind' || bang.cmd === 'pengingat') {
         if (await this.groupTools.handleReminder(this.sock, m, bang.rest)) return;
       }
@@ -451,16 +458,28 @@ class Router {
 
       if (NewsFeature.isCommand(bang.cmd)) {
         const key = bang.cmd === 'cosplay' ? 'cosplay' : 'news';
-        const gate = this.heavyGate(
-          chat,
-          `news-${key}`,
-          this.cfg.rateLimit && this.cfg.rateLimit.newsSec
-        );
-        if (!gate.allowed) {
-          await this.denyHeavy(chat, gate, m, bang.cmd);
-          return;
+        const firstArg = String(bang.rest || '').trim().split(/\s+/)[0].toLowerCase();
+        const cosplayConfig =
+          bang.cmd === 'cosplay' &&
+          [
+            'add', 'tambah', 'simpan',
+            'del', 'remove', 'hapus',
+            'list', 'daftar',
+            'on', 'off', 'aktif', 'mati',
+            'every', 'interval',
+          ].includes(firstArg);
+        if (!cosplayConfig) {
+          const gate = this.heavyGate(
+            chat,
+            `news-${key}`,
+            this.cfg.rateLimit && this.cfg.rateLimit.newsSec
+          );
+          if (!gate.allowed) {
+            await this.denyHeavy(chat, gate, m, bang.cmd);
+            return;
+          }
         }
-        if (await this.news.handle(this.sock, m, bang.cmd, bang.rest)) return;
+        if (await this.news.handle(this.sock, m, bang.cmd, bang.rest, isOwner)) return;
       }
 
       if (bang.cmd === 'animechannel' || bang.cmd === 'anime-channel') {

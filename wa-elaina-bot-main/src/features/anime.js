@@ -467,7 +467,12 @@ class AnimeFeature {
     this.downloads = new Map();
     this.downloadQueue = [];
     this.activeDownloads = 0;
-    this.maxDownloads = Math.max(1, Number(process.env.ANIME_DL_CONCURRENCY) || 1);
+  }
+
+  // Dibaca ulang tiap kali supaya perubahan !config ANIME_DL_CONCURRENCY
+  // langsung berlaku tanpa restart.
+  get maxDownloads() {
+    return Math.max(1, Number(process.env.ANIME_DL_CONCURRENCY) || 1);
   }
 
   downloadStatus() {

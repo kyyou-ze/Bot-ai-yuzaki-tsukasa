@@ -38,10 +38,15 @@ const SOURCES = {
 const DEFAULT_SOURCES = ['ann', 'animecorner', 'gematsu', 'siliconera'];
 
 // Cache RSS singkat supaya `!news` dan auto-post channel tidak menembak
-// semua feed berkali-kali dalam satu menit.
-const CACHE_TTL_MS =
-  Math.max(0, Number(process.env.NEWS_CACHE_MIN) || 10) * 60 * 1000;
+// semua feed berkali-kali dalam satu menit. Dibaca ulang tiap kali agar
+// perubahan lewat !config langsung berlaku.
 const feedCache = new Map();
+
+function cacheTtlMs() {
+  const raw = process.env.NEWS_CACHE_MIN;
+  const minutes = raw === undefined ? 10 : Number(raw);
+  return Math.max(0, Number.isFinite(minutes) ? minutes : 10) * 60 * 1000;
+}
 
 function cacheKey(sources, options = {}) {
   return JSON.stringify({
@@ -52,7 +57,7 @@ function cacheKey(sources, options = {}) {
 }
 
 function cacheStats() {
-  return { entries: feedCache.size, ttlMin: Math.round(CACHE_TTL_MS / 60000) };
+  return { entries: feedCache.size, ttlMin: Math.round(cacheTtlMs() / 60000) };
 }
 
 function clearCache() {
@@ -279,10 +284,11 @@ async function fetchAll(sources, options = {}) {
   const active = list.length ? list : DEFAULT_SOURCES;
   const perSource = Math.max(1, Math.min(20, Number(options.perSource) || 6));
   const key = cacheKey(active, { perSource, extraRss: options.extraRss });
+  const ttl = cacheTtlMs();
 
-  if (CACHE_TTL_MS > 0) {
+  if (ttl > 0) {
     const hit = feedCache.get(key);
-    if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
+    if (hit && Date.now() - hit.at < ttl) {
       return { items: hit.items.slice(), errors: hit.errors.slice(), cached: true };
     }
   }
@@ -317,7 +323,7 @@ async function fetchAll(sources, options = {}) {
     deduped.push(item);
   }
 
-  if (CACHE_TTL_MS > 0) {
+  if (ttl > 0) {
     feedCache.set(key, { at: Date.now(), items: deduped, errors });
     if (feedCache.size > 50) {
       const oldest = [...feedCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
