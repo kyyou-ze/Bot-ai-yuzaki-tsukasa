@@ -1,1 +1,0 @@
-# Bot-ai-yuzaki-tsukasa

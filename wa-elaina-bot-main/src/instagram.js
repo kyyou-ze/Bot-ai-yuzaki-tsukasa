@@ -1,6 +1,9 @@
 'use strict';
 
 const { fetchWithTimeout } = require('./util');
+const { downloadImage } = require('./imageutil');
+const llm = require('./llm');
+const log = require('./logger');
 
 // Jina Reader membuka halaman Instagram dari server mereka, jadi bot tidak
 // perlu login, cookie, atau API pihak ketiga yang rapuh. Hasilnya markdown
@@ -25,6 +28,11 @@ const GENERIC_TAGS = new Set([
 // sini, nama karakter diambil dari hashtag pertama yang bukan nama game.
 const CHARACTER_MAP = {
   sandrone: { character: 'Sandrone', anime: 'Genshin Impact' },
+  shisui: { character: 'Shisui', anime: 'The Apothecary Diaries' },
+  loulan: { character: 'Loulan', anime: 'The Apothecary Diaries' },
+  maomao: { character: 'Maomao', anime: 'The Apothecary Diaries' },
+  jinshi: { character: 'Jinshi', anime: 'The Apothecary Diaries' },
+  aemeath: { character: 'Aemeath', anime: 'Wuthering Waves' },
   furina: { character: 'Furina', anime: 'Genshin Impact' },
   nahida: { character: 'Nahida', anime: 'Genshin Impact' },
   raiden: { character: 'Raiden Shogun', anime: 'Genshin Impact' },
@@ -73,13 +81,41 @@ const GAME_HINTS = [
   { keys: ['bluearchive', 'ブルアカ', 'bluearchivejp'], name: 'Blue Archive' },
   { keys: ['arknights', '明日方舟'], name: 'Arknights' },
   { keys: ['fgo', 'fategrandorder', 'fategrandorderjp'], name: 'Fate/Grand Order' },
-  { keys: ['wutheringwaves', '鳴潮'], name: 'Wuthering Waves' },
+  { keys: ['wutheringwaves', 'wunderingwaves', '鳴潮'], name: 'Wuthering Waves' },
   { keys: ['umamusume', 'ウマ娘'], name: 'Uma Musume' },
   { keys: ['projectsekai', 'プロセカ'], name: 'Project Sekai' },
   { keys: ['bangdream', 'バンドリ'], name: 'BanG Dream!' },
   { keys: ['loveanddeepspace', '恋と深空'], name: 'Love and Deepspace' },
   { keys: ['tearsofthemis', '未定事件簿'], name: 'Tears of Themis' },
 ];
+
+// Judul franchise sering muncul sebagai hashtag. Jangan pernah dipakai sebagai
+// nama karakter (contoh: #theapothecarydiaries bukan nama karakter).
+const FRANCHISE_HINTS = [
+  ...GAME_HINTS,
+  { keys: ['theapothecarydiaries', 'apothecarydiaries', '薬屋のひとりごと'], name: 'The Apothecary Diaries' },
+  { keys: ['fatalframe', 'crimsonbutterfly', '零'], name: 'Fatal Frame' },
+  { keys: ['demonslayer', 'kimetsunoyaiba', '鬼滅の刃'], name: 'Demon Slayer' },
+  { keys: ['jujutsukaisen', '呪術廻戦'], name: 'Jujutsu Kaisen' },
+  { keys: ['chainsawman', 'チェンソーマン'], name: 'Chainsaw Man' },
+  { keys: ['spyfamily', 'spyxfamily', 'スパイファミリー'], name: 'Spy x Family' },
+  { keys: ['rezero', 'rezerokara', 'リゼロ'], name: 'Re:Zero' },
+  { keys: ['swordartonline', 'sao', 'ソードアートオンライン'], name: 'Sword Art Online' },
+  { keys: ['naruto', 'narutoshippuden'], name: 'Naruto' },
+  { keys: ['onepiece', 'ワンピース'], name: 'One Piece' },
+  { keys: ['bokunoheroacademia', 'myheroacademia', 'heroaca'], name: 'My Hero Academia' },
+  { keys: ['attackontitan', 'shingekinokyojin', '進撃の巨人'], name: 'Attack on Titan' },
+  { keys: ['mydressupdarling', 'sonobisquedoll', '着せ替え人形'], name: 'My Dress-Up Darling' },
+  { keys: ['darlingsinfranxx', 'darlinginthefranxx'], name: 'Darling in the Franxx' },
+  { keys: ['lycorisrecoil', 'リコリスリコイル'], name: 'Lycoris Recoil' },
+];
+
+const FRANCHISE_MAP = {};
+for (const hint of FRANCHISE_HINTS) {
+  for (const key of hint.keys) FRANCHISE_MAP[normalizeTag(key)] = hint.name;
+}
+
+const COSPLAY_SUFFIX_RE = /(?:cosplay|cosplayer|cosu)+$/i;
 
 function decodeEntities(input) {
   return String(input || '')
@@ -155,7 +191,11 @@ function imageId(url) {
 
 function parseImages(markdown) {
   const md = String(markdown || '');
-  const main = md.split(/\nMore posts from\s+/i)[0] || md;
+  // Jangan ikut mengambil foto dari komentar/related posts/rekomendasi akun.
+  const cutoff = md.search(
+    /\n(?:More posts from|You might like|Related posts|Add a comment|View all comments)\b/i
+  );
+  const main = cutoff >= 0 ? md.slice(0, cutoff) : md;
   const out = [];
   const seen = new Set();
 
@@ -246,38 +286,96 @@ function titleCase(value) {
     .trim();
 }
 
+function hasWord(text, word) {
+  const needle = String(word || '').trim().toLowerCase();
+  if (!needle) return false;
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, 'i').test(
+    String(text || '')
+  );
+}
+
+function franchiseOfTag(tag) {
+  let base = normalizeTag(tag).replace(COSPLAY_SUFFIX_RE, '');
+  if (!base) return '';
+  if (FRANCHISE_MAP[base]) return FRANCHISE_MAP[base];
+  for (const [key, name] of Object.entries(FRANCHISE_MAP)) {
+    // Key pendek (zzz, sao, hsr) hanya cocok persis supaya tidak salah tangkap.
+    if (key.length >= 5 && base.includes(key)) return name;
+  }
+  return '';
+}
+
+// Nama karakter paling akurat biasanya ada di hashtag berakhiran "cosplay":
+// #shisuicosplay -> Shisui, #aemeathcosplay -> Aemeath.
+function characterFromTag(tag) {
+  const normalized = normalizeTag(tag);
+  const base = normalized.replace(COSPLAY_SUFFIX_RE, '');
+  if (!base || base === normalized) return '';
+  if (GENERIC_TAGS.has(base) || franchiseOfTag(base)) return '';
+  if (!/[a-z\u3040-\u30ff\u4e00-\u9fff]/i.test(base)) return '';
+  return CHARACTER_MAP[base] ? CHARACTER_MAP[base].character : titleCase(base);
+}
+
 function inferMeta(tags, caption, overrides = {}) {
   const list = (Array.isArray(tags) ? tags : []).map(normalizeTag).filter(Boolean);
-  const lowCaption = String(caption || '').toLowerCase();
 
   let anime = String(overrides.anime || '').trim();
   let character = String(overrides.character || '').trim();
+  const characterTags = [];
 
-  for (const [key, value] of Object.entries(CHARACTER_MAP)) {
-    if (list.includes(key) || lowCaption.includes(key)) {
-      if (!character) character = value.character;
+  for (const tag of list) {
+    const name = characterFromTag(tag);
+    if (!name) continue;
+    if (!characterTags.includes(name)) characterTags.push(name);
+    const base = tag.replace(COSPLAY_SUFFIX_RE, '');
+    const mapped = CHARACTER_MAP[base];
+    if (mapped && !anime) anime = mapped.anime;
+  }
+
+  // Cocokkan nama karakter dari hashtag/caption dengan batas kata. Dulu
+  // "rem" ikut cocok di "remake" sehingga nama karakter jadi ngawur.
+  if (!character) {
+    const entries = Object.entries(CHARACTER_MAP).sort((a, b) => b[0].length - a[0].length);
+    for (const [key, value] of entries) {
+      if (!(list.includes(key) || hasWord(caption, key))) continue;
+      character = value.character;
       if (!anime) anime = value.anime;
       break;
     }
   }
 
   if (!anime) {
+    for (const tag of list) {
+      const franchise = franchiseOfTag(tag);
+      if (franchise) {
+        anime = franchise;
+        break;
+      }
+    }
+  }
+
+  if (!anime) {
     for (const game of GAME_HINTS) {
-      if (game.keys.some((k) => list.includes(normalizeTag(k)) || lowCaption.includes(k.toLowerCase()))) {
+      if (game.keys.some((k) => list.includes(normalizeTag(k)) || hasWord(caption, k))) {
         anime = game.name;
         break;
       }
     }
   }
 
-  const generic = new Set(GENERIC_TAGS);
-  const gameKeys = new Set(GAME_HINTS.flatMap((g) => g.keys.map(normalizeTag)));
+  if (!character && characterTags.length) {
+    character = characterTags.slice(0, 3).join(' & ');
+  }
 
   if (!character) {
+    const generic = new Set(GENERIC_TAGS);
     const candidate = list.find((tag) => {
-      if (generic.has(tag) || gameKeys.has(tag)) return false;
+      if (generic.has(tag) || franchiseOfTag(tag)) return false;
+      if (COSPLAY_SUFFIX_RE.test(tag)) return false;
+      if (!/[a-z\u3040-\u30ff\u4e00-\u9fff]/i.test(tag)) return false;
       if (!/^[a-z0-9\u3040-\u30ff\u4e00-\u9fff]{3,}$/.test(tag)) return false;
-      return !CHARACTER_MAP[tag] || CHARACTER_MAP[tag].character !== character;
+      return true;
     });
     if (candidate) {
       character = CHARACTER_MAP[candidate]
@@ -315,6 +413,72 @@ function parsePost(markdown, url) {
   };
 }
 
+function needsAiMeta(post) {
+  const character = String(post.character || '').trim().toLowerCase();
+  const anime = String(post.anime || '').trim().toLowerCase();
+  return (
+    !character ||
+    !anime ||
+    character === 'cosplay' ||
+    anime === 'cosplay' ||
+    character === anime
+  );
+}
+
+function parseLooseJson(text) {
+  let source = String(text || '').trim();
+  const fenced = source.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) source = fenced[1].trim();
+  const start = source.indexOf('{');
+  const end = source.lastIndexOf('}');
+  if (start < 0 || end < start) return null;
+  try {
+    return JSON.parse(source.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+// Kalau hashtag/caption tidak cukup jelas, kirim satu foto ke Gemini Vision
+// untuk menebak nama karakter + judul anime/game.
+async function identifyWithAI(post) {
+  if (String(process.env.COSPLAY_AI_IDENTIFY || '').toLowerCase() === 'off') return post;
+  if (!post.images.length) return post;
+  if (typeof llm.getKeyList !== 'function' || llm.getKeyList().length === 0) return post;
+
+  try {
+    const got = await downloadImage(post.images[0], {
+      maxBytes: 8 * 1024 * 1024,
+      timeoutMs: 20000,
+      maxWidth: 1280,
+      quality: 82,
+      compressAbove: 400 * 1024,
+    });
+    const tags = (post.tags || []).slice(0, 12).join(', ');
+    const caption = String(post.caption || '').slice(0, 600);
+    const system =
+      'Kamu ahli identifikasi cosplay. Tentukan nama karakter yang di-cosplay dan judul anime/game asalnya. ' +
+      'Balas HANYA JSON valid: {"character":"...","anime":"..."}. Jangan mengarang; jika tidak yakin isi "Cosplay".';
+    const prompt = `Identifikasi foto cosplay ini.\nCaption: ${caption}\nHashtag: ${tags}\n\nBalas JSON saja.`;
+    const answer = await llm.askVision(system, prompt, got.data, got.mime);
+    const data = parseLooseJson(answer);
+    if (!data) {
+      log.warn('[COSPLAY] AI tidak memberi JSON valid:', String(answer || '').slice(0, 120));
+      return post;
+    }
+
+    const character = String(data.character || '').trim();
+    const anime = String(data.anime || '').trim();
+    const invalid = (v) => !v || /^(cosplay|unknown|tidak\s*yakin)$/i.test(v);
+    if (!invalid(character)) post.character = character;
+    if (!invalid(anime)) post.anime = anime;
+    log.info(`[COSPLAY] AI identifikasi: ${post.character} / ${post.anime}`);
+  } catch (err) {
+    log.warn('[COSPLAY] Identifikasi AI gagal:', err.message);
+  }
+  return post;
+}
+
 async function fetchPost(input, options = {}) {
   const url = normalizePostUrl(input);
   if (!url) throw new Error('Link Instagram tidak valid. Contoh: !cosplay https://www.instagram.com/p/xxxx/');
@@ -326,21 +490,19 @@ async function fetchPost(input, options = {}) {
   if (JINA_KEY) headers.Authorization = `Bearer ${JINA_KEY}`;
 
   const timeoutMs = Math.max(15000, Number(options.timeoutMs) || 45000);
-  // Instagram kadang hanya merender slide pertama. Coba beberapa varian URL
-  // lalu gabungkan gambarnya supaya carousel 2+ foto tetap lengkap.
-  const variants = [
-    `${url}?x-respond-with=markdown`,
-    `${url}?img_index=2`,
-    `${url}?img_index=1`,
-  ];
-
+  // Instagram hanya merender satu slide per URL. Jina membuka slide sesuai
+  // ?img_index=N, jadi probe semuanya sampai tidak ada foto baru. Cara lama
+  // cuma mencoba index 1 dan 2 sehingga carousel berisi 3+ foto terpotong.
   let best = null;
   let lastError = '';
-  for (let i = 0; i < variants.length; i++) {
-    if (best && best.images.length >= 2) break;
+  let prevSignature = '';
+  let emptyStreak = 0;
+  const maxProbes = MAX_IMAGES + 2;
+
+  for (let index = 1; index <= maxProbes; index++) {
     try {
       const res = await fetchWithTimeout(
-        `${JINA_BASE}${variants[i]}`,
+        `${JINA_BASE}${url}?img_index=${index}`,
         { headers, redirect: 'follow' },
         timeoutMs
       );
@@ -351,8 +513,11 @@ async function fetchPost(input, options = {}) {
       const post = parsePost(markdown, url);
       if (!post.images.length) {
         lastError = 'Tidak ada foto carousel yang bisa diambil.';
+        emptyStreak += 1;
+        if (emptyStreak >= 2) break;
         continue;
       }
+      emptyStreak = 0;
 
       if (!best) {
         best = post;
@@ -369,9 +534,17 @@ async function fetchPost(input, options = {}) {
         if (!best.username) best.username = post.username;
       }
 
-      if (best.images.length >= 2) break;
+      // Halaman index berisi slide saat ini + slide berikutnya. Kalau dua
+      // halaman berurutan punya daftar foto yang sama (dan bukan halaman
+      // pertama/kedua), berarti sudah sampai slide terakhir.
+      const signature = post.images.map(imageId).join('|');
+      if (best.images.length >= MAX_IMAGES) break;
+      if (index >= 3 && signature && signature === prevSignature) break;
+      prevSignature = signature;
     } catch (err) {
       lastError = err && err.message ? err.message : String(err);
+      emptyStreak += 1;
+      if (emptyStreak >= 2) break;
     }
   }
 
@@ -385,6 +558,7 @@ async function fetchPost(input, options = {}) {
   const meta = inferMeta(best.tags, best.caption);
   best.character = best.character || meta.character;
   best.anime = best.anime || meta.anime;
+  if (needsAiMeta(best)) await identifyWithAI(best);
   return best;
 }
 
