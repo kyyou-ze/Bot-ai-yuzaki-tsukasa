@@ -1,0 +1,79 @@
+name: Flatten Folder to Root
+
+# Memindahkan seluruh isi folder ke root repository.
+# Jika ditemukan nama file/folder yang sama,
+# file/folder lama akan diganti dengan yang baru.
+
+on:
+  workflow_dispatch:
+    inputs:
+      folder:
+        description: "Nama folder yang isinya mau dipindah ke root repo"
+        required: false
+        default: "VTuberApp"
+
+jobs:
+  flatten:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Flatten folder dengan replace
+        env:
+          FOLDER: ${{ github.event.inputs.folder }}
+        run: |
+          set -e
+
+          if [ ! -d "$FOLDER" ]; then
+            echo "Folder '$FOLDER' tidak ditemukan."
+            exit 1
+          fi
+
+          # Mencegah folder root dipindahkan ke dirinya sendiri
+          if [ "$FOLDER" = "." ] || [ "$FOLDER" = "/" ]; then
+            echo "Nama folder tidak valid."
+            exit 1
+          fi
+
+          echo "Memulai proses flatten..."
+          echo "Sumber: $FOLDER/"
+          echo "Tujuan: root repository"
+
+          shopt -s dotglob nullglob
+
+          for item in "$FOLDER"/*; do
+            name="$(basename "$item")"
+
+            echo "Memproses: $name"
+
+            # Jika tujuan sudah ada, hapus terlebih dahulu
+            if [ -e "./$name" ] || [ -L "./$name" ]; then
+              echo "Menghapus versi lama: $name"
+              rm -rf -- "./$name"
+            fi
+
+            # Pindahkan versi baru ke root
+            mv -- "$item" ./
+
+            echo "Berhasil mengganti: $name"
+          done
+
+          shopt -u dotglob nullglob
+
+          # Hapus folder sumber
+          rm -rf -- "$FOLDER"
+
+          echo "================================"
+          echo "Flatten berhasil diselesaikan!"
+          echo "================================"
+
+      - name: Commit dan push hasil
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: flatten and replace folder contents"
+          file_pattern: "."
