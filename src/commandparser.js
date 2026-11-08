@@ -24,6 +24,7 @@ const KNOWN_COMMANDS = new Set([
   'tagall', 'rvo',
   'ba', 'pap', 's', 'sgif', 'stiker', 'sticker', 'brat',
   'srandom', 'spack', 'sadd', 'slist', 'sdel',
+  'toimg', 'ttp', 'attp', 'qc', 'wm', 'stickerinfo', 'smeta',
   'vn', 'tts', 'gambar', 'imggen', 'hijabin',
   'jadwal', 'jadwalgrup', 'antilink', 'antispam', 'moderasi',
   'resetwarn', 'mute', 'unmute',

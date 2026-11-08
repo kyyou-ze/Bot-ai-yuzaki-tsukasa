@@ -15,6 +15,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Hijabin** (`tsukasa hijabin` / reply gambar) — Tambahkan hijab (JPEG/PNG).
 - **Brat & Sticker** — `tsukasa brat <teks>` untuk sticker gaya brat. Sticker biasa dari gambar/URL/video (animated memakai ffmpeg).
 - **Sticker Pack & Auto Sticker Reply** — Bot punya pack sticker per mood (`lucu`, `sedih`, `marah`, `love`, `ngantuk`, `hai`, `kaget`). Kalau user mengirim sticker, bot kadang membalas sticker random sambil meng-quote pesan tersebut (peluang & cooldown bisa diatur). Kelola pack dari WhatsApp: `.sadd <mood>` (reply sticker), `.srandom <mood>`, `.s lucu`, `.slist`, `.sdel <mood> <nomor>`.
+- **Sticker Utility** — `.toimg` (sticker → PNG), `.ttp <teks>` (sticker teks), `.attp <teks>` (sticker teks animasi), `.qc` (quote card dari pesan yang di-reply), `.wm <teks>` (watermark sticker), dan `.stickerinfo` (info format/ukuran/frame).
 - **Blue Archive & Pap** — `ba` / `!ba` atau kata kunci terkait, `!pap` / `pap`.
 - **TikTok (multi-API + fallback)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Sumber TikWM otomatis dialihkan ke TikHub/tiktok-api23/Ensig bila kena WAF. Batas ukuran bisa dikonfigurasi.
 - **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 3 menit, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Akun bisa dikelola dari WhatsApp (`/addakun`, `/delakun`, `/listakun`, `/detector`). Command verif: `/verif`, `/listverif`, `/unverif`, `/siapaup`, `/cekup`, `/history` (juga bisa `Tsukasa ...` atau `.verif`).
@@ -437,7 +438,7 @@ Daftar cosplay juga bisa diisi langsung dari chat (owner), tanpa edit `.env`:
 
 Unduhan masuk antrean dengan paralel default 1 (`ANIME_DL_CONCURRENCY`) dan permintaan episode yang sama tidak diduplikasi. Jika semua mirror gagal, bot mengirim alasan kegagalan beserta link yang bisa dibuka manual.
 
-## Sticker Pack & Auto Sticker Reply
+## Sticker Pack & Sticker Utility
 
 Bot menyimpan sticker di `STICKER_DIR` (default `assets/stickers`). Setiap subfolder adalah satu mood/pack:
 
@@ -458,6 +459,18 @@ Command dari WhatsApp:
 .srandom                # kirim sticker random dari pack mana pun
 .s lucu                 # alias cepat .srandom lucu
 .sdel lucu 2            # hapus sticker nomor 2 dari pack lucu
+```
+
+Utility sticker (bisa direct atau reply):
+
+```text
+.toimg                  # sticker jadi gambar PNG (animasi = frame pertama)
+.ttp Halo dunia         # sticker teks statis
+.attp Halo dunia        # sticker teks animasi
+.qc                     # quote card dari pesan yang di-reply
+.qc Teks bebas          # quote card dengan teks sendiri
+.wm @Tsukasa            # watermark sticker (reply sticker)
+.stickerinfo            # info format, ukuran, jumlah frame, size
 ```
 
 Saat user mengirim sticker, bot bisa otomatis membalas dengan sticker random sambil meng-quote sticker tersebut. Atur perilakunya di `.env`:

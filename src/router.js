@@ -4,6 +4,7 @@ const log = require('./logger');
 const { OwnerDetector, WelcomeHandler, TagAllHandler, RvoHandler } = require('./features/basic');
 const { CnFeature } = require('./features/cn');
 const { StickerReplyFeature } = require('./features/stickerreply');
+const { StickerUtilsFeature } = require('./features/stickerutils');
 const { StickerFeature, BratFeature } = require('./features/media');
 const { BaImageFeature, PapFeature } = require('./features/images');
 const { VisionFeature, VnFeature, TtsFeature, ImgGenFeature, HijabinFeature } = require('./features/ai');
@@ -167,6 +168,7 @@ class Router {
     this.rvo = new RvoHandler();
     this.sticker = new StickerFeature();
     this.stickerReply = new StickerReplyFeature(cfg);
+    this.stickerUtils = new StickerUtilsFeature(cfg);
     this.brat = new BratFeature(this.reTrig);
     this.cn = new CnFeature(cfg);
     this.ba = new BaImageFeature(cfg, this.reTrig);
@@ -468,6 +470,11 @@ class Router {
           '• .srandom <mood> / .s <mood> — sticker random dari pack',
           '• .sadd <mood> — simpan sticker (reply sticker) ke pack',
           '• .slist / .sdel <mood> <nomor> — kelola pack sticker',
+          '• .toimg — sticker jadi gambar PNG',
+          '• .ttp <teks> / .attp <teks> — sticker teks statis/animasi',
+          '• .qc — quote card dari pesan yang di-reply',
+          '• .wm <teks> — watermark sticker',
+          '• .stickerinfo / .smeta — info sticker',
           '• .rvo — buka media sekali lihat (reply)',
           '• .ba — gambar Blue Archive',
           '• .pap — kirim pap',
@@ -540,6 +547,12 @@ class Router {
 
       if (bang.cmd === 's' || StickerReplyFeature.isCommand(bang.cmd)) {
         if (await this.stickerReply.handleCommand(this.sock, m, content, bang.cmd, bang.rest)) {
+          return;
+        }
+      }
+
+      if (StickerUtilsFeature.isCommand(bang.cmd)) {
+        if (await this.stickerUtils.handle(this.sock, m, content, bang.cmd, bang.rest)) {
           return;
         }
       }
