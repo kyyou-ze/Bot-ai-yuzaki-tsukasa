@@ -180,7 +180,7 @@ function containsMinorCue(text) {
   return MINOR_CUE.test(String(text || ''));
 }
 
-async function askAsPersona(cfg, persona, pro, userText, senderJID, adult) {
+async function askAsPersona(cfg, persona, pro, userText, senderJID, adult, extraSystem) {
   const actualUserInput = memory.extractActualUserInput(userText);
 
   const name = memory.detectNameRequest(actualUserInput);
@@ -215,6 +215,11 @@ async function askAsPersona(cfg, persona, pro, userText, senderJID, adult) {
   if (userName) {
     sys += `\n\nINFO TAMBAHAN: Nama pengguna yang sedang berbicara denganmu adalah ${userName}. Gunakan nama ini secara natural dalam percakapan, terutama saat menyapa atau merespons.`;
   }
+
+  // Instruksi tambahan dari fitur (mis. daftar tool AI). Ditaruh paling akhir
+  // supaya tidak tertimpa persona/pro/adult.
+  const extra = String(extraSystem || '').trim();
+  if (extra) sys += `\n\n${extra}`;
 
   return (
     (await askText(sys, userText)) ||

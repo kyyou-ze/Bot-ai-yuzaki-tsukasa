@@ -238,6 +238,15 @@ async function sendSticker(jid, webpBuffer, quoted) {
   return sendMessage(jid, { sticker: webpBuffer }, quoted);
 }
 
+/**
+ * Beri reaksi emoji ke sebuah pesan. `messageKey` biasanya `m.key`.
+ */
+async function react(jid, messageKey, emoji) {
+  const text = String(emoji || '').trim();
+  if (!text || !messageKey) return null;
+  return sendMessage(jid, { react: { text, key: messageKey } });
+}
+
 function userJid(jid) {
   try {
     return getBaileysFn('jidNormalizedUser')(jid);
@@ -270,6 +279,7 @@ module.exports = {
   sendAudio,
   sendDocument,
   sendSticker,
+  react,
   userJid,
   destJid,
   isJidGroup: isJidGroupSafe,

@@ -93,6 +93,12 @@ function load() {
       intEnv(getenv('STICKER_REPLY_COOLDOWN_SEC', '90'), 90)
     ),
     stickerDir: path.resolve(getenv('STICKER_DIR', 'assets/stickers')),
+    // Tier 2: AI tool calling. Model boleh memilih aksi (sticker, reaksi,
+    // gambar, pengingat, cari web) lewat tag khusus yang diproses bot.
+    aiToolsEnabled: boolEnv(getenv('AI_TOOLS_ENABLED', 'true'), true),
+    aiToolsImage: boolEnv(getenv('AI_TOOLS_IMAGE', 'true'), true),
+    aiToolsSearch: boolEnv(getenv('AI_TOOLS_SEARCH', 'true'), true),
+    aiToolsMax: Math.max(1, Math.min(5, intEnv(getenv('AI_TOOLS_MAX_ACTIONS', '2'), 2))),
     ttMaxVideo: mustAtoi(getenv('TIKTOK_MAX_VIDEO_MB', '50'), 50) * 1024 * 1024,
     ttMaxImage: mustAtoi(getenv('TIKTOK_MAX_IMAGE_MB', '5'), 5) * 1024 * 1024,
     ttMaxDoc: mustAtoi(getenv('TIKTOK_MAX_DOC_MB', '80'), 80) * 1024 * 1024,

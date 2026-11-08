@@ -764,6 +764,50 @@ const DEFS = [
     },
   },
 
+  // --- AI tools (Tier 2) ---
+  {
+    key: 'AI_TOOLS_ENABLED',
+    group: 'ai',
+    label: 'Aktifkan AI memilih aksi (sticker/reaksi/gambar/pengingat/cari)',
+    type: 'bool',
+    default: true,
+    apply: (cfg, v) => {
+      cfg.aiToolsEnabled = v;
+    },
+  },
+  {
+    key: 'AI_TOOLS_MAX_ACTIONS',
+    group: 'ai',
+    label: 'Maksimal aksi AI per balasan',
+    type: 'int',
+    min: 1,
+    max: 5,
+    default: 2,
+    apply: (cfg, v) => {
+      cfg.aiToolsMax = v;
+    },
+  },
+  {
+    key: 'AI_TOOLS_IMAGE',
+    group: 'ai',
+    label: 'Izinkan AI membuat gambar',
+    type: 'bool',
+    default: true,
+    apply: (cfg, v) => {
+      cfg.aiToolsImage = v;
+    },
+  },
+  {
+    key: 'AI_TOOLS_SEARCH',
+    group: 'ai',
+    label: 'Izinkan AI mencari di web',
+    type: 'bool',
+    default: true,
+    apply: (cfg, v) => {
+      cfg.aiToolsSearch = v;
+    },
+  },
+
   // --- Auto-update dari GitHub ---
   {
     key: 'AUTO_UPDATE_ENABLED',
@@ -870,6 +914,7 @@ const GROUPS = {
   anime: 'Unduhan Anime',
   tiktok: 'Detector TikTok',
   sticker: 'Sticker Reply',
+  ai: 'AI Tools',
   update: 'Auto Update',
 };
 

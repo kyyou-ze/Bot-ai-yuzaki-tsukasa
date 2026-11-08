@@ -9,6 +9,7 @@ const { StickerTransformFeature } = require('./features/stickertransform');
 const { StickerFeature, BratFeature } = require('./features/media');
 const { BaImageFeature, PapFeature } = require('./features/images');
 const { VisionFeature, VnFeature, TtsFeature, ImgGenFeature, HijabinFeature } = require('./features/ai');
+const { AiToolsFeature } = require('./features/aitools');
 const { AnimeFeature } = require('./features/anime');
 const { InfoFeature } = require('./features/info');
 const { PeraturanFeature } = require('./features/peraturan');
@@ -179,6 +180,11 @@ class Router {
     this.vn = new VnFeature(this.reTrig, this.owner);
     this.tts = new TtsFeature(this.reTrig);
     this.imggen = new ImgGenFeature(cfg);
+    this.aiTools = new AiToolsFeature(cfg, {
+      stickerReply: this.stickerReply,
+      imggen: this.imggen,
+      groupTools: this.groupTools,
+    });
     this.hijab = new HijabinFeature(cfg);
     this.anime = new AnimeFeature(this.reTrig);
     this.info = new InfoFeature(this.reTrig);
@@ -490,6 +496,7 @@ class Router {
           '',
           '*🖼️ AI & Info*',
           '• .gambar <prompt> — generate gambar AI',
+          '• tsukasa <tanya> — AI bisa kirim sticker, reaksi, gambar, pengingat, cari web',
           '• .anime ... — info anime (new/movie/schedule/search/detail)',
           '• .anime roulette [genre] — rekomendasi anime acak',
           '• .info <topik> — info apa saja dalam Bahasa Indonesia',
@@ -1029,18 +1036,55 @@ class Router {
 
     const hist = memory.load(chat);
     const ctxTxt = memory.buildContext(hist, txt, sender);
-    const reply = await llm.askAsPersona(
+
+    // Tier 2: AI boleh memilih aksi lewat tag [[...]]. Panggilan pertama
+    // memakai tool prompt penuh (termasuk izin search).
+    let rawReply = await llm.askAsPersona(
       this.cfg,
       state.persona,
       state.pro,
       ctxTxt,
       sender,
-      adult
+      adult,
+      this.aiTools.systemPrompt({ allowSearch: true })
     );
+
+    let parsed = this.aiTools.parse(rawReply);
+    const searchReq = this.aiTools.searchRequest(parsed.actions);
+
+    // Two-phase search: kalau model hanya minta cari, ambil hasil web lalu
+    // panggil model sekali lagi tanpa izin search.
+    if (searchReq) {
+      const results = await this.aiTools.searchWeb(searchReq.arg);
+      const searchCtx = [
+        ctxTxt,
+        '',
+        `Hasil pencarian web untuk "${searchReq.arg}":`,
+        results || '(tidak ada hasil yang ditemukan)',
+        '',
+        'Jawab pertanyaan user memakai hasil di atas. Sebutkan sumber bila relevan. Jangan memakai tag [[search:...]] lagi.',
+      ].join('\n');
+      rawReply = await llm.askAsPersona(
+        this.cfg,
+        state.persona,
+        state.pro,
+        searchCtx,
+        sender,
+        adult,
+        this.aiTools.systemPrompt({ allowSearch: false })
+      );
+      parsed = this.aiTools.parse(rawReply);
+    }
+
+    const reply = String(parsed.text || '').trim();
     memory.saveTurn(chat, 'user', txt);
-    memory.saveTurn(chat, 'assistant', reply);
-    const out = this.owner.decorate(isOwner, reply);
-    await wa.sendText(chat, out.text, m, out.mentions);
+    if (reply) memory.saveTurn(chat, 'assistant', reply);
+
+    if (reply) {
+      const out = this.owner.decorate(isOwner, reply);
+      await wa.sendText(chat, out.text, m, out.mentions);
+    }
+    await this.aiTools.run(chat, m, parsed.actions, txt);
   }
 
   async handleAdultMode(chat, m, isOwner, arg) {

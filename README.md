@@ -17,6 +17,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Sticker Pack & Auto Sticker Reply** — Bot punya pack sticker per mood (`lucu`, `sedih`, `marah`, `love`, `ngantuk`, `hai`, `kaget`). Kalau user mengirim sticker, bot kadang membalas sticker random sambil meng-quote pesan tersebut (peluang & cooldown bisa diatur). Kelola pack dari WhatsApp: `.sadd <mood>` (reply sticker), `.srandom <mood>`, `.s lucu`, `.slist`, `.sdel <mood> <nomor>`.
 - **Sticker Utility** — `.toimg` (sticker → PNG), `.ttp <teks>` (sticker teks), `.attp <teks>` (sticker teks animasi), `.qc` (quote card dari pesan yang di-reply), `.wm <teks>` (watermark sticker), dan `.stickerinfo` (info format/ukuran/frame).
 - **Sticker Transform & Emoji Mix** — `.emojimix 😀 😍` (gabung dua emoji ala Emoji Kitchen), `.flip`/`.flipv`/`.rotate <derajat>`, `.grayscale`/`.invert`/`.blur`, `.crop`, dan `.resize <px>`. Bisa dipakai pada sticker langsung maupun sticker/gambar yang di-reply.
+- **AI Tool Calling** — Saat mengobrol, AI bisa memilih aksi sendiri: mengirim sticker sesuai mood, memberi reaksi emoji, membuat gambar, membuat pengingat, atau mencari info terbaru di web. Contoh: AI membalas "wkwk" lalu mengirim sticker `lucu`.
 - **Blue Archive & Pap** — `ba` / `!ba` atau kata kunci terkait, `!pap` / `pap`.
 - **TikTok (multi-API + fallback)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Sumber TikWM otomatis dialihkan ke TikHub/tiktok-api23/Ensig bila kena WAF. Batas ukuran bisa dikonfigurasi.
 - **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 3 menit, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Akun bisa dikelola dari WhatsApp (`/addakun`, `/delakun`, `/listakun`, `/detector`). Command verif: `/verif`, `/listverif`, `/unverif`, `/siapaup`, `/cekup`, `/history` (juga bisa `Tsukasa ...` atau `.verif`).
@@ -85,6 +86,10 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `STICKER_REPLY_CHANCE` | `30` | Peluang auto balas sticker (%) |
 | `STICKER_REPLY_COOLDOWN_SEC` | `90` | Cooldown auto sticker per chat (detik) |
 | `STICKER_DIR` | `assets/stickers` | Folder pack sticker (subfolder = mood) |
+| `AI_TOOLS_ENABLED` | `true` | Aktifkan AI memilih aksi sendiri |
+| `AI_TOOLS_MAX_ACTIONS` | `2` | Maksimal aksi AI per balasan (1-5) |
+| `AI_TOOLS_IMAGE` | `true` | Izinkan AI membuat gambar |
+| `AI_TOOLS_SEARCH` | `true` | Izinkan AI mencari info di web |
 | `TIKTOK_MAX_VIDEO_MB` | `50` | Batas video TikTok (langsung) |
 | `TIKTOK_MAX_IMAGE_MB` | `5` | Batas slide image |
 | `TIKTOK_MAX_DOC_MB` | `80` | Batas fallback dokumen |
@@ -500,6 +505,33 @@ STICKER_DIR=assets/stickers
 ```
 
 Auto-reply hanya berjalan untuk pesan sticker (bukan teks biasa), tidak membalas pesan bot sendiri, dan dibatasi cooldown per chat supaya tidak spam.
+
+## AI Tool Calling (Tier 2)
+
+Saat chat AI berjalan, model tidak hanya membalas teks. Bot menyisipkan daftar tool ke system prompt, lalu model boleh menutup balasannya dengan tag aksi. Tag tersebut dibuang sebelum pesan dikirim dan sebelum disimpan ke memori, jadi user tidak pernah melihatnya.
+
+| Aksi | Contoh tag | Perilaku |
+|---|---|---|
+| Kirim sticker | `[[sticker:lucu]]` | Kirim sticker random dari pack mood terkait. Mood tak dikenal → pack acak. |
+| Reaksi | `[[react:😆]]` | Beri reaksi emoji ke pesan user. |
+| Gambar AI | `[[image:kucing oren pakai topi]]` | Hanya dijalankan jika user memang meminta gambar/foto/ilustrasi. |
+| Pengingat | `[[remind:10m minum air]]` | Hanya dijalankan jika user meminta diingatkan dan format waktunya valid. |
+| Cari web | `[[search:hasil pertandingan hari ini]]` | Dua fase: bot mencari lewat DuckDuckGo (fallback Wikipedia), lalu memanggil model sekali lagi untuk menjawab memakai hasilnya. |
+
+Batasan pengaman:
+
+- Maksimal `AI_TOOLS_MAX_ACTIONS` aksi per balasan (default 2) dan satu aksi per jenis.
+- Gambar hanya dibuat bila ada kata pemicu seperti "gambar", "foto", "ilustrasi", "wallpaper".
+- Pengingat hanya dibuat bila ada kata "ingat/ingatkan/remind" dan waktu yang dikenali.
+- Pencarian dibatasi 200 karakter query dan hasilnya dipotong agar prompt tetap ringkas.
+- Jika ragu, model diminta tidak memakai aksi sama sekali.
+
+```env
+AI_TOOLS_ENABLED=true
+AI_TOOLS_MAX_ACTIONS=2
+AI_TOOLS_IMAGE=true
+AI_TOOLS_SEARCH=true
+```
 
 ## Detector TikTok & Verif ACC
 
