@@ -2,6 +2,8 @@
 
 const log = require('./logger');
 const { OwnerDetector, WelcomeHandler, TagAllHandler, RvoHandler } = require('./features/basic');
+const { CnFeature } = require('./features/cn');
+const { StickerReplyFeature } = require('./features/stickerreply');
 const { StickerFeature, BratFeature } = require('./features/media');
 const { BaImageFeature, PapFeature } = require('./features/images');
 const { VisionFeature, VnFeature, TtsFeature, ImgGenFeature, HijabinFeature } = require('./features/ai');
@@ -34,6 +36,10 @@ const {
 } = require('./commandparser');
 
 const RE_REPLY_CUE = /\b(balas(in|lah)?|reply|jawab(in|lah)?)(\s+ini)?\b/i;
+
+function userPart(jid) {
+  return String(jid || '').split('@')[0].split(':')[0].trim();
+}
 
 function normalizeTrigger(cfg) {
   const trig = String(cfg.trigger || 'tsukasa').trim();
@@ -160,7 +166,9 @@ class Router {
     this.tagall = new TagAllHandler();
     this.rvo = new RvoHandler();
     this.sticker = new StickerFeature();
+    this.stickerReply = new StickerReplyFeature(cfg);
     this.brat = new BratFeature(this.reTrig);
+    this.cn = new CnFeature(cfg);
     this.ba = new BaImageFeature(cfg, this.reTrig);
     this.pap = new PapFeature(cfg);
     this.vision = new VisionFeature(this.reTrig, this.owner);
@@ -176,6 +184,83 @@ class Router {
     this.peraturan = new PeraturanFeature(store);
     this.guard = groupGuard || new GroupGuard(cfg, store);
     this.heavyLimiter = new RateLimiter({ maxEntries: 2000 });
+    this.statusMentionSeen = new Set();
+  }
+
+  botJids() {
+    const u = (this.sock && this.sock.user) || {};
+    return [u.id, u.lid].filter(Boolean);
+  }
+
+  isQuotedFromBot(ctxInfo) {
+    const participant = ctxInfo && ctxInfo.participant;
+    if (!participant) return false;
+    const got = userPart(participant);
+    if (!got) return false;
+    return this.botJids().some((jid) => userPart(jid) === got);
+  }
+
+  /**
+   * Tag status WhatsApp diterima sebagai pesan biasa di chat pribadi (atau grup
+   * bila yang di-tag adalah grup). Isinya bisa berupa statusMentionMessage di
+   * dalam message maupun metadata statusMentions di level WebMessageInfo.
+   */
+  isStatusMention(m, content) {
+    if (!m) return false;
+    const msg = m.message || {};
+    const ctx = msg.messageContextInfo || (content && content.messageContextInfo) || {};
+    const info =
+      m.statusMentionMessageInfo || msg.statusMentionMessageInfo || ctx.statusMentionMessageInfo;
+    const wrapped = Boolean(
+      msg.statusMentionMessage ||
+        msg.groupStatusMentionMessage ||
+        (content && (content.statusMentionMessage || content.groupStatusMentionMessage))
+    );
+    const flagged = m.isMentionedInStatus === true;
+    const mentions = Array.isArray(m.statusMentions) ? m.statusMentions : [];
+    if (!info && !wrapped && !flagged && mentions.length === 0) return false;
+    if (info || wrapped || flagged) return true;
+
+    const targets = this.botJids().map(userPart).filter(Boolean);
+    if (targets.length === 0) return mentions.length > 0;
+    return mentions.some((jid) => targets.includes(userPart(jid)));
+  }
+
+  async handleStatusMention(m) {
+    const chat = m.key.remoteJid;
+    const id = String(m.key.id || '');
+    if (id && this.statusMentionSeen.has(id)) return;
+    if (id) {
+      this.statusMentionSeen.add(id);
+      if (this.statusMentionSeen.size > 500) {
+        const oldest = this.statusMentionSeen.values().next().value;
+        this.statusMentionSeen.delete(oldest);
+      }
+    }
+
+    const sender = m.key.participant || chat;
+    // status@broadcast tidak bisa dibalas langsung. Untuk kasus itu, balas ke
+    // chat pribadi pengunggah status bila nomor teleponnya tersedia.
+    let target = chat && chat !== 'status@broadcast' ? chat : '';
+    if (!target) {
+      target = [m.key.participantPn, m.key.remoteJidAlt, m.key.participant]
+        .filter(Boolean)
+        .map((jid) => (String(jid).includes('@') ? String(jid) : `${userPart(jid)}@s.whatsapp.net`))
+        .find((jid) => !/@lid$/i.test(jid)) || '';
+    }
+
+    log.info(`[STATUS] tag status dari ${sender} di ${chat}`);
+    if (!target) {
+      log.info('[STATUS] tidak ada nomor tujuan untuk membalas tag status');
+      return;
+    }
+    await wa
+      .sendText(
+        target,
+        '👀 Aku melihat tag status kamu. Terima kasih sudah menyebutku! ✨',
+        undefined
+      )
+      .catch(() => {});
   }
 
   heavyGate(chat, key, seconds) {
@@ -255,7 +340,16 @@ class Router {
     if (m.key && m.key.fromMe) return;
 
     const chat = m.key.remoteJid;
-    if (!chat || chat === 'status@broadcast') return;
+    if (!chat) return;
+
+    // Status biasa bukan pesan untuk bot. Tag status yang benar-benar
+    // menyebut bot bisa datang sebagai status@broadcast (dengan flag
+    // isMentionedInStatus) atau sebagai pesan mention di chat pribadi/grup.
+    if (this.isStatusMention(m, m.message)) {
+      await this.handleStatusMention(m);
+      return;
+    }
+    if (chat === 'status@broadcast') return;
 
     const content = wa.contentOf(m);
     if (!content) return;
@@ -355,58 +449,77 @@ class Router {
         const userName = memory.getUserName(sender) || '';
         const greeting = userName ? `Hai ${userName}!` : 'Hai!';
         const lines = [
-          greeting + ' Ini perintah yang bisa kamu gunakan:',
+          '✨ *MENU TSUKASA* ✨',
+          greeting,
           '',
-          'Semua perintah bisa ditulis dengan !, /, ., atau awalan "' +
+          'Pakai perintah dengan awalan *!*, */*, *.*, atau sebut "' +
             this.cfg.trigger +
-            '" (contoh: tsukasa help).',
+            '".',
           '',
-          '- !help : bantuan ringkas',
-          '- !whoami : lihat JID kamu',
-          '- !tagall / tsukasa tagall : mention semua anggota grup',
-          '- !rvo : buka media sekali lihat (reply ke pesannya)',
-          '- ba / kirim gambar blue archive : gambar BA',
-          '- tsukasa hijabin : berhijabkan gambar (kirim/quote gambar)',
-          '- tsukasa vn <teks> : kirim voice note',
-          "- kirim gambar + sebut '" + this.cfg.trigger + "' : analisis gambar",
-          "- vn sebut 'tsukasa' : transkrip & jawab",
-          '- kirim link TikTok : unduh via TikWM',
-          '- tsukasa brat <teks> : buat sticker brat',
-          '- tsukasa buatin gambar <prompt> / !gambar <prompt> : generate gambar AI',
-          '- !anime ... : info anime (new/movie/schedule/search/detail)',
-          '- !info <topik> : info apa saja (anime/film/Jepang/fakta absurd) dalam Bahasa Indonesia',
-          '- !news [topik] : berita anime/manga/gacha/cosplay terbaru + gambar',
-          '- !cosplay <link IG> : ambil semua foto dari satu post Instagram',
-          '- !config / !set <KEY> <nilai> : isi pengaturan bot lewat chat (owner)',
-          '- !update status|check|now|auto on|off : auto-update GitHub lalu restart panel (owner)',
-          '- !health : status koneksi, uptime, RAM, cache, dan antrean unduhan',
-          '- !jadwal buka 06:00 / !jadwal tutup 22:00 : buka-tutup grup otomatis (admin)',
-          '- !jadwal weekend on|off / !jadwal test : jadwal akhir pekan & uji (admin)',
-          '- !antilink on|off / !antilink allow domain.com / !antispam on|off : moderasi grup (admin)',
-          '- !mute [menit] @user / !unmute @user / !resetwarn @user|all : moderasi member (admin)',
-          '- !animechannel status|test|info|check <judul> : cek/tes auto-post & info Jejepangan (owner/admin)',
-          '- !anime roulette [genre] : rekomendasi anime acak',
-          '- !ingatkan <waktu> <teks> : pengingat (contoh: !ingatkan 10m minum air)',
-          '- !poll <tanya> | <opsi1> | <opsi2> : polling grup',
-          '- !rangkum [jumlah] : rangkum percakapan terakhir dengan AI',
-          '- !statistik : statistik aktivitas chat',
-          '- !peraturan on|off|status : moderasi grup (admin)',
-          '- !tsukasa persona tsukasa1|tsukasa2 : pilih persona AI (persist)',
-          '- !tsukasa mode pro on|off : aktifkan Mode Pro (persist)',
-          '- !tsukasa mode dewasa on|off : mode khusus owner di chat pribadi (18+)',
-          '- !hot on|off|status : alias cepat mode dewasa (owner, chat pribadi)',
-          '- /verif <acc> : verif ACC TikTok di grup ini',
-          '- /listverif : daftar ACC terverif di grup',
-          '- /unverif <acc> : hapus ACC dari daftar verif',
-          '- /siapaup : siapa yang UP hari ini',
-          '- /cekup @username : cek akun sudah UP atau belum',
-          '- /history : rekap UP 7 hari terakhir',
-          '- /addakun @user : tambah akun TikTok yang dipantau',
-          '- /delakun @user : hapus akun dari pantauan',
-          '- /listakun : daftar akun yang dipantau',
-          '- /detector on|off|status : kontrol detector (on/off khusus owner)',
+          '*💬 Umum*',
+          '• .help / .menu — menu ini',
+          '• .whoami — lihat JID kamu',
+          '• .health / .ping / .status — status bot, uptime, RAM',
           '',
-          'Tips: katakan "panggil aku [nama]" supaya aku ingat namamu!',
+          '*🎨 Sticker & Media*',
+          '• .stiker / .s — gambar/video/URL jadi sticker',
+          '• .sgif — sticker animasi (GIF/video)',
+          '• .brat <teks> — sticker brat',
+          '• .srandom <mood> / .s <mood> — sticker random dari pack',
+          '• .sadd <mood> — simpan sticker (reply sticker) ke pack',
+          '• .slist / .sdel <mood> <nomor> — kelola pack sticker',
+          '• .rvo — buka media sekali lihat (reply)',
+          '• .ba — gambar Blue Archive',
+          '• .pap — kirim pap',
+          '• .hijabin — hijabkan gambar (kirim/reply gambar)',
+          '• tsukasa vn <teks> — kirim voice note',
+          '• kirim/reply gambar + sebut "tsukasa" — analisis gambar',
+          '',
+          '*🖼️ AI & Info*',
+          '• .gambar <prompt> — generate gambar AI',
+          '• .anime ... — info anime (new/movie/schedule/search/detail)',
+          '• .anime roulette [genre] — rekomendasi anime acak',
+          '• .info <topik> — info apa saja dalam Bahasa Indonesia',
+          '• .news [topik] — berita anime/manga/gacha/cosplay',
+          '• .cosplay <link IG> — ambil foto dari post Instagram',
+          '• .rangkum [jumlah] — rangkum percakapan terakhir',
+          '• .statistik — statistik aktivitas chat',
+          '',
+          '*✅ Verif TikTok & CN*',
+          '• .cn <nama> — contoh CN TikTok (3 gaya)',
+          '• .verif <acc> — verif ACC TikTok di grup ini',
+          '• .listverif — daftar ACC terverifikasi',
+          '• .unverif <acc> — hapus ACC dari daftar verif',
+          '• .siapaup / .whoup — siapa yang UP hari ini',
+          '• .cekup @username — cek akun sudah UP atau belum',
+          '• .history — rekap UP 7 hari terakhir',
+          '• .addakun @user / .delakun @user / .listakun — kelola pantauan',
+          '• .detector on|off|status — kontrol detector (on/off owner)',
+          '',
+          '*🛠️ Admin Grup*',
+          '• .tagall — mention semua anggota',
+          '• .peraturan on|off|status — moderasi grup',
+          '• .antilink on|off / .antilink allow domain.com',
+          '• .antispam on|off',
+          '• .mute [menit] @user / .unmute @user / .resetwarn @user|all',
+          '• .jadwal buka 06:00 / .jadwal tutup 22:00',
+          '• .jadwal weekend on|off / .jadwal test',
+          '• .ingatkan <waktu> <teks> — pengingat',
+          '• .poll <tanya> | <opsi1> | <opsi2> — polling grup',
+          '',
+          '*🔧 Owner*',
+          '• .config / .set <KEY> <nilai> — ubah pengaturan lewat chat',
+          '• .update status|check|now|auto on|off — auto-update & restart',
+          '• .animechannel status|test|news|info|cosplay|check <judul>',
+          '• .tsukasa persona tsukasa1|tsukasa2 — pilih persona AI',
+          '• .tsukasa mode pro on|off / .hot on|off|status',
+          '• .geminikey list|add <key>|remove <key>',
+          '',
+          '*💡 Tips*',
+          '• Chat pribadi: reply pesan apa pun, aku tetap jawab.',
+          '• Grup: reply pesan bot atau sebut "tsukasa" agar aku merespons.',
+          '• Contoh: .cn Budi',
+          '• Katakan "panggil aku [nama]" supaya aku ingat namamu!',
         ];
         await wa.sendText(chat, lines.join('\n'), m);
         return;
@@ -418,6 +531,17 @@ class Router {
         if (userName) who += `\nNama tersimpan: ${userName}`;
         await wa.sendText(chat, who, m);
         return;
+      }
+
+      if (bang.cmd === 'cn') {
+        await this.cn.handle(this.sock, m, bang.rest);
+        return;
+      }
+
+      if (bang.cmd === 's' || StickerReplyFeature.isCommand(bang.cmd)) {
+        if (await this.stickerReply.handleCommand(this.sock, m, content, bang.cmd, bang.rest)) {
+          return;
+        }
       }
 
       if (ConfigFeature.isCommand(bang.cmd)) {
@@ -750,12 +874,19 @@ class Router {
     const isTagAllCmd = isCmd && cmd === 'tagall';
     const isRvoCmd = isCmd && cmd === 'rvo';
 
+    const qCtx = wa.contextInfoOf(content);
+    const quotedFromBot = this.isQuotedFromBot(qCtx);
     const hasQuoted = q.img || q.aud || q.text !== '';
-    if (hasQuoted && !hasTrig && !isCmd) return;
+    if (hasQuoted && !hasTrig && !isCmd) {
+      // Chat pribadi: balasan ke pesan apa pun tetap dilayani. Di grup, hanya
+      // balasan ke pesan bot sendiri yang diproses tanpa trigger supaya bot
+      // tidak ikut merespons semua quote.
+      if (isGroup && !quotedFromBot) return;
+    }
 
     const hasImage = Boolean(content.imageMessage);
     const hasVideo = Boolean(content.videoMessage);
-    if (isGroup && (hasImage || hasVideo) && !hasTrig && !isCmd) return;
+    if (isGroup && (hasImage || hasVideo) && !hasTrig && !isCmd && !quotedFromBot) return;
 
     // TikTok text termasuk matchedText dari preview link
     let tiktokText = origTxt;
@@ -795,6 +926,7 @@ class Router {
       if (await this.ba.handle(chat, m, content, origTxt)) return;
       if (await this.hijab.handle(this.sock, m, content, origTxt)) return;
       if (await this.brat.handle(this.sock, m, content, origTxt)) return;
+      if (await this.stickerReply.handleAuto(this.sock, m, content)) return;
       if (await this.sticker.handle(this.sock, m, content, origTxt)) return;
       if (await this.vision.handle(this.sock, m, content, origTxt)) return;
       if (await this.anime.handle(this.sock, m, origTxt)) return;
@@ -805,33 +937,25 @@ class Router {
     // VN selalu dicek (juga saat tidak ada teks)
     if (await this.vn.handle(this.sock, m, content, isOwner)) return;
 
-    // Konteks pesan yang di-reply
-    if (q.text && this.reTrig.test(origTxt)) {
-      const after = origTxt.replace(this.reTrig, '').trim();
-      if (!after || RE_REPLY_CUE.test(after)) {
+    // Tentukan teks user tanpa awalan trigger, lalu tambahkan konteks quote
+    // supaya AI tetap tahu pesan yang sedang dibalas.
+    let userText = hasTrig && !isCmd ? stripLeadingTrigger(origTxt, this.cfg.trigger) : origTxt;
+    userText = String(userText || '').trim();
+    if (q.text) {
+      if (!userText || RE_REPLY_CUE.test(userText)) {
         txt = q.text;
       } else {
-        txt = after + '\n\nKonteks (pesan yang di-reply): ' + q.text;
+        txt = `${userText}\n\nKonteks (pesan yang di-reply):\n${q.text}`;
       }
+    } else {
+      txt = userText;
     }
 
-    // Untuk obrolan biasa, buang awalan trigger agar AI tidak menerima kata
-    // "tsukasa" sebagai bagian dari pertanyaan.
-    if (hasTrig && !isCmd) {
-      const stripped = stripLeadingTrigger(origTxt, this.cfg.trigger);
-      if (stripped) txt = stripped;
-      else txt = '';
-    }
-
-    // Mode MANUAL di grup
+    // Mode MANUAL di grup: hanya merespons jika dipanggil trigger (atau tagall).
+    // Reply ke pesan bot sendiri tetap diproses supaya user bisa lanjut ngobrol
+    // dari pesan yang di-quote.
     if (isGroup && String(this.cfg.mode || '').toUpperCase() === 'MANUAL') {
-      if (!hasTrig && !isTagAllCmd) return;
-      const clean = stripLeadingTrigger(origTxt, this.cfg.trigger);
-      if (!clean && q.text) {
-        txt = q.text;
-      } else if (clean && txt === origTxt) {
-        txt = clean;
-      }
+      if (!hasTrig && !isTagAllCmd && !quotedFromBot) return;
     }
 
     if (!String(txt).trim()) return;

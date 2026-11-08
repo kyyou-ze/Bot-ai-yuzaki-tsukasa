@@ -82,6 +82,17 @@ function load() {
     baLinksUrl: getenv('BA_LINKS_URL', ''),
     baLinksLocal: getenv('BA_LINKS_LOCAL', 'anime/bluearchive_links.json'),
     papLinksPath: getenv('PAP_LINKS_PATH', 'anime/pap_links.json'),
+    // Sticker reply: auto balas sticker + paket sticker per mood.
+    stickerReplyEnabled: boolEnv(getenv('STICKER_REPLY_ENABLED', 'true'), true),
+    stickerReplyChance: Math.max(
+      0,
+      Math.min(100, intEnv(getenv('STICKER_REPLY_CHANCE', '30'), 30))
+    ),
+    stickerReplyCooldownSec: Math.max(
+      5,
+      intEnv(getenv('STICKER_REPLY_COOLDOWN_SEC', '90'), 90)
+    ),
+    stickerDir: path.resolve(getenv('STICKER_DIR', 'assets/stickers')),
     ttMaxVideo: mustAtoi(getenv('TIKTOK_MAX_VIDEO_MB', '50'), 50) * 1024 * 1024,
     ttMaxImage: mustAtoi(getenv('TIKTOK_MAX_IMAGE_MB', '5'), 5) * 1024 * 1024,
     ttMaxDoc: mustAtoi(getenv('TIKTOK_MAX_DOC_MB', '80'), 80) * 1024 * 1024,

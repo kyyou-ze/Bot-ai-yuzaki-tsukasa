@@ -14,9 +14,12 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Buat Gambar** (`tsukasa buatin gambar <prompt>`) atau `!gambar <prompt>` — Generate gambar dengan Gemini.
 - **Hijabin** (`tsukasa hijabin` / reply gambar) — Tambahkan hijab (JPEG/PNG).
 - **Brat & Sticker** — `tsukasa brat <teks>` untuk sticker gaya brat. Sticker biasa dari gambar/URL/video (animated memakai ffmpeg).
+- **Sticker Pack & Auto Sticker Reply** — Bot punya pack sticker per mood (`lucu`, `sedih`, `marah`, `love`, `ngantuk`, `hai`, `kaget`). Kalau user mengirim sticker, bot kadang membalas sticker random sambil meng-quote pesan tersebut (peluang & cooldown bisa diatur). Kelola pack dari WhatsApp: `.sadd <mood>` (reply sticker), `.srandom <mood>`, `.s lucu`, `.slist`, `.sdel <mood> <nomor>`.
 - **Blue Archive & Pap** — `ba` / `!ba` atau kata kunci terkait, `!pap` / `pap`.
 - **TikTok (multi-API + fallback)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Sumber TikWM otomatis dialihkan ke TikHub/tiktok-api23/Ensig bila kena WAF. Batas ukuran bisa dikonfigurasi.
 - **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 3 menit, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Akun bisa dikelola dari WhatsApp (`/addakun`, `/delakun`, `/listakun`, `/detector`). Command verif: `/verif`, `/listverif`, `/unverif`, `/siapaup`, `/cekup`, `/history` (juga bisa `Tsukasa ...` atau `.verif`).
+- **CN TikTok** — `.cn <nama>` menampilkan tiga contoh CN siap pakai: `` `𝙀𝘾𝙉᭄ ``, `ft 𝙀𝘾𝙉`, dan `〆𝙀𝘾𝙉`. Keyword mengikuti `TIKTOK_CN_KEYWORD`.
+- **Reply & Tag Status** — Di chat pribadi bot tetap membalas walaupun pesanmu adalah reply/quote. Di grup, reply ke pesan bot juga diproses tanpa trigger. Tag status WhatsApp yang menyebut bot terdeteksi dan dibalas di chat terkait.
 - **AnimeKita** — `!anime ...` (new/movie/schedule/list/genre/search/detail/episode/roulette). Episode dengan link Pixeldrain bisa diunduh otomatis.
 - **Anime Roulette** — `!anime roulette [genre]` memilih anime acak dari AniList lengkap dengan sinopsis (diterjemahkan ke Indonesia bila Gemini tersedia), skor, episode, tahun, dan link.
 - **Grup Toolkit** — `!ingatkan` (pengingat persisten dengan waktu natural), `!poll` (polling native WhatsApp), `!rangkum` (ringkasan percakapan terakhir via AI), dan `!statistik` (anggota paling aktif, jam tersibuk, jumlah pesan).
@@ -76,6 +79,10 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `ELEVENLABS_API_KEY` / `ELEVENLABS_VOICE_ID` | - | Untuk fitur VN TTS |
 | `FFMPEG_PATH` | - | Path ffmpeg manual (opsional) |
 | `VN_MAX_WORDS` | `80` | Batas kata script VN |
+| `STICKER_REPLY_ENABLED` | `true` | Aktifkan auto balas sticker |
+| `STICKER_REPLY_CHANCE` | `30` | Peluang auto balas sticker (%) |
+| `STICKER_REPLY_COOLDOWN_SEC` | `90` | Cooldown auto sticker per chat (detik) |
+| `STICKER_DIR` | `assets/stickers` | Folder pack sticker (subfolder = mood) |
 | `TIKTOK_MAX_VIDEO_MB` | `50` | Batas video TikTok (langsung) |
 | `TIKTOK_MAX_IMAGE_MB` | `5` | Batas slide image |
 | `TIKTOK_MAX_DOC_MB` | `80` | Batas fallback dokumen |
@@ -430,6 +437,40 @@ Daftar cosplay juga bisa diisi langsung dari chat (owner), tanpa edit `.env`:
 
 Unduhan masuk antrean dengan paralel default 1 (`ANIME_DL_CONCURRENCY`) dan permintaan episode yang sama tidak diduplikasi. Jika semua mirror gagal, bot mengirim alasan kegagalan beserta link yang bisa dibuka manual.
 
+## Sticker Pack & Auto Sticker Reply
+
+Bot menyimpan sticker di `STICKER_DIR` (default `assets/stickers`). Setiap subfolder adalah satu mood/pack:
+
+```text
+assets/stickers/
+  lucu/*.webp
+  sedih/*.webp
+  marah/*.webp
+  love/*.webp
+```
+
+Command dari WhatsApp:
+
+```text
+.slist                  # daftar pack + jumlah sticker
+.sadd lucu              # reply sticker lalu simpan ke pack lucu
+.srandom lucu           # kirim sticker random dari pack lucu
+.srandom                # kirim sticker random dari pack mana pun
+.s lucu                 # alias cepat .srandom lucu
+.sdel lucu 2            # hapus sticker nomor 2 dari pack lucu
+```
+
+Saat user mengirim sticker, bot bisa otomatis membalas dengan sticker random sambil meng-quote sticker tersebut. Atur perilakunya di `.env`:
+
+```env
+STICKER_REPLY_ENABLED=true
+STICKER_REPLY_CHANCE=30
+STICKER_REPLY_COOLDOWN_SEC=90
+STICKER_DIR=assets/stickers
+```
+
+Auto-reply hanya berjalan untuk pesan sticker (bukan teks biasa), tidak membalas pesan bot sendiri, dan dibatasi cooldown per chat supaya tidak spam.
+
 ## Detector TikTok & Verif ACC
 
 Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTOK_CHECK_MIN` menit. Akun dicek satu per satu dengan jeda acak 2-5 detik. Sumber data memakai rantai fallback anti-WAF: endpoint custom/TikHub/tiktok-api23/Ensig (kalau diisi) → Jina Reader (membaca halaman profil dari server Jina, jadi IP bot tidak langsung diblokir) → TikWM → scraping profil langsung. Kalau semua sumber kena 403/WAF, bot berhenti selama `TIKTOK_WAF_COOLDOWN_MIN` menit dan hanya menulis satu log `[TIKTOK] WAF block, retry 10 menit`. Untuk tiap video baru, bot mengecek:
@@ -460,6 +501,7 @@ Command verif (bisa ` / `, `.`, `!`, atau diawali `Tsukasa`):
 /whoup             # alias /siapaup
 /cekup @rinorstr   # cek akun sudah UP hari ini atau belum
 /history           # rekap UP 7 hari terakhir per ACC
+/cn Budi           # contoh CN TikTok (3 gaya) untuk nama Budi
 ```
 
 ### Kelola akun pantauan dari WhatsApp

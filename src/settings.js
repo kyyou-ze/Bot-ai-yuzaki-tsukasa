@@ -718,6 +718,52 @@ const DEFS = [
     },
   },
 
+  // --- Sticker reply ---
+  {
+    key: 'STICKER_REPLY_ENABLED',
+    group: 'sticker',
+    label: 'Aktifkan auto balas sticker',
+    type: 'bool',
+    default: true,
+    apply: (cfg, v) => {
+      cfg.stickerReplyEnabled = v;
+    },
+  },
+  {
+    key: 'STICKER_REPLY_CHANCE',
+    group: 'sticker',
+    label: 'Peluang auto balas sticker (%)',
+    type: 'int',
+    min: 0,
+    max: 100,
+    default: 30,
+    apply: (cfg, v) => {
+      cfg.stickerReplyChance = v;
+    },
+  },
+  {
+    key: 'STICKER_REPLY_COOLDOWN_SEC',
+    group: 'sticker',
+    label: 'Cooldown auto sticker per chat (detik)',
+    type: 'int',
+    min: 5,
+    max: 86400,
+    default: 90,
+    apply: (cfg, v) => {
+      cfg.stickerReplyCooldownSec = v;
+    },
+  },
+  {
+    key: 'STICKER_DIR',
+    group: 'sticker',
+    label: 'Folder sticker pack',
+    type: 'string',
+    default: 'assets/stickers',
+    apply: (cfg, v) => {
+      cfg.stickerDir = path.resolve(v);
+    },
+  },
+
   // --- Auto-update dari GitHub ---
   {
     key: 'AUTO_UPDATE_ENABLED',
@@ -823,6 +869,7 @@ const GROUPS = {
   rate: 'Rate Limit',
   anime: 'Unduhan Anime',
   tiktok: 'Detector TikTok',
+  sticker: 'Sticker Reply',
   update: 'Auto Update',
 };
 
