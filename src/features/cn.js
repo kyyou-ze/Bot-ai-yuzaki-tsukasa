@@ -7,6 +7,10 @@ const wa = require('../wa');
 const BOLD_ITALIC_UPPER = 0x1d63c;
 const BOLD_ITALIC_LOWER = 0x1d656;
 const BOLD_DIGIT = 0x1d7ec;
+// Mathematical Sans-Serif Bold untuk nama agar terlihat tebal tanpa markdown
+// WhatsApp (tidak menyisakan tanda bintang saat disalin).
+const BOLD_UPPER = 0x1d5d4;
+const BOLD_LOWER = 0x1d5ee;
 
 function styleKeyword(value) {
   const raw = String(value || '').trim();
@@ -28,6 +32,24 @@ function styleKeyword(value) {
     .join('');
 }
 
+function styleBold(value) {
+  return Array.from(String(value || ''))
+    .map((ch) => {
+      const code = ch.codePointAt(0);
+      if (code >= 65 && code <= 90) {
+        return String.fromCodePoint(BOLD_UPPER + code - 65);
+      }
+      if (code >= 97 && code <= 122) {
+        return String.fromCodePoint(BOLD_LOWER + code - 97);
+      }
+      if (code >= 48 && code <= 57) {
+        return String.fromCodePoint(BOLD_DIGIT + code - 48);
+      }
+      return ch;
+    })
+    .join('');
+}
+
 /**
  * Fitur .cn <nama> — menampilkan contoh CN (copy name) TikTok dengan tiga
  * gaya yang umum dipakai: backtick + ECN, "ft ECN", dan "〆ECN".
@@ -39,8 +61,8 @@ class CnFeature {
 
   format(rest, pushName) {
     const name = String(rest || '').trim().replace(/\s+/g, ' ') || String(pushName || '').trim();
-    const display = name || '𝐍𝐚𝐦𝐚';
-    const boldName = `*${display}*`;
+    const display = name || 'Nama';
+    const boldName = styleBold(display);
     const cn = styleKeyword(this.keyword);
     const lines = [
       '𝗖𝗼𝗻𝘁𝗼𝗵 𝗖𝗡 (opsional)',
@@ -61,4 +83,4 @@ class CnFeature {
   }
 }
 
-module.exports = { CnFeature, styleKeyword };
+module.exports = { CnFeature, styleKeyword, styleBold };

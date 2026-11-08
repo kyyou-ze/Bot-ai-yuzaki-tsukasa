@@ -21,7 +21,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Blue Archive & Pap** — `ba` / `!ba` atau kata kunci terkait, `!pap` / `pap`.
 - **TikTok (multi-API + fallback)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Sumber TikWM otomatis dialihkan ke TikHub/tiktok-api23/Ensig bila kena WAF. Batas ukuran bisa dikonfigurasi.
 - **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 3 menit, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Akun bisa dikelola dari WhatsApp (`/addakun`, `/delakun`, `/listakun`, `/detector`). Command verif: `/verif`, `/listverif`, `/unverif`, `/siapaup`, `/cekup`, `/history` (juga bisa `Tsukasa ...` atau `.verif`).
-- **CN TikTok** — `.cn <nama>` menampilkan tiga contoh CN siap pakai dengan nama di-bold: `` `𝙀𝘾𝙉᭄ ``, `ft 𝙀𝘾𝙉`, dan `〆𝙀𝘾𝙉`. Keyword mengikuti `TIKTOK_CN_KEYWORD`.
+- **CN TikTok** — `.cn <nama>` menampilkan tiga contoh CN siap pakai dengan nama memakai huruf bold Unicode (tanpa tanda bintang saat disalin): `` `𝙀𝘾𝙉᭄ ``, `ft 𝙀𝘾𝙉`, dan `〆𝙀𝘾𝙉`. Keyword mengikuti `TIKTOK_CN_KEYWORD`.
 - **Reply & Tag Status** — Di chat pribadi bot tetap membalas walaupun pesanmu adalah reply/quote. Di grup, reply ke pesan bot juga diproses tanpa trigger. Tag status WhatsApp yang menyebut bot terdeteksi dan dibalas di chat terkait.
 - **AnimeKita** — `!anime ...` (new/movie/schedule/list/genre/search/detail/episode/roulette). Episode dengan link Pixeldrain bisa diunduh otomatis.
 - **Anime Roulette** — `!anime roulette [genre]` memilih anime acak dari AniList lengkap dengan sinopsis (diterjemahkan ke Indonesia bila Gemini tersedia), skor, episode, tahun, dan link.
