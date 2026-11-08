@@ -78,8 +78,8 @@ class AfkFeature {
       .sendText(
         chat,
         existing
-          ? `😴 Status AFK diperbarui.${reasonLine}\nKirim pesan apa saja untuk kembali.`
-          : `😴 AFK aktif.${reasonLine}\nKirim pesan apa saja untuk kembali.`,
+          ? `😴 Status AFK diperbarui.${reasonLine}\nKirim pesan, sticker, atau media apa saja untuk kembali.`
+          : `😴 AFK aktif.${reasonLine}\nKirim pesan, sticker, atau media apa saja untuk kembali.`,
         m
       )
       .catch(() => {});

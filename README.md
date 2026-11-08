@@ -663,7 +663,7 @@ Peserta yang melanggar akan diberi peringatan. Saat mencapai `MOD_WARN_LIMIT - 1
 
 - Alasan AFK disimpan di `tsukasa_state.json`, jadi tetap ada setelah restart.
 - Saat user AFK di-mention atau pesannya di-reply, bot membalas status AFK beserta alasannya (dibatasi cooldown 5 menit per user/chat agar tidak spam).
-- Begitu user AFK mengirim pesan lagi, statusnya otomatis dicabut dan bot menyambut dengan durasi AFK.
+- Begitu user AFK mengirim pesan, sticker, atau media apa pun, statusnya otomatis dicabut dan bot menyambut dengan durasi AFK.
 - `.tagall` bisa juga ditulis `!tagall`, `/tagall`, atau `tsukasa tagall`; teks setelah kata `tagall` dipakai sebagai isi pesan. Tanpa teks, bot memakai sapaan default.
 
 ### Anime Roulette
