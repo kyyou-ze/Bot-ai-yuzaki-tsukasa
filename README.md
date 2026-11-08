@@ -71,6 +71,7 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `SESSION_DIR` | `./session` | Folder auth Baileys (bisa jadi `*_auth` jika diisi nama file) |
 | `PAIRING_NUMBER` | - | Nomor WhatsApp bot untuk pairing code, mis. `6281234567890` |
 | `STATE_DB` | `./tsukasa_state.json` | State JSON (persona/pro/warn/peraturan) |
+| `LID_MAP_FILE` | `./data/lidmap.json` | Pemetaan LID → nomor telepon agar balasan chat pribadi terkirim |
 | `SETTINGS_DB` | `./database/settings.json` | Override pengaturan yang diisi lewat chat (`!config`) |
 | `AUTO_UPDATE_ENABLED` | `false` | Aktifkan cek & tarik update GitHub otomatis |
 | `AUTO_UPDATE_CHECK_MIN` | `10` | Interval cek update (menit) |
@@ -765,4 +766,5 @@ Semua pengaturan di atas juga bisa diubah lewat chat:
 - **Fitur hijabin/TTS gagal**: Cek kredensial di environment.
 - **Sticker animasi gagal**: Pastikan `npm install` selesai (ffmpeg-static terpasang) atau set `FFMPEG_PATH`.
 - **Reconnecting terus**: Hapus isi folder sesi hanya jika benar-benar ingin pairing ulang (akan minta QR/kode baru).
+- **Pesan bot tertulis “Menunggu pesan ini…” di chat penerima**: Ini bukan teks bot, melainkan pesan WhatsApp yang gagal didekripsi. Di chat pribadi, bot sekarang otomatis mengubah tujuan kirim dari JID `@lid` ke nomor telepon asli (dipetakan dari pesan masuk dan disimpan di `data/lidmap.json`). Jika masih muncul, minta penerima mengirim pesan baru ke bot agar pemetaan LID→nomor terbentuk, lalu balas lagi. Pastikan juga `getMessage` aktif (sudah otomatis) dan hindari menghapus folder sesi saat bot sedang dipakai.
 - **HTTP API tidak bisa diakses**: Pastikan allocation/port benar, aplikasi listen `0.0.0.0`, dan firewall node mengizinkan port tersebut.

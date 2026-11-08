@@ -6,6 +6,7 @@ const log = require('./logger');
 const { destJid, isGroupJid } = require('./util');
 const { messageCache } = require('./messagecache');
 const { downloadQueue } = require('./downloadqueue');
+const { lidMap, lidOf, pnOf } = require('./lidmap');
 
 // Pino menulis JSON per baris. Alihkan semuanya ke logger aplikasi supaya
 // output panel tetap satu format: [waktu] [LEVEL] [TAG] pesan.
@@ -166,8 +167,8 @@ async function downloadQuoted(quoted, chatJid, senderJid) {
 }
 
 async function sendMessage(jid, content, quoted) {
-  const to = destJid(jid);
-  const opts = quoted ? { quoted } : {};
+  const to = await resolveSendJid(jid);
+  const opts = quoted ? { quoted: retargetQuoted(quoted, to) } : {};
   const res = await sock.sendMessage(to, content, opts);
   // Simpan pesan keluar supaya Baileys bisa menyajikannya ulang saat
   // penerima meminta retry (mencegah "Menunggu pesan ini...").
@@ -179,8 +180,82 @@ async function sendMessage(jid, content, quoted) {
   return res;
 }
 
+/**
+ * Simpan pasangan LID -> nomor telepon dari pesan masuk. Dipanggil dari
+ * handler `messages.upsert` sebelum pesan diproses.
+ */
+function rememberJids(key) {
+  try {
+    return lidMap.rememberFromKey(key);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Tentukan tujuan kirim yang benar. JID `@lid` pada Baileys 6.7.x tidak
+ * pernah terkirim walaupun server menerimanya, jadi ubah ke nomor telepon
+ * asli bila pemetaannya diketahui.
+ */
+async function resolveSendJid(jid) {
+  const bare = destJid(jid);
+  if (!lidOf(bare)) return bare;
+
+  const known = lidMap.getPn(bare);
+  if (known) return known;
+
+  // Cadangan 1: mapping internal Baileys (bila versi ini menyimpannya).
+  const mapping = sock && sock.signalRepository && sock.signalRepository.lidMapping;
+  if (mapping) {
+    for (const fn of ['getPNForLID', 'getPnForLid', 'getPhoneNumber']) {
+      if (typeof mapping[fn] !== 'function') continue;
+      try {
+        const pn = pnOf(await mapping[fn](bare));
+        if (pn) {
+          lidMap.remember(bare, pn);
+          return pn;
+        }
+      } catch {
+        /* coba cara lain */
+      }
+    }
+  }
+
+  // Cadangan 2: tanya WhatsApp langsung.
+  try {
+    const res = await sock.onWhatsApp(bare);
+    if (Array.isArray(res)) {
+      const hit = res.find((x) => x && x.jid && pnOf(x.jid));
+      const pn = hit ? pnOf(hit.jid) : '';
+      if (pn) {
+        lidMap.remember(bare, pn);
+        return pn;
+      }
+    }
+  } catch {
+    /* tetap pakai LID sebagai upaya terakhir */
+  }
+
+  log.debug('WA', `LID belum dipetakan: ${bare}`);
+  return bare;
+}
+
+/**
+ * Saat tujuan diubah dari LID ke nomor telepon, samakan remoteJid pesan yang
+ * dikutip agar WhatsApp tidak menganggapnya quote lintas-chat.
+ */
+function retargetQuoted(quoted, target) {
+  if (!quoted || !quoted.key) return quoted;
+  const qChat = String(quoted.key.remoteJid || '');
+  if (!qChat || qChat === target) return quoted;
+  if (!lidOf(qChat) || isGroupJid(target)) return quoted;
+  return { ...quoted, key: { ...quoted.key, remoteJid: target } };
+}
+
 async function sendText(jid, text, quoted, mentions) {
-  const to = destJid(jid);
+  const base = destJid(jid);
+  // Presence ke JID LID sering diabaikan; pakai nomor asli bila sudah diketahui.
+  const to = lidMap.getPn(base) || base;
   const str = String(text);
   try {
     await sock.sendPresenceUpdate('composing', to);
@@ -275,6 +350,8 @@ module.exports = {
   hasAudio,
   downloadMedia,
   downloadQuoted,
+  rememberJids,
+  resolveSendJid,
   sendMessage,
   sendText,
   sendImage,

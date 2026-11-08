@@ -369,10 +369,33 @@ async function main() {
         if (!msg || !msg.key || !msg.message) continue;
         metrics.inc('messages');
         metrics.setGauge('lastMessageAt', Date.now());
+        // Simpan pasangan LID -> nomor telepon supaya balasan tidak dikirim
+        // ke JID @lid (tidak terkirim di Baileys 6.7.x).
+        wa.rememberJids(msg.key);
         // Simpan pesan masuk agar bisa dipakai saat ada retry/quote.
         messageCache.put(msg.key, msg.message);
         const chatKey = msg.key.remoteJid || msg.key.id || 'unknown';
         messageQueue.push(chatKey, () => router.handleMessage(msg));
+      }
+    });
+
+    // Pengiriman yang ditolak WhatsApp muncul asinkron di sini, setelah
+    // sendMessage() selesai. Catat supaya kegagalan tidak senyap.
+    sock.ev.on('messages.update', (updates) => {
+      for (const u of updates || []) {
+        const info = (u && u.update) || {};
+        const stubs = info.messageStubParameters;
+        const errorStatus =
+          baileys.proto &&
+          baileys.proto.WebMessageInfo &&
+          baileys.proto.WebMessageInfo.Status &&
+          info.status === baileys.proto.WebMessageInfo.Status.ERROR;
+        if (!errorStatus && !(Array.isArray(stubs) && stubs.length)) continue;
+        const key = (u && u.key) || {};
+        log.warn(
+          `[WA] Pengiriman gagal id=${key.id || '-'} ke=${key.remoteJid || '-'} ` +
+            `status=${info.status} alasan=${JSON.stringify(stubs || [])}`
+        );
       }
     });
 
