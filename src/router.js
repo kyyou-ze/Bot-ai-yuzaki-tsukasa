@@ -1,5 +1,6 @@
 'use strict';
 
+const path = require('path');
 const log = require('./logger');
 const { OwnerDetector, WelcomeHandler, TagAllHandler, RvoHandler } = require('./features/basic');
 const { AfkFeature } = require('./features/afk');
@@ -19,6 +20,7 @@ const { GroupGuard } = require('./features/groupguard');
 const { NewsFeature } = require('./features/news');
 const { ConfigFeature } = require('./features/configcmd');
 const { UpdateFeature } = require('./features/updatecmd');
+const { PanelFeature } = require('./features/panel');
 const { VerifFeature } = require('./features/verif');
 const { TikTokAdminFeature } = require('./features/tiktokadmin');
 const { VerifStore } = require('./verifstore');
@@ -199,6 +201,7 @@ class Router {
     this.news = new NewsFeature(cfg);
     this.configCmd = new ConfigFeature(cfg);
     this.updateCmd = new UpdateFeature(updater || null);
+    this.panel = new PanelFeature(cfg, { updater: updater || null, appDir: path.resolve(__dirname, '..') });
     this.peraturan = new PeraturanFeature(store);
     this.guard = groupGuard || new GroupGuard(cfg, store);
     this.heavyLimiter = new RateLimiter({ maxEntries: 2000 });
@@ -732,6 +735,7 @@ class Router {
           '*🔧 Owner*',
           '• .config / .set <KEY> <nilai> — ubah pengaturan lewat chat',
           '• .update status|check|now|auto on|off — auto-update & restart',
+          '• .panel status|logs|install|restart — kelola panel dari chat pribadi',
           '• .animechannel status|test|news|info|cosplay|check <judul>',
           '• .tsukasa persona tsukasa1|tsukasa2 — pilih persona AI',
           '• .tsukasa mode pro on|off / .hot on|off|status',
@@ -786,6 +790,10 @@ class Router {
 
       if (UpdateFeature.isCommand(bang.cmd)) {
         if (await this.updateCmd.handle(this.sock, m, bang.rest, isOwner)) return;
+      }
+
+      if (PanelFeature.isCommand(bang.cmd)) {
+        if (await this.panel.handle(this.sock, m, bang.rest, isOwner)) return;
       }
 
       if (bang.cmd === 'ingatkan' || bang.cmd === 'remind' || bang.cmd === 'pengingat') {

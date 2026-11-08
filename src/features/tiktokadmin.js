@@ -229,7 +229,7 @@ class TikTokAdminFeature {
           `Status: ${this.statusLine()} • ${list.length} akun`,
           `Interval: tiap ${Math.max(1, Number(this.cfg.tiktokCheckMin) || 3)} menit`,
           `CN: ${this.cfg.tiktokCnKeyword || 'ECN'} • Hashtag: ${this.cfg.tiktokHashtag || '#margaecn'}`,
-          `Sumber daftar: ${this.accounts && this.accounts.source() === 'file' ? 'database/accounts.json' : '.env'}`,
+          `Sumber daftar: ${this.accounts && this.accounts.source() === 'file' ? this.accounts.file : '.env'}`,
           ...healthLines,
           '',
           list.length ? 'Akun: ' + list.join(', ') : 'Akun: (kosong)',

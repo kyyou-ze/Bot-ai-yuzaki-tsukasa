@@ -1,6 +1,7 @@
 'use strict';
 
 const { execFile } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
 const { fetchWithTimeout } = require('./util');
@@ -249,6 +250,35 @@ class Updater {
     }
   }
 
+  async _dirtyTrackedFiles() {
+    const out = (await this._git([
+      'status',
+      '--porcelain',
+      '--untracked-files=no',
+    ])).stdout.replace(/\r?\n$/, '');
+    if (!out.trim()) return [];
+    return out
+      .split('\n')
+      .map((line) => {
+        // Format porcelain v1: "XY path". Jangan trim() seluruh output karena
+        // spasi pertama adalah kolom status (mis. " M file") dan akan
+        // menggeser path kalau ikut terbuang.
+        let file = line.slice(3).trim();
+        // Format rename: "R  lama -> baru".
+        const arrow = file.indexOf(' -> ');
+        if (arrow >= 0) file = file.slice(arrow + 4).trim();
+        if (file.startsWith('"') && file.endsWith('"')) {
+          try {
+            file = JSON.parse(file);
+          } catch {
+            /* biarkan apa adanya */
+          }
+        }
+        return file;
+      })
+      .filter(Boolean);
+  }
+
   async pull(opts = {}) {
     const checked = opts.checked || (await this.check());
     if (!checked.ok) return checked;
@@ -262,12 +292,36 @@ class Updater {
     }
 
     const before = checked.local;
+
+    // Hanya stash file yang benar-benar diubah oleh update. File runtime
+    // (state, database) yang tidak disentuh commit baru dibiarkan di tempat,
+    // supaya data pengguna tidak ikut tertinggal di stash saat bot restart.
+    const incomingOut = (await this._git([
+      'diff',
+      '--name-only',
+      'HEAD',
+      'FETCH_HEAD',
+    ])).stdout.trim();
+    const incoming = incomingOut ? incomingOut.split('\n').filter(Boolean) : [];
+    const incomingSet = new Set(incoming);
+    const dirty = await this._dirtyTrackedFiles();
+    const overlap = dirty.filter((file) => incomingSet.has(file));
+
     let stashed = false;
     try {
-      if (checked.dirty) {
-        await this._git(['stash', 'push', '-m', `auto-update ${new Date().toISOString()}`]);
+      if (overlap.length) {
+        await this._git([
+          'stash',
+          'push',
+          '-m',
+          `auto-update ${new Date().toISOString()}`,
+          '--',
+          ...overlap,
+        ]);
         stashed = true;
-        log.warn('[UPDATE] Perubahan lokal disimpan di git stash.');
+        log.warn(
+          `[UPDATE] Perubahan lokal pada ${overlap.length} file yang ikut terupdate disimpan di git stash.`
+        );
       }
       await this._git(['merge', '--ff-only', 'FETCH_HEAD']);
     } catch (err) {
@@ -291,7 +345,7 @@ class Updater {
         log.info('[UPDATE] package.json berubah, menjalankan npm install...');
         await this._npm(['install', '--omit=dev', '--no-audit', '--no-fund']);
       } catch (err) {
-        await this.rollback(before, stashed);
+        await this.rollback(before, stashed, changed);
         return {
           ...checked,
           ok: false,
@@ -305,7 +359,7 @@ class Updater {
       try {
         await this._npm(['run', 'check']);
       } catch (err) {
-        await this.rollback(before, stashed);
+        await this.rollback(before, stashed, changed);
         return {
           ...checked,
           ok: false,
@@ -330,9 +384,30 @@ class Updater {
     };
   }
 
-  async rollback(commit, stashed) {
+  async rollback(commit, stashed, changed = []) {
     try {
-      await this._git(['reset', '--hard', commit]);
+      // Kembalikan HEAD & index ke commit lama, tetapi JANGAN `reset --hard`
+      // karena file runtime yang tidak terkait (state, database) bisa ikut
+      // terhapus. `--mixed` hanya menyentuh HEAD + index; isi working tree
+      // tetap utuh sampai kita memulihkan file yang benar-benar diubah update.
+      await this._git(['reset', '--mixed', commit]);
+
+      for (const file of changed) {
+        const exists = await this._git(['cat-file', '-e', `${commit}:${file}`])
+          .then(() => true)
+          .catch(() => false);
+        if (exists) {
+          await this._git(['checkout', commit, '--', file]);
+        } else {
+          // File baru dari update yang gagal; hapus hanya file ini.
+          try {
+            fs.rmSync(path.join(this.appDir, file), { force: true });
+          } catch {
+            /* biarkan jika gagal */
+          }
+        }
+      }
+
       if (stashed) {
         try {
           await this._git(['stash', 'pop']);

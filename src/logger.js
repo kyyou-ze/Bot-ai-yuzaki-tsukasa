@@ -81,7 +81,16 @@ function scalar(value) {
   if (value === undefined || value === null) return '';
   if (typeof value === 'object') {
     try {
-      return JSON.stringify(value);
+      // Error di dalam objek (mis. logger Baileys memanggil
+      // logger.error({ error }, '...')) tidak punya properti enumerable,
+      // jadi JSON.stringify akan menghasilkan {}. Ambil pesannya manual
+      // supaya penyebab kegagalan tetap terlihat di panel/notifikasi.
+      return JSON.stringify(value, (_key, item) => {
+        if (item instanceof Error) {
+          return { name: item.name, message: item.message, code: item.code, stack: item.stack };
+        }
+        return item;
+      });
     } catch {
       return String(value);
     }

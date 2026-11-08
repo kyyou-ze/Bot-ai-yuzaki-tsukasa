@@ -38,6 +38,19 @@ function intEnv(value, def) {
   return Number.isFinite(n) && n >= 0 ? n : def;
 }
 
+/**
+ * Path database TikTok lama (database/*.json) pernah ikut ter-track git dan
+ * hilang saat auto-update melakukan stash. Jika env masih berisi default lama,
+ * arahkan ke folder data/ yang baru; path kustom pengguna tetap dihormati.
+ */
+function legacyAwarePath(key, newDefault, legacyDefault) {
+  const raw = String(process.env[key] ?? '').trim();
+  if (!raw) return newDefault;
+  const resolved = path.resolve(raw);
+  if (resolved === path.resolve(legacyDefault)) return newDefault;
+  return resolved;
+}
+
 function load() {
   // Terapkan override dari chat (!config) sebelum config dibaca, supaya
   // pengaturan yang disimpan lewat WhatsApp tetap berlaku setelah restart.
@@ -143,12 +156,35 @@ function load() {
     tiktokJinaBase: getenv('TIKTOK_JINA_BASE', 'https://r.jina.ai/'),
     // Setelah kena 403/WAF, berhenti dulu selama N menit (default 10).
     tiktokWafCooldownMin: Math.max(1, intEnv(getenv('TIKTOK_WAF_COOLDOWN_MIN', '10'), 10)),
-    // Daftar akun yang diubah via command (/addakun, /delakun).
-    tiktokAccountsDb: getenv('TIKTOK_ACCOUNTS_DB', './database/accounts.json'),
-    verifDb: path.resolve(getenv('VERIF_DB', 'database/verif.json')),
-    historyUpDb: path.resolve(getenv('HISTORY_UP_DB', 'database/history_up.json')),
-    upTodayDb: path.resolve(getenv('UP_TODAY_DB', 'database/up_today.json')),
-    seenVideosDb: path.resolve(getenv('SEEN_VIDEOS_DB', 'database/seen_videos.json')),
+    // Data runtime TikTok disimpan di folder data/ (diabaikan git) supaya
+    // tidak ikut ter-stash saat auto-update. Path lama database/*.json tetap
+    // dimigrasikan otomatis agar data pengguna tidak hilang.
+    tiktokDataDir: path.resolve(getenv('TIKTOK_DATA_DIR', 'data/tiktok')),
+    tiktokAccountsDb: legacyAwarePath(
+      'TIKTOK_ACCOUNTS_DB',
+      path.resolve(getenv('TIKTOK_DATA_DIR', 'data/tiktok'), 'accounts.json'),
+      './database/accounts.json'
+    ),
+    verifDb: legacyAwarePath(
+      'VERIF_DB',
+      path.resolve(getenv('TIKTOK_DATA_DIR', 'data/tiktok'), 'verif.json'),
+      './database/verif.json'
+    ),
+    historyUpDb: legacyAwarePath(
+      'HISTORY_UP_DB',
+      path.resolve(getenv('TIKTOK_DATA_DIR', 'data/tiktok'), 'history_up.json'),
+      './database/history_up.json'
+    ),
+    upTodayDb: legacyAwarePath(
+      'UP_TODAY_DB',
+      path.resolve(getenv('TIKTOK_DATA_DIR', 'data/tiktok'), 'up_today.json'),
+      './database/up_today.json'
+    ),
+    seenVideosDb: legacyAwarePath(
+      'SEEN_VIDEOS_DB',
+      path.resolve(getenv('TIKTOK_DATA_DIR', 'data/tiktok'), 'seen_videos.json'),
+      './database/seen_videos.json'
+    ),
     // Auto-post info anime ke channel WhatsApp (bot harus admin channel).
     animeChannel: {
       enabled: boolEnv(getenv('ANIME_CHANNEL_ENABLED', 'true'), true),
@@ -247,8 +283,15 @@ function load() {
     log.warn('[WARN] MODE=PROD tapi SEND_API_KEY kosong. /send akan terbuka tanpa auth!');
   }
 
+  // Salin database TikTok dari lokasi lama ke data/ sebelum store membacanya.
+  try {
+    require('./datamigrate').migrateTikTokData(cfg);
+  } catch (err) {
+    log.warn('[MIGRASI] gagal memeriksa database TikTok lama:', err.message);
+  }
+
   // Simpan referensi cfg agar perubahan lewat chat langsung diterapkan ke
-  // objek yang sedang dipakai fitur lain (tanpa restart).
+  // objek yang sudah dipakai fitur lain (tanpa restart).
   settings.bindConfig(cfg);
   return cfg;
 }

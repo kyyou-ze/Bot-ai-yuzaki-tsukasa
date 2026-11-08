@@ -32,6 +32,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Pengaturan lewat Chat** — Owner bisa mengisi/mengubah setting penting langsung dari WhatsApp dengan `!config` atau `!set`, tanpa edit `.env` dan tanpa restart. Cocok untuk menambah link cosplay, ganti channel, atur sumber berita, batas warn, rate limit, dan lain-lain.
 - **AFK, Ping & TagAll** — `.afk turu` menandai AFK dengan alasan "turu"; bot memberi tahu saat user di-mention/di-reply dan menyambut saat user kembali. `.ping` menampilkan latency, sedangkan `.tagall <pesan>` mention semua anggota dengan pesan kustom (khusus admin grup).
 - **Mode balasan per grup** — Admin grup bisa memilih `.modegrup all|reply|call`. Default `call`: bot hanya membalas saat dipanggil `tsukasa`.
+- **Kontrol panel dari WhatsApp** — Owner bisa cek status, lihat log, menjalankan `npm install`, cek sintaks, dan restart bot langsung dari chat pribadi dengan `.panel`.
 - **Reliability (Tier 5)** — Backup sesi otomatis, reconnect backoff eksponensial, antrean unduhan global, metrik health (`GET /metrics`), notifikasi error ke owner, dan audit command owner (`.backup`, `.audit`).
 - **TagAll**, **RVO**, **Welcome**, **Owner features**.
 - **HTTP API** — `GET /`, `GET /healthz`, `GET /help`, `POST/GET /send` dengan `X-API-Key` + rate limit.
@@ -64,6 +65,7 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | Variabel | Default | Keterangan |
 | --- | --- | --- |
 | `MODE` | `MANUAL` | `MANUAL` (butuh trigger) / `AUTO` |
+| `ENV_SYNC_ENABLED` | `true` | Tambahkan variabel baru dari `.env.example` ke `.env` saat start (nilai lama tidak ditimpa) |
 | `TRIGGER` | `tsukasa` | Kata pemicu |
 | `BOT_NAME` | `Tsukasa` | Nama bot |
 | `BOT_TIMEZONE` | `Asia/Jakarta` | Zona waktu tampilan pengingat & statistik |
@@ -77,6 +79,7 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `AUTO_UPDATE_CHECK_MIN` | `10` | Interval cek update (menit) |
 | `PTERO_URL` / `PTERO_CLIENT_KEY` / `PTERO_SERVER_ID` | - | Client API panel untuk restart otomatis |
 | `AUTO_UPDATE_RESTART_MODE` | `api` | `api`, `exit`, atau `none` |
+| `PANEL_DISABLED` | `false` | `true` = matikan semua perintah `.panel` dari WhatsApp |
 | `PORT` / `SERVER_PORT` | `7860` | Port HTTP API. Di Pterodactyl, `SERVER_PORT` otomatis dipakai |
 | `HOST` | `0.0.0.0` | Host bind HTTP API |
 | `SEND_API_KEY` | - | API key untuk `/send` |
@@ -115,8 +118,9 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `TIKTOK_JINA_KEY` / `JINA_API_KEY` | - | Key Jina Reader opsional; tanpa key tetap jalan dengan rate limit lebih kecil |
 | `TIKTOK_JINA_BASE` | `https://r.jina.ai/` | Base URL Jina Reader untuk membaca profil TikTok |
 | `TIKTOK_WAF_COOLDOWN_MIN` | `10` | Lama berhenti setelah kena 403/WAF; log peringatan hanya sekali |
-| `VERIF_DB` / `HISTORY_UP_DB` / `UP_TODAY_DB` / `SEEN_VIDEOS_DB` | `./database/*.json` | Lokasi database JSON fitur verif & detector |
-| `TIKTOK_ACCOUNTS_DB` | `./database/accounts.json` | Daftar akun hasil `/addakun` & `/delakun` |
+| `TIKTOK_DATA_DIR` | `./data/tiktok` | Folder data runtime TikTok (verif, riwayat UP, cache video, akun) |
+| `VERIF_DB` / `HISTORY_UP_DB` / `UP_TODAY_DB` / `SEEN_VIDEOS_DB` | `<TIKTOK_DATA_DIR>/*.json` | Override path database JSON fitur verif & detector |
+| `TIKTOK_ACCOUNTS_DB` | `<TIKTOK_DATA_DIR>/accounts.json` | Daftar akun hasil `/addakun` & `/delakun` |
 | `ANIME_CHANNEL_ENABLED` | `true` | Aktifkan auto-post info anime ke channel |
 | `ANIME_CHANNEL_INVITE` | `0029VbC2pzO5K3zPHUeTud01` | Kode/URL invite channel tujuan |
 | `ANIME_CHANNEL_JID` | - | JID channel langsung (opsional, mis. `123@newsletter`) |
@@ -369,7 +373,7 @@ AUTO_UPDATE_RESTART_MODE=api
 Cara kerja:
 
 - Setiap `AUTO_UPDATE_CHECK_MIN` menit bot menjalankan `git fetch` dan membandingkan commit.
-- Jika ada commit baru, bot `git stash` perubahan lokal (jika ada), lalu `git pull --ff-only`.
+- Jika ada commit baru, bot hanya mem-stash file yang benar-benar diubah commit baru, lalu `git merge --ff-only`. File runtime yang tidak ikut terupdate dibiarkan di tempat.
 - Jika `package.json`/`package-lock.json` berubah, bot menjalankan `npm install --omit=dev`.
 - Bot menjalankan `npm run check`; kalau sintaks rusak, update **dibatalkan dan di-rollback**.
 - Setelah sukses, bot memanggil `POST /api/client/servers/{id}/power` dengan signal `restart`.
@@ -385,8 +389,36 @@ Catatan penting:
 
 - Tanpa client API key, kode tetap bisa ditarik otomatis, tetapi bot tidak bisa restart sendiri. Restart manual lewat panel agar kode baru dipakai.
 - Interval minimal 1 menit. Ini polling, bukan webhook instan, karena mengubah egg/startup command butuh akses admin panel.
-- `.env`, `session/`, `database/`, dan state runtime tidak ikut terhapus karena diabaikan git dan tidak di-stash sembarangan.
+- `.env`, `session/`, `data/`, `database/`, dan state runtime tidak ikut terhapus karena diabaikan git dan tidak di-stash sembarangan.
+- Saat start/restart, `.env` disinkronkan otomatis dengan `.env.example`: variabel baru yang belum ada di `.env` ditambahkan dengan nilai default, sedangkan nilai yang sudah kamu isi tidak pernah ditimpa. Matikan dengan `ENV_SYNC_ENABLED=false`.
+- Data akun/verif/riwayat TikTok disimpan di `data/tiktok/`. Data lama dari `database/*.json` dimigrasikan otomatis sekali saat bot pertama dijalankan setelah update. Updater hanya mem-stash file yang benar-benar diubah commit baru, jadi data runtime tidak tertinggal di stash saat restart.
 - Jika repo privat, isi `GITHUB_TOKEN` (read-only cukup) agar `git fetch` diizinkan.
+
+## Kontrol Panel dari WhatsApp
+
+Owner bisa mengelola server/panel langsung dari **chat pribadi** tanpa membuka Pterodactyl. Semua aksi hanya berjalan untuk owner, dan perintah ditolak di grup agar output server tidak bocor ke member.
+
+```text
+.panel status          # status bot, RAM, Node/NPM, repo, dan kesiapan restart
+.panel logs 20         # 20 log terakhir (default 20, maks 40)
+.panel logs 30 error   # filter level: debug|info|warn|error
+.panel install         # npm install --omit=dev
+.panel check           # npm run check (validasi sintaks)
+.panel run check       # jalankan script package.json lain (kecuali start)
+.panel npm run check   # bentuk npm langsung
+.panel restart         # restart lewat Pterodactyl Client API
+.panel start           # alias restart
+.panel restart force   # keluar paksa; panel harus auto-restart saat crash
+```
+
+Catatan:
+
+- `panel restart` memakai konfigurasi `PTERO_*` yang sama dengan `.update`. Jika belum diisi, bot menolak dan menyarankan `panel restart force`.
+- `panel restart force` **mematikan bot**. Gunakan hanya jika egg/panel dikonfigurasi auto-restart; kalau tidak, nyalakan manual dari panel.
+- `panel run start` sengaja diblokir karena akan membuat instance bot kedua. Gunakan `panel restart`.
+- Aksi `install`/`check`/`run` dibatasi timeout dan output maksimal 3.000 karakter terakhir agar chat tidak dibanjiri.
+- Tidak ada shell bebas (`panel exec ...`). Hanya aksi whitelist di atas yang tersedia.
+- Set `PANEL_DISABLED=true` untuk mematikan seluruh kontrol panel dari chat.
 
 ## Berita Anime, Gacha & Carousel Instagram
 
@@ -583,9 +615,9 @@ Tanpa edit `.env` dan tanpa restart (owner atau admin grup):
 /detector off        # matikan detector (khusus owner)
 ```
 
-Daftar akun disimpan di `database/accounts.json`. Selama file itu belum punya daftar akun, bot memakai `TIKTOK_ACCOUNTS` dari `.env`. Begitu ada `/addakun` atau `/delakun`, daftar di file JSON yang menjadi acuan.
+Daftar akun disimpan di `data/tiktok/accounts.json`. Selama file itu belum punya daftar akun, bot memakai `TIKTOK_ACCOUNTS` dari `.env`. Begitu ada `/addakun` atau `/delakun`, daftar di file JSON yang menjadi acuan.
 
-Data verif disimpan di `database/verif.json`, `database/history_up.json`, `database/up_today.json`, `database/seen_videos.json`, dan `database/accounts.json` (bisa dipindah lewat env).
+Data verif disimpan di `data/tiktok/` (`verif.json`, `history_up.json`, `up_today.json`, `seen_videos.json`, `accounts.json`). Folder ini diabaikan git sehingga data tidak hilang saat update/restart. Lokasi bisa diubah lewat `TIKTOK_DATA_DIR` atau path individual `VERIF_DB`, `HISTORY_UP_DB`, `UP_TODAY_DB`, `SEEN_VIDEOS_DB`, `TIKTOK_ACCOUNTS_DB`. Data lama di `database/*.json` dimigrasikan otomatis saat pertama dijalankan.
 
 ## Grup Toolkit & Anime Roulette
 

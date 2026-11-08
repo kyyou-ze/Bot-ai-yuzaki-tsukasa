@@ -1,7 +1,24 @@
 'use strict';
 
+// Sinkronkan .env dengan .env.example SEBELUM dotenv memuatnya, supaya
+// variabel baru dari update langsung tersedia pada start/restart ini juga.
+const { syncEnvFile } = require('./src/envsync');
+const envSync = syncEnvFile();
+
 const log = require('./src/logger');
 const qrcode = require('qrcode-terminal');
+
+if (envSync.created) {
+  log.info('[ENV] .env belum ada, dibuat dari .env.example.');
+} else if (envSync.added && envSync.added.length) {
+  log.info(`[ENV] ${envSync.added.length} variabel baru ditambahkan dari .env.example: ${envSync.added.join(', ')}`);
+} else if (envSync.disabled) {
+  log.info('[ENV] Sinkronisasi .env dimatikan (ENV_SYNC_ENABLED=off).');
+} else if (!envSync.ok && envSync.reason === 'no-example') {
+  log.warn('[ENV] .env.example tidak ditemukan; sinkronisasi .env dilewati.');
+} else if (!envSync.ok) {
+  log.warn(`[ENV] Gagal menyinkronkan .env: ${envSync.reason}`);
+}
 
 const { load } = require('./src/config');
 const settings = require('./src/settings');

@@ -38,6 +38,12 @@ database/logs.json
 database/logs.json.*.tmp
 database/settings.json
 database/settings.json.*.tmp
+# Data runtime TikTok (versi lama, sebelum pindah ke data/tiktok/)
+database/accounts.json
+database/verif.json
+database/history_up.json
+database/up_today.json
+database/seen_videos.json
 # Audit log owner (JSONL + hasil rotasi)
 database/audit.log
 database/audit.log.1

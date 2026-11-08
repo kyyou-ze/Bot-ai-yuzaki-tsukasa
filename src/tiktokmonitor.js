@@ -504,7 +504,7 @@ class TikTokMonitor {
     log.error(`[TIKTOK] ${account} gagal: ${shortError(err)}`);
   }
 
-  /** Daftar akun aktif: dari database/accounts.json bila sudah diubah. */
+  /** Daftar akun aktif: dari data/tiktok/accounts.json bila sudah diubah. */
   getAccounts() {
     if (this.accountsStore) return this.accountsStore.list();
     return Array.isArray(this.cfg.tiktokAccounts) ? this.cfg.tiktokAccounts : [];

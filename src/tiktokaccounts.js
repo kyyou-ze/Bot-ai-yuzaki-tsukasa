@@ -37,14 +37,14 @@ function normalizeAccountList(list) {
  * /addakun, /delakun, /listakun, dan /detector tanpa mengedit .env.
  *
  * Sumber awal:
- * - Kalau database/accounts.json belum berisi `accounts`, pakai TIKTOK_ACCOUNTS
- *   dari .env/panel.
+ * - Kalau data/tiktok/accounts.json belum berisi `accounts`, pakai
+ *   TIKTOK_ACCOUNTS dari .env/panel.
  * - Setelah ada perubahan dari command, nilai di file JSON yang dipakai.
  */
 class TikTokAccounts {
   constructor(cfg) {
     this.cfg = cfg || {};
-    this.file = this.cfg.tiktokAccountsDb || './database/accounts.json';
+    this.file = this.cfg.tiktokAccountsDb || './data/tiktok/accounts.json';
     this.envAccounts = normalizeAccountList(this.cfg.tiktokAccounts);
     this.envEnabled = this.cfg.tiktokMonitorEnabled !== false;
 
