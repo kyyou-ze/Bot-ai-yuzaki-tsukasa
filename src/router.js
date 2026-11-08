@@ -23,6 +23,8 @@ const { VerifFeature } = require('./features/verif');
 const { TikTokAdminFeature } = require('./features/tiktokadmin');
 const { VerifStore } = require('./verifstore');
 const newsfeeds = require('./newsfeeds');
+const metrics = require('./metrics');
+const { downloadQueue } = require('./downloadqueue');
 const { RateLimiter } = require('./ratelimit');
 const tiktok = require('./tiktok');
 const llm = require('./llm');
@@ -153,12 +155,16 @@ class Router {
     tiktokMonitor,
     tiktokAccounts,
     groupGuard,
-    updater
+    updater,
+    backup,
+    audit
   ) {
     this.cfg = cfg;
     this.sock = sock;
     this.ready = typeof ready === 'function' ? ready : () => Boolean(ready);
     this.store = store;
+    this.backup = backup || null;
+    this.audit = audit || null;
     this.animeChannel = animeChannel || null;
     this.groupTools = groupTools || new GroupTools(cfg, store);
     this.afk = new AfkFeature(cfg, store);
@@ -316,6 +322,14 @@ class Router {
     const guardCount = this.store && this.store.listGroupGuards
       ? this.store.listGroupGuards().length
       : 0;
+    const snap = metrics.snapshot();
+    const dl = downloadQueue.status();
+    const backupText = this.backup ? this.backup.statusText() : 'tidak tersedia';
+    const auditText = this.audit
+      ? this.audit.enabled
+        ? 'aktif'
+        : 'nonaktif'
+      : 'tidak tersedia';
 
     const lines = [
       '🩺 *Health Tsukasa*',
@@ -325,8 +339,20 @@ class Router {
       `• Node       : ${process.version}`,
       `• Berita     : cache ${cache.entries} entri (TTL ${cache.ttlMin} menit)`,
       `• Unduhan    : ${anime.active.length} aktif, ${anime.queued.length} antre (paralel ${anime.max})`,
+      `• Unduhan WA : ${dl.active} aktif, ${dl.pending} antre (paralel ${dl.concurrency})`,
       `• Moderasi   : ${guardCount} grup dipantau`,
+      `• Backup     : ${backupText}`,
+      `• Audit      : ${auditText}`,
+      `• Metrik     : ${snap.counters.messages} pesan, ${snap.counters.commands} command, ${snap.counters.errors} error`,
+      `• Reconnect  : ${snap.counters.reconnects}x (delay terakhir ${Math.round(
+        Number(snap.gauges.reconnectDelayMs) || 0
+      )}ms)`,
     ];
+    if (snap.lastError) {
+      lines.push(
+        `• Error akhir: [${snap.lastError.tag || 'APP'}] ${String(snap.lastError.message).slice(0, 120)}`
+      );
+    }
     if (channel) {
       lines.push(
         `• Channel    : ${channel.running ? 'scheduler jalan' : 'scheduler berhenti'}`,
@@ -410,6 +436,19 @@ class Router {
     const cmdName = isCmd && parsed ? parsed.cmd : '';
     const cmdRest = isCmd && parsed ? parsed.rest : '';
 
+    if (isCmd) {
+      metrics.inc('commands');
+      if (isOwner) {
+        metrics.inc('ownerCommands');
+        // Audit hanya command owner, tanpa menyimpan isi command sensitif.
+        if (this.audit) {
+          this.audit
+            .record({ chat, sender, command: cmdName, rest: cmdRest })
+            .catch(() => {});
+        }
+      }
+    }
+
     // AFK: cabut status saat user aktif kembali, dan beri tahu jika ada
     // member AFK yang di-mention/di-reply. Command .afk/.back dikecualikan.
     if (!(isCmd && AfkFeature.isCommand(cmdName))) {
@@ -485,6 +524,82 @@ class Router {
         return;
       }
 
+      if (bang.cmd === 'backup') {
+        if (!isOwner) {
+          await wa.sendText(chat, 'Perintah ini khusus owner.', m);
+          return;
+        }
+        if (!this.backup) {
+          await wa.sendText(chat, 'Fitur backup tidak tersedia.', m);
+          return;
+        }
+        const sub = String(bang.rest || '').trim().toLowerCase();
+        if (sub === 'run' || sub === 'now' || sub === 'sekarang') {
+          await wa.sendText(chat, '💾 Menjalankan backup sesi...', m).catch(() => {});
+          const res = await this.backup.runNow();
+          if (res.ok) {
+            await wa.sendText(
+              chat,
+              `✅ Backup selesai: ${res.files} file (${Math.round(
+                (res.durationMs || 0) / 1000
+              )} detik)\n${res.path}`,
+              m
+            );
+          } else {
+            await wa.sendText(chat, `❌ Backup gagal: ${res.reason || 'unknown'}`, m);
+          }
+          return;
+        }
+        const st = this.backup.status();
+        const lines = [
+          '💾 *Session Backup*',
+          `• Status   : ${st.enabled ? (st.running ? 'sedang berjalan' : 'aktif') : 'nonaktif'}`,
+          `• Folder   : ${st.dir}`,
+          `• Interval : ${st.intervalH} jam`,
+          `• Disimpan : ${st.keep} backup terakhir`,
+        ];
+        if (st.last) {
+          lines.push(
+            `• Terakhir : ${new Date(st.last.at).toLocaleString('id-ID')} (${st.last.files} file)`
+          );
+        }
+        if (st.lastError) lines.push(`• Error    : ${st.lastError}`);
+        lines.push('', 'Gunakan .backup run untuk backup sekarang.');
+        await wa.sendText(chat, lines.join('\n'), m);
+        return;
+      }
+
+      if (bang.cmd === 'audit') {
+        if (!isOwner) {
+          await wa.sendText(chat, 'Perintah ini khusus owner.', m);
+          return;
+        }
+        if (!this.audit) {
+          await wa.sendText(chat, 'Fitur audit tidak tersedia.', m);
+          return;
+        }
+        const sub = String(bang.rest || '').trim().toLowerCase();
+        if (sub === 'clear' || sub === 'hapus' || sub === 'reset') {
+          await this.audit.clear();
+          await wa.sendText(chat, '🗑️ Audit log dibersihkan.', m);
+          return;
+        }
+        const limit = Math.max(1, Math.min(50, parseInt(sub, 10) || 10));
+        const rows = await this.audit.recent(limit);
+        if (rows.length === 0) {
+          await wa.sendText(chat, '📝 Audit log masih kosong.', m);
+          return;
+        }
+        const lines = ['📝 *Audit Command Owner*'];
+        for (const row of rows) {
+          const when = new Date(row.at).toLocaleString('id-ID');
+          const rest = row.rest ? ` → ${row.rest}` : '';
+          lines.push(`• ${when} | ${row.command}${rest} | ${userPart(row.sender) || '-'}`);
+        }
+        await wa.sendText(chat, lines.join('\n'), m);
+        return;
+      }
+
       if (bang.cmd === 'help' || bang.cmd === 'menu') {
         const userName = memory.getUserName(sender) || '';
         const greeting = userName ? `Hai ${userName}!` : 'Hai!';
@@ -548,7 +663,7 @@ class Router {
           '• .detector on|off|status — kontrol detector (on/off owner)',
           '',
           '*🛠️ Admin Grup*',
-          '• .tagall — mention semua anggota',
+          '• .tagall <pesan> — mention semua anggota dengan pesan kustom',
           '• .peraturan on|off|status — moderasi grup',
           '• .antilink on|off / .antilink allow domain.com',
           '• .antispam on|off',
@@ -565,6 +680,8 @@ class Router {
           '• .tsukasa persona tsukasa1|tsukasa2 — pilih persona AI',
           '• .tsukasa mode pro on|off / .hot on|off|status',
           '• .geminikey list|add <key>|remove <key>',
+          '• .backup [status|run] — backup sesi WhatsApp',
+          '• .audit [jumlah|clear] — audit command owner',
           '',
           '*💡 Tips*',
           '• Chat pribadi: reply pesan apa pun, aku tetap jawab.',
@@ -1080,8 +1197,8 @@ class Router {
       this.aiTools.systemPrompt({ allowSearch: true })
     );
 
-    let parsed = this.aiTools.parse(rawReply);
-    const searchReq = this.aiTools.searchRequest(parsed.actions);
+    let aiParsed = this.aiTools.parse(rawReply);
+    const searchReq = this.aiTools.searchRequest(aiParsed.actions);
 
     // Two-phase search: kalau model hanya minta cari, ambil hasil web lalu
     // panggil model sekali lagi tanpa izin search.
@@ -1104,10 +1221,10 @@ class Router {
         adult,
         this.aiTools.systemPrompt({ allowSearch: false })
       );
-      parsed = this.aiTools.parse(rawReply);
+      aiParsed = this.aiTools.parse(rawReply);
     }
 
-    const reply = String(parsed.text || '').trim();
+    const reply = String(aiParsed.text || '').trim();
     memory.saveTurn(chat, 'user', txt);
     if (reply) memory.saveTurn(chat, 'assistant', reply);
 
@@ -1115,7 +1232,7 @@ class Router {
       const out = this.owner.decorate(isOwner, reply);
       await wa.sendText(chat, out.text, m, out.mentions);
     }
-    await this.aiTools.run(chat, m, parsed.actions, txt);
+    await this.aiTools.run(chat, m, aiParsed.actions, txt);
   }
 
   async handleAdultMode(chat, m, isOwner, arg) {

@@ -5,6 +5,7 @@ const pino = require('pino');
 const log = require('./logger');
 const { destJid, isGroupJid } = require('./util');
 const { messageCache } = require('./messagecache');
+const { downloadQueue } = require('./downloadqueue');
 
 // Pino menulis JSON per baris. Alihkan semuanya ke logger aplikasi supaya
 // output panel tetap satu format: [waktu] [LEVEL] [TAG] pesan.
@@ -140,10 +141,12 @@ function hasAudio(content) {
 async function downloadMedia(messageLike) {
   if (!sock) throw new Error('WhatsApp belum terhubung');
   const downloadMediaMessage = getBaileysFn('downloadMediaMessage');
-  return downloadMediaMessage(messageLike, 'buffer', {}, {
-    logger,
-    reuploadRequest: sock.updateMediaMessage,
-  });
+  return downloadQueue.run('wa:media', () =>
+    downloadMediaMessage(messageLike, 'buffer', {}, {
+      logger,
+      reuploadRequest: sock.updateMediaMessage,
+    })
+  );
 }
 
 /**

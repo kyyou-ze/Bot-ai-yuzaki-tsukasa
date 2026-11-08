@@ -21,6 +21,10 @@ const { VerifStore } = require('./src/verifstore');
 const { TikTokAccounts } = require('./src/tiktokaccounts');
 const { TikTokMonitor } = require('./src/tiktokmonitor');
 const { Updater } = require('./src/updater');
+const metrics = require('./src/metrics');
+const { downloadQueue } = require('./src/downloadqueue');
+const { SessionBackup } = require('./src/backup');
+const { AuditLog } = require('./src/audit');
 
 // Logger Baileys sudah diarahkan ke logger aplikasi (lihat src/wa.js).
 const logger = wa.logger;
@@ -73,6 +77,36 @@ async function main() {
   const store = new Store(cfg.stateDb);
   let waReady = false;
   const isReady = () => waReady;
+  const backup = new SessionBackup(cfg);
+  const audit = new AuditLog(cfg);
+  downloadQueue.setConcurrency(cfg.downloadQueueConcurrency);
+
+  // Error hook: catat metrik dan kirim notifikasi ke owner dengan cooldown.
+  let lastAlertAt = 0;
+  let alertInFlight = false;
+  log.setErrorHook(({ tag, message }) => {
+    metrics.recordError(message, { tag });
+    if (!cfg.healthAlertEnabled || alertInFlight || !waReady) return;
+    const cooldownMs = Math.max(10, Number(cfg.healthAlertCooldownSec) || 120) * 1000;
+    const now = Date.now();
+    if (now - lastAlertAt < cooldownMs) return;
+    const to = ownerTarget(cfg);
+    if (!to) return;
+    lastAlertAt = now;
+    alertInFlight = true;
+    const text = [
+      '⚠️ *Error Tsukasa*',
+      `• Tag: ${tag || 'APP'}`,
+      `• Pesan: ${String(message || '-').slice(0, 300)}`,
+      `• Total error: ${metrics.snapshot().counters.errors}`,
+    ].join('\n');
+    wa
+      .sendText(to, text)
+      .catch(() => {})
+      .finally(() => {
+        alertInFlight = false;
+      });
+  });
   const animeChannel = new AnimeChannelPoster(cfg, store, isReady);
   const reminders = new Reminders(cfg);
   const groupTools = new GroupTools(cfg, store);
@@ -108,10 +142,26 @@ async function main() {
       if (waReady) updater.reschedule();
       else updater.stop();
     }
+    if (key.startsWith('SESSION_BACKUP_')) {
+      backup.stop();
+      backup.configure(cfg);
+      if (cfg.sessionBackupEnabled) backup.start();
+    }
+    if (key === 'DOWNLOAD_QUEUE_CONCURRENCY') {
+      downloadQueue.setConcurrency(cfg.downloadQueueConcurrency);
+    }
+    if (
+      key === 'AUDIT_LOG_ENABLED' ||
+      key === 'AUDIT_LOG_PATH' ||
+      key === 'AUDIT_LOG_MAX_BYTES'
+    ) {
+      audit.configure(cfg);
+    }
   });
 
   const api = new HttpApi(cfg, isReady);
   api.start();
+  backup.start();
 
   log.info(`[BOOT] ${cfg.botName} | mode ${cfg.mode} | trigger "${cfg.trigger}"`);
   log.info(
@@ -181,7 +231,9 @@ async function main() {
       tiktokMonitor,
       tiktokAccounts,
       groupGuard,
-      updater
+      updater,
+      backup,
+      audit
     );
 
     sock.ev.on('creds.update', saveCreds);
@@ -214,11 +266,18 @@ async function main() {
       if (connection === 'open') {
         waReady = true;
         reconnectAttempts = 0;
+        metrics.setGauge('waReady', 1);
+        metrics.setGauge('reconnectAttempts', 0);
+        metrics.setGauge('reconnectDelayMs', 0);
         if (reconnectTimer) {
           clearTimeout(reconnectTimer);
           reconnectTimer = null;
         }
         log.info(`[WA] Terhubung | ${cfg.botName} siap menerima pesan`);
+        // Backup pertama setelah sesi benar-benar ada (mis. setelah pairing).
+        if (cfg.sessionBackupEnabled && !backup.last) {
+          backup.runNow().catch(() => {});
+        }
         animeChannel.start();
         reminders.start();
         groupTools.start();
@@ -229,6 +288,7 @@ async function main() {
 
       if (connection === 'connecting') {
         waReady = false;
+        metrics.setGauge('waReady', 0);
         animeChannel.stop();
         groupTools.stop();
         groupGuard.stop();
@@ -239,6 +299,7 @@ async function main() {
 
       if (connection === 'close') {
         waReady = false;
+        metrics.setGauge('waReady', 0);
         animeChannel.stop();
         reminders.stop();
         groupTools.stop();
@@ -259,7 +320,18 @@ async function main() {
         }
 
         reconnectAttempts += 1;
-        const delay = Math.min(30000, 2000 * reconnectAttempts);
+        metrics.inc('reconnects');
+        // Backoff eksponensial dengan jitter ±10% agar banyak bot tidak
+        // reconnect serentak. Batas atas diatur RECONNECT_MAX_DELAY_SEC.
+        const maxDelayMs = Math.max(5000, Number(cfg.reconnectMaxDelaySec) || 60) * 1000;
+        const expDelay = Math.min(
+          maxDelayMs,
+          2000 * Math.pow(2, Math.max(0, reconnectAttempts - 1))
+        );
+        const jitter = Math.floor(expDelay * (Math.random() * 0.2 - 0.1));
+        const delay = Math.max(1000, Math.min(maxDelayMs, expDelay + jitter));
+        metrics.setGauge('reconnectAttempts', reconnectAttempts);
+        metrics.setGauge('reconnectDelayMs', delay);
         log.warn(`[WA] Terputus (code=${statusCode || '?'}). Reconnect dalam ${delay}ms...`);
         if (reconnectTimer) return;
         reconnectTimer = setTimeout(() => {
@@ -281,6 +353,8 @@ async function main() {
 
       for (const msg of messages) {
         if (!msg || !msg.key || !msg.message) continue;
+        metrics.inc('messages');
+        metrics.setGauge('lastMessageAt', Date.now());
         // Simpan pesan masuk agar bisa dipakai saat ada retry/quote.
         messageCache.put(msg.key, msg.message);
         const chatKey = msg.key.remoteJid || msg.key.id || 'unknown';
@@ -300,6 +374,7 @@ async function main() {
   process.on('SIGINT', () => {
     shuttingDown = true;
     log.info('[BOOT] SIGINT | menutup...');
+    backup.stop();
     animeChannel.stop();
     groupTools.stop();
     groupGuard.stop();
@@ -316,6 +391,7 @@ async function main() {
   process.on('SIGTERM', () => {
     shuttingDown = true;
     log.info('[BOOT] SIGTERM | menutup...');
+    backup.stop();
     animeChannel.stop();
     groupTools.stop();
     groupGuard.stop();

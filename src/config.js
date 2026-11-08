@@ -202,6 +202,34 @@ function load() {
       downloadSec: Math.max(0, intEnv(getenv('RATE_DOWNLOAD_SEC', '30'), 30)),
       channelSec: Math.max(0, intEnv(getenv('RATE_CHANNEL_SEC', '30'), 30)),
     },
+    // Tier 5: reliability. Backup sesi otomatis, reconnect backoff,
+    // antrean unduhan, metrik kesehatan, dan audit command owner.
+    sessionBackupEnabled: boolEnv(getenv('SESSION_BACKUP_ENABLED', 'true'), true),
+    sessionBackupIntervalH: Math.max(
+      1,
+      intEnv(getenv('SESSION_BACKUP_INTERVAL_H', '6'), 6)
+    ),
+    sessionBackupDir: path.resolve(getenv('SESSION_BACKUP_DIR', 'backups/session')),
+    sessionBackupKeep: Math.max(1, Math.min(100, intEnv(getenv('SESSION_BACKUP_KEEP', '7'), 7))),
+    reconnectMaxDelaySec: Math.max(
+      5,
+      Math.min(600, intEnv(getenv('RECONNECT_MAX_DELAY_SEC', '60'), 60))
+    ),
+    downloadQueueConcurrency: Math.max(
+      1,
+      Math.min(10, intEnv(getenv('DOWNLOAD_QUEUE_CONCURRENCY', '2'), 2))
+    ),
+    healthAlertEnabled: boolEnv(getenv('HEALTH_ALERT_ENABLED', 'true'), true),
+    healthAlertCooldownSec: Math.max(
+      10,
+      intEnv(getenv('HEALTH_ALERT_COOLDOWN_SEC', '120'), 120)
+    ),
+    auditLogEnabled: boolEnv(getenv('AUDIT_LOG_ENABLED', 'true'), true),
+    auditLogPath: path.resolve(getenv('AUDIT_LOG_PATH', 'database/audit.log')),
+    auditLogMaxBytes: Math.max(
+      64 * 1024,
+      intEnv(getenv('AUDIT_LOG_MAX_BYTES', String(512 * 1024)), 512 * 1024)
+    ),
   };
 
   let keys = splitKeys(process.env.GEMINI_API_KEYS);

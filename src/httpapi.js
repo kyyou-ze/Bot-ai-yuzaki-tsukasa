@@ -4,6 +4,8 @@ const log = require('./logger');
 const http = require('http');
 const { destJid, onlyDigits } = require('./util');
 const wa = require('./wa');
+const metrics = require('./metrics');
+const { downloadQueue } = require('./downloadqueue');
 
 function clientIP(req) {
   const xff = String(req.headers['x-forwarded-for'] || '');
@@ -110,9 +112,27 @@ class HttpApi {
         200,
         'Endpoints:\n' +
           'GET /healthz -> ok\n' +
+          'GET /metrics -> metrik runtime (JSON)\n' +
           'GET /help -> bantuan ini\n' +
           'POST/GET /send?to=62xxxx&text=... (Header: X-API-Key)\n'
       );
+      return;
+    }
+
+    if (url.pathname === '/metrics') {
+      // Metrik memuat pesan error terakhir; lindungi dengan API key yang sama
+      // bila SEND_API_KEY dikonfigurasi.
+      if (this.cfg.sendApiKey && req.headers['x-api-key'] !== this.cfg.sendApiKey) {
+        this.send(res, 401, 'unauthorized');
+        return;
+      }
+      const snap = metrics.snapshot();
+      const body = JSON.stringify({
+        ...snap,
+        waReady: Boolean(this.isReady()),
+        downloadQueue: downloadQueue.status(),
+      });
+      this.send(res, 200, body, 'application/json; charset=utf-8');
       return;
     }
 

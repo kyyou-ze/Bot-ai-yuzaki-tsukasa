@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { downloadQueue } = require('./downloadqueue');
 
 const UA = 'wa-tsukasa-bot/2.0';
 
@@ -117,18 +118,31 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 60000) {
 }
 
 async function downloadBytes(url, max = 0, timeoutMs = 90000) {
-  const res = await fetchWithTimeout(url, { headers: { 'User-Agent': UA }, redirect: 'follow' }, timeoutMs);
-  if (!res.ok) throw new Error(`http ${res.status} ${res.statusText}`);
-  const ct = (res.headers.get('content-type') || '').split(';')[0].trim();
-  const len = Number(res.headers.get('content-length') || 0);
-  if (max > 0 && len > 0 && len > max) {
-    throw new Error(`file too large: ${len} > ${max}`);
+  let label = 'http';
+  try {
+    const parsed = new URL(url);
+    label = `http:${parsed.hostname}`.slice(0, 80);
+  } catch {
+    /* URL tidak valid; biarkan fetch yang memberi error */
   }
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (max > 0 && buf.length > max) {
-    throw new Error(`file too large after read: ${buf.length} > ${max}`);
-  }
-  return { data: buf, mime: ct };
+  return downloadQueue.run(label, async () => {
+    const res = await fetchWithTimeout(
+      url,
+      { headers: { 'User-Agent': UA }, redirect: 'follow' },
+      timeoutMs
+    );
+    if (!res.ok) throw new Error(`http ${res.status} ${res.statusText}`);
+    const ct = (res.headers.get('content-type') || '').split(';')[0].trim();
+    const len = Number(res.headers.get('content-length') || 0);
+    if (max > 0 && len > 0 && len > max) {
+      throw new Error(`file too large: ${len} > ${max}`);
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (max > 0 && buf.length > max) {
+      throw new Error(`file too large after read: ${buf.length} > ${max}`);
+    }
+    return { data: buf, mime: ct };
+  });
 }
 
 async function headInfo(url, timeoutMs = 30000) {

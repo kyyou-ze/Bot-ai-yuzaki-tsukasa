@@ -897,6 +897,130 @@ const DEFS = [
     values: ['api', 'exit', 'none'],
     default: 'api',
   },
+
+  // --- Reliability (Tier 5) ---
+  {
+    key: 'SESSION_BACKUP_ENABLED',
+    group: 'reliability',
+    label: 'Aktifkan backup sesi otomatis',
+    type: 'bool',
+    default: true,
+    apply: (cfg, v) => {
+      cfg.sessionBackupEnabled = v;
+    },
+  },
+  {
+    key: 'SESSION_BACKUP_INTERVAL_H',
+    group: 'reliability',
+    label: 'Interval backup sesi (jam)',
+    type: 'int',
+    min: 1,
+    max: 168,
+    default: 6,
+    apply: (cfg, v) => {
+      cfg.sessionBackupIntervalH = v;
+    },
+  },
+  {
+    key: 'SESSION_BACKUP_DIR',
+    group: 'reliability',
+    label: 'Folder penyimpanan backup sesi',
+    type: 'string',
+    default: 'backups/session',
+    apply: (cfg, v) => {
+      cfg.sessionBackupDir = path.resolve(v);
+    },
+  },
+  {
+    key: 'SESSION_BACKUP_KEEP',
+    group: 'reliability',
+    label: 'Jumlah backup terakhir yang disimpan',
+    type: 'int',
+    min: 1,
+    max: 100,
+    default: 7,
+    apply: (cfg, v) => {
+      cfg.sessionBackupKeep = v;
+    },
+  },
+  {
+    key: 'RECONNECT_MAX_DELAY_SEC',
+    group: 'reliability',
+    label: 'Batas maksimal jeda reconnect (detik)',
+    type: 'int',
+    min: 5,
+    max: 600,
+    default: 60,
+    apply: (cfg, v) => {
+      cfg.reconnectMaxDelaySec = v;
+    },
+  },
+  {
+    key: 'DOWNLOAD_QUEUE_CONCURRENCY',
+    group: 'reliability',
+    label: 'Jumlah unduhan media paralel',
+    type: 'int',
+    min: 1,
+    max: 10,
+    default: 2,
+    apply: (cfg, v) => {
+      cfg.downloadQueueConcurrency = v;
+    },
+  },
+  {
+    key: 'HEALTH_ALERT_ENABLED',
+    group: 'reliability',
+    label: 'Kirim notifikasi error ke owner',
+    type: 'bool',
+    default: true,
+    apply: (cfg, v) => {
+      cfg.healthAlertEnabled = v;
+    },
+  },
+  {
+    key: 'HEALTH_ALERT_COOLDOWN_SEC',
+    group: 'reliability',
+    label: 'Cooldown notifikasi error (detik)',
+    type: 'int',
+    min: 10,
+    max: 3600,
+    default: 120,
+    apply: (cfg, v) => {
+      cfg.healthAlertCooldownSec = v;
+    },
+  },
+  {
+    key: 'AUDIT_LOG_ENABLED',
+    group: 'reliability',
+    label: 'Aktifkan audit command owner',
+    type: 'bool',
+    default: true,
+    apply: (cfg, v) => {
+      cfg.auditLogEnabled = v;
+    },
+  },
+  {
+    key: 'AUDIT_LOG_PATH',
+    group: 'reliability',
+    label: 'Lokasi file audit log',
+    type: 'string',
+    default: 'database/audit.log',
+    apply: (cfg, v) => {
+      cfg.auditLogPath = path.resolve(v);
+    },
+  },
+  {
+    key: 'AUDIT_LOG_MAX_BYTES',
+    group: 'reliability',
+    label: 'Ukuran maksimal audit log sebelum rotasi (byte)',
+    type: 'int',
+    min: 65536,
+    max: 10485760,
+    default: 524288,
+    apply: (cfg, v) => {
+      cfg.auditLogMaxBytes = v;
+    },
+  },
 ];
 
 const BY_KEY = new Map();
@@ -916,6 +1040,7 @@ const GROUPS = {
   sticker: 'Sticker Reply',
   ai: 'AI Tools',
   update: 'Auto Update',
+  reliability: 'Reliability',
 };
 
 let overrides = {};

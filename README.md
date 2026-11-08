@@ -31,6 +31,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Health & Rate Limit** — `!health` menampilkan status WhatsApp, uptime, RAM, cache berita, dan antrean unduhan. Command berat (`!news`, `!cosplay`, unduh episode, post channel) dibatasi agar tidak dispam.
 - **Pengaturan lewat Chat** — Owner bisa mengisi/mengubah setting penting langsung dari WhatsApp dengan `!config` atau `!set`, tanpa edit `.env` dan tanpa restart. Cocok untuk menambah link cosplay, ganti channel, atur sumber berita, batas warn, rate limit, dan lain-lain.
 - **AFK, Ping & TagAll** — `.afk turu` menandai AFK dengan alasan "turu"; bot memberi tahu saat user di-mention/di-reply dan menyambut saat user kembali. `.ping` menampilkan latency, sedangkan `.tagall <pesan>` mention semua anggota dengan pesan kustom.
+- **Reliability (Tier 5)** — Backup sesi otomatis, reconnect backoff eksponensial, antrean unduhan global, metrik health (`GET /metrics`), notifikasi error ke owner, dan audit command owner (`.backup`, `.audit`).
 - **TagAll**, **RVO**, **Welcome**, **Owner features**.
 - **HTTP API** — `GET /`, `GET /healthz`, `GET /help`, `POST/GET /send` dengan `X-API-Key` + rate limit.
 
@@ -704,10 +705,31 @@ Semua output panel memakai format yang sama:
 - Log internal Baileys/pino ikut dirapikan dengan tag `WA`, sehingga tidak lagi berupa JSON mentah.
 - Set `LOG_STACK=false` untuk panel yang ringkas; ubah ke `true` saat sedang menelusuri bug.
 
+## Reliability (Tier 5)
+
+Bot menjaga sesi dan koneksi WhatsApp tetap sehat tanpa intervensi manual.
+
+- **Backup sesi otomatis** — folder `SESSION_DIR` disalin ke `SESSION_BACKUP_DIR` setiap `SESSION_BACKUP_INTERVAL_H` jam. Hanya `SESSION_BACKUP_KEEP` backup terakhir yang disimpan. Backup pertama langsung dijalankan saat bot start. Status/backup manual: `.backup` dan `.backup run` (owner).
+- **Reconnect backoff** — saat koneksi putus, jeda reconnect naik eksponensial (2s, 4s, 8s, ...) dengan jitter ±10%, dibatasi `RECONNECT_MAX_DELAY_SEC`. Sesi logout tetap menghentikan bot agar QR baru bisa dipindai.
+- **Antrean unduhan** — unduhan HTTP (`downloadBytes`) dan media WhatsApp (`downloadMedia`) melewati antrean global dengan batas `DOWNLOAD_QUEUE_CONCURRENCY`. Ini mencegah RAM/bandwidth habis saat banyak permintaan berat bersamaan.
+- **Metrik & health** — `.health`, `.status`, dan `GET /metrics` menampilkan jumlah pesan, command, error, reconnect, antrean unduhan, serta status backup. `GET /metrics` mengembalikan JSON.
+- **Notifikasi error owner** — setiap log level `error` dicatat ke metrik dan dikirim ke owner lewat WhatsApp, dibatasi `HEALTH_ALERT_COOLDOWN_SEC` agar tidak spam. Matikan dengan `HEALTH_ALERT_ENABLED=false`.
+- **Audit command owner** — command yang dijalankan owner ditulis ke `AUDIT_LOG_PATH` dalam format JSONL dan dirotasi saat melewati `AUDIT_LOG_MAX_BYTES`. Argumen command sensitif (`config`, `geminikey`, `set`, dll.) otomatis disamarkan. Lihat dengan `.audit [jumlah]`, bersihkan dengan `.audit clear`.
+
+Semua pengaturan di atas juga bisa diubah lewat chat:
+
+```text
+.config reliability
+.set SESSION_BACKUP_INTERVAL_H 3
+.set DOWNLOAD_QUEUE_CONCURRENCY 2
+.set HEALTH_ALERT_ENABLED off
+```
+
 ## HTTP API
 
 - `GET /` atau `GET /healthz` → `ok`
 - `GET /help` → daftar endpoint
+- `GET /metrics` → metrik runtime dalam JSON (uptime, counter, error terakhir, antrean unduhan). Jika `SEND_API_KEY` diisi, sertakan header `X-API-Key`.
 - `POST/GET /send?to=628xxx&text=...` dengan header `X-API-Key: <SEND_API_KEY>` (jika dikonfigurasi). Mendukung JSON body juga.
 
 ## Catatan Teknis

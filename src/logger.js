@@ -31,6 +31,8 @@ const original = {
 
 let entries = null;
 let sequence = 0;
+let errorHook = null;
+let hookBusy = false;
 
 function normalizeLevel(value, fallback) {
   const level = String(value || '').trim().toLowerCase();
@@ -187,6 +189,19 @@ function write(level, args) {
   const message = messageOf(rest);
   const stack = firstStack(rest);
 
+  // Hook dipakai untuk metrik & notifikasi owner. Guard `hookBusy` mencegah
+  // rekursi bila hook sendiri menulis log error.
+  if (level === 'error' && errorHook && !hookBusy) {
+    hookBusy = true;
+    try {
+      errorHook({ tag, message, stack, level });
+    } catch {
+      /* hook tidak boleh mengganggu logging */
+    } finally {
+      hookBusy = false;
+    }
+  }
+
   // Simpan bug/error ke database walau console dimatikan.
   if (LEVELS[level] >= LEVELS[dbLevel]) {
     store({
@@ -218,6 +233,9 @@ module.exports = {
   warn: (...args) => write('warn', args),
   error: (...args) => write('error', args),
   log: (...args) => write('info', args),
+  setErrorHook(fn) {
+    errorHook = typeof fn === 'function' ? fn : null;
+  },
   recent(limit = 20) {
     const data = loadDb();
     return data.slice(-Math.max(1, Number(limit) || 20));

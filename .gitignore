@@ -38,6 +38,11 @@ database/logs.json
 database/logs.json.*.tmp
 database/settings.json
 database/settings.json.*.tmp
+# Audit log owner (JSONL + hasil rotasi)
+database/audit.log
+database/audit.log.1
+# Backup sesi otomatis
+backups/
 pids/
 *.pid
 *.seed
