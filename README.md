@@ -16,6 +16,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Brat & Sticker** — `tsukasa brat <teks>` untuk sticker gaya brat. Sticker biasa dari gambar/URL/video (animated memakai ffmpeg).
 - **Sticker Pack & Auto Sticker Reply** — Bot punya pack sticker per mood (`lucu`, `sedih`, `marah`, `love`, `ngantuk`, `hai`, `kaget`). Kalau user mengirim sticker, bot kadang membalas sticker random sambil meng-quote pesan tersebut (peluang & cooldown bisa diatur). Kelola pack dari WhatsApp: `.sadd <mood>` (reply sticker), `.srandom <mood>`, `.s lucu`, `.slist`, `.sdel <mood> <nomor>`.
 - **Sticker Utility** — `.toimg` (sticker → PNG), `.ttp <teks>` (sticker teks), `.attp <teks>` (sticker teks animasi), `.qc` (quote card dari pesan yang di-reply), `.wm <teks>` (watermark sticker), dan `.stickerinfo` (info format/ukuran/frame).
+- **Sticker Transform & Emoji Mix** — `.emojimix 😀 😍` (gabung dua emoji ala Emoji Kitchen), `.flip`/`.flipv`/`.rotate <derajat>`, `.grayscale`/`.invert`/`.blur`, `.crop`, dan `.resize <px>`. Bisa dipakai pada sticker langsung maupun sticker/gambar yang di-reply.
 - **Blue Archive & Pap** — `ba` / `!ba` atau kata kunci terkait, `!pap` / `pap`.
 - **TikTok (multi-API + fallback)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Sumber TikWM otomatis dialihkan ke TikHub/tiktok-api23/Ensig bila kena WAF. Batas ukuran bisa dikonfigurasi.
 - **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 3 menit, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Akun bisa dikelola dari WhatsApp (`/addakun`, `/delakun`, `/listakun`, `/detector`). Command verif: `/verif`, `/listverif`, `/unverif`, `/siapaup`, `/cekup`, `/history` (juga bisa `Tsukasa ...` atau `.verif`).
@@ -472,6 +473,22 @@ Utility sticker (bisa direct atau reply):
 .wm @Tsukasa            # watermark sticker (reply sticker)
 .stickerinfo            # info format, ukuran, jumlah frame, size
 ```
+
+Transformasi sticker (bisa direct atau reply):
+
+```text
+.emojimix 😀 😍         # gabung dua emoji jadi sticker
+.flip                   # cermin horizontal (alias .mirror)
+.flipv                  # cermin vertikal
+.rotate 90              # putar sticker (default 90°)
+.grayscale              # hitam-putih (alias .gray / .bw)
+.invert                 # balik warna (alias .negate)
+.blur 8                 # blur (sigma default 8)
+.crop                   # potong tengah jadi persegi
+.resize 320             # perkecil sticker (alias .small)
+```
+
+Sticker animasi tetap animasi untuk transformasi yang didukung. Rotasi dengan sudut bukan kelipatan 90° pada sticker animasi otomatis memakai frame pertama.
 
 Saat user mengirim sticker, bot bisa otomatis membalas dengan sticker random sambil meng-quote sticker tersebut. Atur perilakunya di `.env`:
 

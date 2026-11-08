@@ -445,4 +445,4 @@ class StickerUtilsFeature {
   }
 }
 
-module.exports = { StickerUtilsFeature };
+module.exports = { StickerUtilsFeature, extractSticker };
