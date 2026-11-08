@@ -192,6 +192,15 @@ function rememberJids(key) {
   }
 }
 
+/** Simpan pasangan LID -> nomor telepon dari event Baileys v7. */
+function rememberLidPn(lidJid, pnJid) {
+  try {
+    return lidMap.remember(lidJid, pnJid);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Tentukan tujuan kirim yang benar. JID `@lid` pada Baileys 6.7.x tidak
  * pernah terkirim walaupun server menerimanya, jadi ubah ke nomor telepon
@@ -201,8 +210,14 @@ async function resolveSendJid(jid) {
   const bare = destJid(jid);
   if (!lidOf(bare)) return bare;
 
+  const selfPn = pnOf(sock && sock.user && sock.user.id);
   const known = lidMap.getPn(bare);
-  if (known) return known;
+  if (known) {
+    // Abaikan pemetaan rusak yang menunjuk ke nomor bot sendiri (mis. sisa
+    // versi lama yang membaca senderPn dari pesan fromMe).
+    if (!selfPn || known !== selfPn) return known;
+    lidMap.forget(bare);
+  }
 
   // Cadangan 1: mapping internal Baileys (bila versi ini menyimpannya).
   const mapping = sock && sock.signalRepository && sock.signalRepository.lidMapping;
@@ -211,7 +226,7 @@ async function resolveSendJid(jid) {
       if (typeof mapping[fn] !== 'function') continue;
       try {
         const pn = pnOf(await mapping[fn](bare));
-        if (pn) {
+        if (pn && (!selfPn || pn !== selfPn)) {
           lidMap.remember(bare, pn);
           return pn;
         }
@@ -227,7 +242,7 @@ async function resolveSendJid(jid) {
     if (Array.isArray(res)) {
       const hit = res.find((x) => x && x.jid && pnOf(x.jid));
       const pn = hit ? pnOf(hit.jid) : '';
-      if (pn) {
+      if (pn && (!selfPn || pn !== selfPn)) {
         lidMap.remember(bare, pn);
         return pn;
       }
@@ -351,6 +366,7 @@ module.exports = {
   downloadMedia,
   downloadQuoted,
   rememberJids,
+  rememberLidPn,
   resolveSendJid,
   sendMessage,
   sendText,

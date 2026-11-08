@@ -753,7 +753,7 @@ Semua pengaturan di atas juga bisa diubah lewat chat:
 
 ## Catatan Teknis
 
-- Versi Baileys yang dipakai: **6.7.24** (paket ESM, dimuat dengan `import()` dinamis dari CommonJS). Versi ini mendukung `newsletterMetadata` dan pengiriman pesan ke channel.
+- Versi Baileys yang dipakai: **7.0.0-rc14** (paket ESM, dimuat dengan `import()` dinamis dari CommonJS). Versi ini mendukung LID-native addressing, `newsletterMetadata`, dan pengiriman pesan ke channel. Jika sesi lama tidak bisa dipakai setelah upgrade, pairing ulang sekali lewat QR/kode.
 - Session disimpan sebagai folder multi-file auth Baileys. Jika `SESSION_PATH` menunjuk file (`.db/.json/.sqlite`), bot akan mengonversinya ke folder `<nama>_auth`.
 - State disimpan dalam **satu file JSON atomik** (`tsukasa_state.json`). Untuk skala kecil aman; backup file ini jika ingin memindahkan data.
 - Sticker animasi memakai `ffmpeg-static`. Jika gagal, bot tetap bisa membuat sticker statis via `sharp`.
@@ -766,5 +766,5 @@ Semua pengaturan di atas juga bisa diubah lewat chat:
 - **Fitur hijabin/TTS gagal**: Cek kredensial di environment.
 - **Sticker animasi gagal**: Pastikan `npm install` selesai (ffmpeg-static terpasang) atau set `FFMPEG_PATH`.
 - **Reconnecting terus**: Hapus isi folder sesi hanya jika benar-benar ingin pairing ulang (akan minta QR/kode baru).
-- **Pesan bot tertulis “Menunggu pesan ini…” di chat penerima**: Ini bukan teks bot, melainkan pesan WhatsApp yang gagal didekripsi. Di chat pribadi, bot sekarang otomatis mengubah tujuan kirim dari JID `@lid` ke nomor telepon asli (dipetakan dari pesan masuk dan disimpan di `data/lidmap.json`). Jika masih muncul, minta penerima mengirim pesan baru ke bot agar pemetaan LID→nomor terbentuk, lalu balas lagi. Pastikan juga `getMessage` aktif (sudah otomatis) dan hindari menghapus folder sesi saat bot sedang dipakai.
+- **Pesan bot tertulis “Menunggu pesan ini…” di chat penerima**: Ini bukan teks bot, melainkan pesan WhatsApp yang gagal didekripsi. Bot memakai Baileys v7 (LID-native) dan tetap mengarahkan kiriman `@lid` ke nomor telepon asli bila pemetaannya tersedia (`data/lidmap.json`). Jika masih muncul, minta penerima mengirim pesan baru ke bot agar pemetaan LID→nomor terbentuk, lalu balas lagi. Setelah upgrade dari Baileys 6.7.x, jika sesi lama bermasalah, pairing ulang sekali (QR/kode) lalu kirim pesan baru.
 - **HTTP API tidak bisa diakses**: Pastikan allocation/port benar, aplikasi listen `0.0.0.0`, dan firewall node mengizinkan port tersebut.

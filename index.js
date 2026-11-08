@@ -74,7 +74,7 @@ async function main() {
     },
   });
 
-  // Baileys 6.7.24 adalah paket ESM. Muat lewat dynamic import agar tetap
+  // Baileys v7 adalah paket ESM. Muat lewat dynamic import agar tetap
   // kompatibel dengan aplikasi CommonJS ini (dan Node 20/22 di Pterodactyl).
   let baileys;
   try {
@@ -230,10 +230,33 @@ async function main() {
       generateHighQualityLinkPreview: false,
       markOnlineOnConnect: true,
       getMessage: async (key) => messageCache.get(key),
+      // Baileys v7: pulihkan sesi yang rusak dan simpan pesan terbaru
+      // otomatis supaya retry dari penerima bisa dilayani.
+      enableAutoSessionRecreation: true,
+      enableRecentMessageCache: true,
     });
 
     wa.setSock(sock);
     currentSock = sock;
+
+    // Baileys v7 mempublikasikan pasangan LID <-> nomor telepon. Simpan
+    // supaya balasan chat pribadi selalu diarahkan ke alamat yang benar.
+    sock.ev.on('lid-mapping.update', (mapping) => {
+      if (mapping) wa.rememberLidPn(mapping.lid, mapping.pn);
+    });
+    sock.ev.on('contacts.upsert', (contacts) => {
+      for (const c of contacts || []) {
+        if (!c || !c.lid) continue;
+        const pn = c.jid || (/@s\.whatsapp\.net$/i.test(String(c.id || '')) ? c.id : '');
+        if (pn) wa.rememberLidPn(c.lid, pn);
+      }
+    });
+    sock.ev.on('messaging-history.set', (payload) => {
+      for (const pair of (payload && payload.lidPnMappings) || []) {
+        if (pair && pair.lid && pair.pn) wa.rememberLidPn(pair.lid, pair.pn);
+      }
+    });
+
     const router = new Router(
       cfg,
       sock,

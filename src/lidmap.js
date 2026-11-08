@@ -96,13 +96,28 @@ class LidMap {
    * Ambil pasangan LID/PN dari key pesan Baileys. Mendukung dua arah:
    * - chat LID + senderPn/participantPn (nomor asli pengirim)
    * - chat PN + senderLid/participantLid
+   *
+   * Khusus pesan `fromMe`, `senderPn` adalah nomor bot sendiri, bukan lawan
+   * chat. Jangan pernah memakainya untuk memetakan LID lawan chat, karena
+   * balasan bisa terkirim ke nomor bot sendiri.
    */
   rememberFromKey(key) {
     if (!key) return false;
-    let changed = false;
 
     const chat = String(key.remoteJid || '');
     const alt = String(key.remoteJidAlt || key.remoteJidPn || '');
+
+    if (key.fromMe) {
+      // Hanya field alternatif yang aman: pada chat LID, `remoteJidAlt`/`remoteJidPn`
+      // menunjuk nomor asli lawan chat.
+      if (!isGroupJid(chat) && lidOf(chat) && alt) {
+        const pn = pnOf(alt);
+        if (pn) return this.remember(chat, pn);
+      }
+      return false;
+    }
+
+    let changed = false;
     const senderLid = key.senderLid || key.participantLid;
     const senderPn = key.senderPn || key.participantPn;
 
@@ -134,6 +149,16 @@ class LidMap {
     if (!lid) return '';
     this.load();
     return this.map.get(lid) || '';
+  }
+
+  forget(lidJid) {
+    const lid = lidOf(lidJid);
+    if (!lid) return false;
+    this.load();
+    if (!this.map.delete(lid)) return false;
+    this.dirty = true;
+    this._scheduleSave();
+    return true;
   }
 
   size() {
