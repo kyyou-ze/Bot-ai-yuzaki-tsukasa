@@ -43,6 +43,19 @@ function ownerTarget(cfg) {
   return digits ? `${digits}@s.whatsapp.net` : '';
 }
 
+/**
+ * Error Baileys yang tidak fatal: query awal/presence timeout saat koneksi
+ * baru dibuka. Tetap dicatat sebagai metrik, tetapi tidak perlu spam owner.
+ */
+function isTransientWaError(tag, message) {
+  if (!/^WA(?::|$)/i.test(String(tag || ''))) return false;
+  const text = String(message || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  if (!/(timed out|timeout)/.test(text)) return false;
+  return /unexpected error in '(init queries|presence update requests)'/.test(text);
+}
+
 async function main() {
   const cfg = load();
   llm.init(cfg);
@@ -86,6 +99,7 @@ async function main() {
   let alertInFlight = false;
   log.setErrorHook(({ tag, message }) => {
     metrics.recordError(message, { tag });
+    if (isTransientWaError(tag, message)) return;
     if (!cfg.healthAlertEnabled || alertInFlight || !waReady) return;
     const cooldownMs = Math.max(10, Number(cfg.healthAlertCooldownSec) || 120) * 1000;
     const now = Date.now();
