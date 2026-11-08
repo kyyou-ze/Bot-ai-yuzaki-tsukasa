@@ -40,12 +40,13 @@ class CnFeature {
   format(rest, pushName) {
     const name = String(rest || '').trim().replace(/\s+/g, ' ') || String(pushName || '').trim();
     const display = name || '𝐍𝐚𝐦𝐚';
+    const boldName = `*${display}*`;
     const cn = styleKeyword(this.keyword);
     const lines = [
       '𝗖𝗼𝗻𝘁𝗼𝗵 𝗖𝗡 (opsional)',
-      `- ${display} \`${cn}᭄`,
-      `- ${display}\`𝖋𝖙 ${cn}`,
-      `- ${display}〆${cn}`,
+      `- ${boldName} \`${cn}᭄`,
+      `- ${boldName}\`𝖋𝖙 ${cn}`,
+      `- ${boldName}〆${cn}`,
     ];
     if (!name) {
       lines.push('', 'Gunakan: .cn <nama>', 'Contoh: .cn Tsukasa');

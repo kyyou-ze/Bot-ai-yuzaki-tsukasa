@@ -29,6 +29,7 @@ class Store {
       animeChannel: raw.animeChannel || {},
       reminders: Array.isArray(raw.reminders) ? raw.reminders : [],
       groupGuard: raw.groupGuard || {},
+      groupReplyMode: raw.groupReplyMode || {},
       afk: raw.afk || {},
     };
     this._writing = Promise.resolve();
@@ -123,6 +124,30 @@ class Store {
       updated: Date.now(),
     };
     return this._save();
+  }
+
+  // ---------- Mode balasan per grup ----------
+  //
+  // all   : balas semua pesan
+  // reply : balas hanya jika pesan yang di-reply + menyebut trigger
+  // call  : balas hanya jika trigger dipanggil (default)
+  static normalizeGroupMode(value) {
+    const m = String(value || '').trim().toLowerCase();
+    return m === 'all' || m === 'reply' || m === 'call' ? m : 'call';
+  }
+
+  getGroupMode(chat) {
+    const modes = this.data.groupReplyMode || {};
+    return Store.normalizeGroupMode(modes[chat]);
+  }
+
+  setGroupMode(chat, mode) {
+    const m = Store.normalizeGroupMode(mode);
+    this.data.groupReplyMode = {
+      ...(this.data.groupReplyMode || {}),
+      [chat]: m,
+    };
+    return this._save().then(() => m);
   }
 
   getGroupGuard(chat) {

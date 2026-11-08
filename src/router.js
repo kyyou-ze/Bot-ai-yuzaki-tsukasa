@@ -30,7 +30,7 @@ const tiktok = require('./tiktok');
 const llm = require('./llm');
 const memory = require('./memory');
 const wa = require('./wa');
-const { isGroupJid } = require('./util');
+const { isGroupJid, jidUser } = require('./util');
 const { shortError } = require('./logfmt');
 const { isHotCue, isStopCue } = require('./adultmode');
 const {
@@ -524,6 +524,61 @@ class Router {
         return;
       }
 
+      if (bang.cmd === 'modegrup' || bang.cmd === 'groupmode') {
+        if (!isGroupJid(chat)) {
+          await wa.sendText(chat, 'Perintah ini hanya berlaku di grup.', m);
+          return;
+        }
+        const allowed = isOwner || (await this.peraturan.isAdmin(this.sock, chat, sender));
+        if (!allowed) {
+          await wa.sendText(chat, 'Perintah ini khusus admin grup atau owner bot.', m);
+          return;
+        }
+        const labels = {
+          all: 'balas semua pesan',
+          reply: 'balas saat pesan di-reply dan menyebut tsukasa',
+          call: 'balas hanya saat dipanggil tsukasa',
+        };
+        const help =
+          '⚙️ *Mode Balasan Grup*\n' +
+          '• .modegrup all — balas semua pesan\n' +
+          '• .modegrup reply — balas saat pesan di-reply dan menyebut tsukasa\n' +
+          '• .modegrup call — balas hanya saat dipanggil tsukasa (default)\n' +
+          '• .modegrup status — lihat mode aktif';
+        const sub = String(bang.rest || '').trim().toLowerCase();
+        const map = {
+          all: 'all',
+          semua: 'all',
+          reply: 'reply',
+          balas: 'reply',
+          call: 'call',
+          panggil: 'call',
+          trigger: 'call',
+          tsukasa: 'call',
+        };
+        if (!sub || sub === 'status') {
+          const current = this.store.getGroupMode(chat);
+          await wa.sendText(
+            chat,
+            `⚙️ Mode balasan grup ini: *${current}* (${labels[current]})\n\n${help}`,
+            m
+          );
+          return;
+        }
+        const mode = map[sub];
+        if (!mode) {
+          await wa.sendText(chat, help, m);
+          return;
+        }
+        const saved = await this.store.setGroupMode(chat, mode);
+        await wa.sendText(
+          chat,
+          `✅ Mode balasan grup disetel ke *${saved}* (${labels[saved]}).`,
+          m
+        );
+        return;
+      }
+
       if (bang.cmd === 'backup') {
         if (!isOwner) {
           await wa.sendText(chat, 'Perintah ini khusus owner.', m);
@@ -663,7 +718,8 @@ class Router {
           '• .detector on|off|status — kontrol detector (on/off owner)',
           '',
           '*🛠️ Admin Grup*',
-          '• .tagall <pesan> — mention semua anggota dengan pesan kustom',
+          '• .modegrup all|reply|call — atur cara bot membalas di grup ini',
+          '• .tagall <pesan> — mention semua anggota (khusus admin grup)',
           '• .peraturan on|off|status — moderasi grup',
           '• .antilink on|off / .antilink allow domain.com',
           '• .antispam on|off',
@@ -685,7 +741,7 @@ class Router {
           '',
           '*💡 Tips*',
           '• Chat pribadi: reply pesan apa pun, aku tetap jawab.',
-          '• Grup: reply pesan bot atau sebut "tsukasa" agar aku merespons.',
+          '• Grup: default hanya merespons saat dipanggil "tsukasa". Admin bisa ubah lewat .modegrup.',
           '• Contoh: .cn Budi',
           '• Katakan "panggil aku [nama]" supaya aku ingat namamu!',
         ];
@@ -1054,19 +1110,22 @@ class Router {
     const isTagAllCmd = isCmd && cmd === 'tagall';
     const isRvoCmd = isCmd && cmd === 'rvo';
 
+    // Mode balasan per grup (diatur admin lewat .modegrup).
+    // all = balas semua, reply = harus reply + trigger, call = harus trigger.
+    const groupMode = isGroup ? this.store.getGroupMode(chat) : 'all';
+    const modeAll = !isGroup || groupMode === 'all';
+
     const qCtx = wa.contextInfoOf(content);
-    const quotedFromBot = this.isQuotedFromBot(qCtx);
     const hasQuoted = q.img || q.aud || q.text !== '';
     if (hasQuoted && !hasTrig && !isCmd) {
-      // Chat pribadi: balasan ke pesan apa pun tetap dilayani. Di grup, hanya
-      // balasan ke pesan bot sendiri yang diproses tanpa trigger supaya bot
-      // tidak ikut merespons semua quote.
-      if (isGroup && !quotedFromBot) return;
+      // Chat pribadi: balasan ke pesan apa pun tetap dilayani. Di grup,
+      // mode all membalas semua quote; mode reply/call menunggu trigger.
+      if (!modeAll) return;
     }
 
     const hasImage = Boolean(content.imageMessage);
     const hasVideo = Boolean(content.videoMessage);
-    if (isGroup && (hasImage || hasVideo) && !hasTrig && !isCmd && !quotedFromBot) return;
+    if (isGroup && (hasImage || hasVideo) && !hasTrig && !isCmd && !modeAll) return;
 
     // TikTok text termasuk matchedText dari preview link
     let tiktokText = origTxt;
@@ -1080,9 +1139,22 @@ class Router {
       if (ext.text && this.reTrig.test(ext.text)) hasTrigTikTok = true;
     }
 
-    // RVO & tagall
-    if (!isGroup || hasTrig || isTagAllCmd || isRvoCmd) {
+    // RVO & tagall. Tagall hanya boleh dipakai admin grup/owner.
+    const tagAllRequested =
+      isGroup && (isTagAllCmd || (hasTrig && /\btagall\b/i.test(origTxt)));
+    if (!isGroup || hasTrig || tagAllRequested || isRvoCmd) {
       if (await this.rvo.handle(this.sock, m, content)) return;
+      if (tagAllRequested) {
+        const canTagAll = isOwner || (await this.peraturan.isAdmin(this.sock, chat, sender));
+        if (!canTagAll) {
+          await wa.sendText(
+            chat,
+            '⚠️ `.tagall` hanya bisa dipakai oleh admin grup atau owner bot.',
+            m
+          );
+          return;
+        }
+      }
       if (await this.tagall.handle(this.sock, m, content)) return;
     }
 
@@ -1100,7 +1172,7 @@ class Router {
 
     // Perintah bang (!ba, !pap, !s, !stiker, dll) juga harus jalan di grup
     // walaupun tidak ada trigger.
-    const allowNonCmd = !isGroup || hasTrig || isCmd;
+    const allowNonCmd = !isGroup || hasTrig || isCmd || modeAll;
     if (allowNonCmd) {
       if (await this.pap.handle(chat, m, content, origTxt)) return;
       if (await this.ba.handle(chat, m, content, origTxt)) return;
@@ -1131,11 +1203,11 @@ class Router {
       txt = userText;
     }
 
-    // Mode MANUAL di grup: hanya merespons jika dipanggil trigger (atau tagall).
-    // Reply ke pesan bot sendiri tetap diproses supaya user bisa lanjut ngobrol
-    // dari pesan yang di-quote.
-    if (isGroup && String(this.cfg.mode || '').toUpperCase() === 'MANUAL') {
-      if (!hasTrig && !isTagAllCmd && !quotedFromBot) return;
+    // Mode balasan grup: call = harus dipanggil trigger; reply = harus reply
+    // ke suatu pesan sekaligus menyebut trigger. Mode all tidak dibatasi.
+    if (isGroup && !isTagAllCmd) {
+      if (groupMode === 'call' && !hasTrig) return;
+      if (groupMode === 'reply' && (!hasTrig || !hasQuoted)) return;
     }
 
     if (!String(txt).trim()) return;
@@ -1147,13 +1219,28 @@ class Router {
       const reply = `*Oke! Mulai sekarang aku akan memanggilmu ${nameReq}* ✨\n\n_Senang berkenalan denganmu, ${nameReq}!_ Aku Tsukasa, siap menemanimu~ 🌟`;
       const out = this.owner.decorate(isOwner, reply);
       await wa.sendText(chat, out.text, m, out.mentions);
-      memory.saveTurn(chat, 'user', txt);
+      memory.saveTurn(chat, 'user', txt, nameReq);
       memory.saveTurn(chat, 'assistant', reply);
       return;
     }
 
     // AI chat
     const state = this.store.get(chat);
+
+    // Fallback nama tampilan: pakai pushName WhatsApp jika user belum pernah
+    // memperkenalkan diri. Supaya bot memanggil nama user yang sedang chat,
+    // bukan menebak nama owner.
+    if (!memory.getUserName(sender)) {
+      const pushName = String(m.pushName || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 40);
+      if (pushName && !/^\+?\d[\d\s-]*$/.test(pushName)) {
+        memory.setUserName(sender, pushName);
+      }
+    }
+    const senderName =
+      memory.getUserName(sender) || String(m.pushName || '').trim() || jidUser(sender);
 
     // Mode dewasa otomatis: hanya di chat pribadi owner. Jika owner memulai
     // percakapan hot, bot mengikuti selama 30 menit; "stop" mengembalikan normal.
@@ -1194,7 +1281,8 @@ class Router {
       ctxTxt,
       sender,
       adult,
-      this.aiTools.systemPrompt({ allowSearch: true })
+      this.aiTools.systemPrompt({ allowSearch: true }),
+      isOwner
     );
 
     let aiParsed = this.aiTools.parse(rawReply);
@@ -1219,13 +1307,14 @@ class Router {
         searchCtx,
         sender,
         adult,
-        this.aiTools.systemPrompt({ allowSearch: false })
+        this.aiTools.systemPrompt({ allowSearch: false }),
+        isOwner
       );
       aiParsed = this.aiTools.parse(rawReply);
     }
 
     const reply = String(aiParsed.text || '').trim();
-    memory.saveTurn(chat, 'user', txt);
+    memory.saveTurn(chat, 'user', txt, senderName);
     if (reply) memory.saveTurn(chat, 'assistant', reply);
 
     if (reply) {

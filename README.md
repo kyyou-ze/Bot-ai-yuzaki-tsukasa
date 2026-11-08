@@ -6,7 +6,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 
 ## Fitur Utama
 
-- **Chat AI berkarakter Tsukasa** — Mode `MANUAL` (butuh trigger `tsukasa`) atau `AUTO`. Persona `tsukasa1`/`tsukasa2` bisa diubah per chat (`!tsukasa persona ...`). Mode Pro bisa diaktifkan per chat.
+- **Chat AI berkarakter Tsukasa** — Mode `MANUAL` (butuh trigger `tsukasa`) atau `AUTO`. Persona `tsukasa1`/`tsukasa2` bisa diubah per chat (`!tsukasa persona ...`). Mode Pro bisa diaktifkan per chat. Tsukasa hanya bersikap istimewa (romantis/manja) kepada owner; user lain diperlakukan sebagai orang biasa dan dipanggil sesuai nama mereka (nama tersimpan atau pushName WhatsApp), bukan "Kyouu".
 - **Mode Dewasa (owner-only)** — Di chat pribadi, jika owner memulai obrolan hot/flirty, bot otomatis mengikuti (18+, sugestif) selama 30 menit. Kirim `stop` untuk kembali normal.
 - **Vision** — Kirim/reply gambar + sebut `tsukasa` untuk dianalisis Gemini.
 - **VN → Teks → Auto-reply** — VN langsung akan ditranskrip & dibalas. VN hasil _quote_ hanya diproses jika menyebut `tsukasa`.
@@ -21,7 +21,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Blue Archive & Pap** — `ba` / `!ba` atau kata kunci terkait, `!pap` / `pap`.
 - **TikTok (multi-API + fallback)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Sumber TikWM otomatis dialihkan ke TikHub/tiktok-api23/Ensig bila kena WAF. Batas ukuran bisa dikonfigurasi.
 - **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 3 menit, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Akun bisa dikelola dari WhatsApp (`/addakun`, `/delakun`, `/listakun`, `/detector`). Command verif: `/verif`, `/listverif`, `/unverif`, `/siapaup`, `/cekup`, `/history` (juga bisa `Tsukasa ...` atau `.verif`).
-- **CN TikTok** — `.cn <nama>` menampilkan tiga contoh CN siap pakai: `` `𝙀𝘾𝙉᭄ ``, `ft 𝙀𝘾𝙉`, dan `〆𝙀𝘾𝙉`. Keyword mengikuti `TIKTOK_CN_KEYWORD`.
+- **CN TikTok** — `.cn <nama>` menampilkan tiga contoh CN siap pakai dengan nama di-bold: `` `𝙀𝘾𝙉᭄ ``, `ft 𝙀𝘾𝙉`, dan `〆𝙀𝘾𝙉`. Keyword mengikuti `TIKTOK_CN_KEYWORD`.
 - **Reply & Tag Status** — Di chat pribadi bot tetap membalas walaupun pesanmu adalah reply/quote. Di grup, reply ke pesan bot juga diproses tanpa trigger. Tag status WhatsApp yang menyebut bot terdeteksi dan dibalas di chat terkait.
 - **AnimeKita** — `!anime ...` (new/movie/schedule/list/genre/search/detail/episode/roulette). Episode dengan link Pixeldrain bisa diunduh otomatis.
 - **Anime Roulette** — `!anime roulette [genre]` memilih anime acak dari AniList lengkap dengan sinopsis (diterjemahkan ke Indonesia bila Gemini tersedia), skor, episode, tahun, dan link.
@@ -30,7 +30,8 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Peraturan/Moderasi** — `!peraturan on|off|sync|status|rules|clear @user`. Bot menilai pesan grup dengan Gemini moderation, memberi warn (max 5), bisa mengeluarkan otomatis. Moderasi bawaan juga punya antilink + allowlist domain, antispam, mute sebelum kick, reset warn, log moderasi, dan jadwal buka/tutup (termasuk mode akhir pekan).
 - **Health & Rate Limit** — `!health` menampilkan status WhatsApp, uptime, RAM, cache berita, dan antrean unduhan. Command berat (`!news`, `!cosplay`, unduh episode, post channel) dibatasi agar tidak dispam.
 - **Pengaturan lewat Chat** — Owner bisa mengisi/mengubah setting penting langsung dari WhatsApp dengan `!config` atau `!set`, tanpa edit `.env` dan tanpa restart. Cocok untuk menambah link cosplay, ganti channel, atur sumber berita, batas warn, rate limit, dan lain-lain.
-- **AFK, Ping & TagAll** — `.afk turu` menandai AFK dengan alasan "turu"; bot memberi tahu saat user di-mention/di-reply dan menyambut saat user kembali. `.ping` menampilkan latency, sedangkan `.tagall <pesan>` mention semua anggota dengan pesan kustom.
+- **AFK, Ping & TagAll** — `.afk turu` menandai AFK dengan alasan "turu"; bot memberi tahu saat user di-mention/di-reply dan menyambut saat user kembali. `.ping` menampilkan latency, sedangkan `.tagall <pesan>` mention semua anggota dengan pesan kustom (khusus admin grup).
+- **Mode balasan per grup** — Admin grup bisa memilih `.modegrup all|reply|call`. Default `call`: bot hanya membalas saat dipanggil `tsukasa`.
 - **Reliability (Tier 5)** — Backup sesi otomatis, reconnect backoff eksponensial, antrean unduhan global, metrik health (`GET /metrics`), notifikasi error ke owner, dan audit command owner (`.backup`, `.audit`).
 - **TagAll**, **RVO**, **Welcome**, **Owner features**.
 - **HTTP API** — `GET /`, `GET /healthz`, `GET /help`, `POST/GET /send` dengan `X-API-Key` + rate limit.
@@ -651,6 +652,22 @@ Perintah moderasi hanya untuk admin grup (owner juga boleh). Bot harus menjadi a
 
 Peserta yang melanggar akan diberi peringatan. Saat mencapai `MOD_WARN_LIMIT - 1`, peserta dimute `MOD_MUTE_MINUTES` menit; pelanggaran berikutnya dikeluarkan dari grup. Peringatan otomatis kedaluwarsa setelah 7 hari tanpa pelanggaran. Jadwal buka/tutup dicek tiap 30 detik, hanya dijalankan sekali per hari per aksi, mendukung jadwal lewat tengah malam, dan bisa dibatasi ke akhir pekan. Aksi moderasi dikirim ke `MOD_LOG_JID` (default owner).
 
+### Mode balasan per grup
+
+Admin grup (dan owner bot) bisa mengatur kapan Tsukasa membalas di grup masing-masing. Pengaturan disimpan per grup di `tsukasa_state.json`.
+
+```text
+.modegrup status   # lihat mode aktif grup ini
+.modegrup all      # balas semua pesan
+.modegrup reply    # balas hanya saat pesan di-reply DAN menyebut "tsukasa"
+.modegrup call     # balas hanya saat dipanggil "tsukasa" (default)
+```
+
+- Default grup adalah `call`: bot hanya merespons saat ada panggilan `tsukasa`.
+- Semua perintah (`.help`, `.stiker`, `.tagall`, dll.) dan fitur tetap berfungsi di mode mana pun.
+- Di mode `reply`, pesan harus berupa balasan/quote ke pesan lain sekaligus menyebut `tsukasa`.
+- Di mode `all`, bot membalas semua pesan grup tanpa perlu trigger.
+
 ### AFK, Ping & TagAll
 
 ```text
@@ -666,6 +683,7 @@ Peserta yang melanggar akan diberi peringatan. Saat mencapai `MOD_WARN_LIMIT - 1
 - Saat user AFK di-mention atau pesannya di-reply, bot membalas status AFK beserta alasannya (dibatasi cooldown 5 menit per user/chat agar tidak spam).
 - Begitu user AFK mengirim pesan, sticker, atau media apa pun, statusnya otomatis dicabut dan bot menyambut dengan durasi AFK.
 - `.tagall` bisa juga ditulis `!tagall`, `/tagall`, atau `tsukasa tagall`; teks setelah kata `tagall` dipakai sebagai isi pesan. Tanpa teks, bot memakai sapaan default.
+- `.tagall` hanya bisa dipakai oleh **admin grup** (owner bot selalu boleh). Peserta biasa yang mencoba akan mendapat pesan penolakan.
 
 ### Anime Roulette
 

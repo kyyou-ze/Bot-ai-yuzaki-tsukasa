@@ -86,9 +86,11 @@ function load(chatJID) {
   return chatHistMap.get(chatJID) || [];
 }
 
-function saveTurn(chatJID, role, text) {
+function saveTurn(chatJID, role, text, name) {
   const hist = chatHistMap.get(chatJID) || [];
-  hist.push({ role, text });
+  const turn = { role, text };
+  if (name) turn.name = String(name).trim().slice(0, 60);
+  hist.push(turn);
   const trimmed = hist.length > MAX_TURNS * 2 ? hist.slice(hist.length - MAX_TURNS * 2) : hist;
   chatHistMap.set(chatJID, trimmed);
   persistChat(chatJID, trimmed);
@@ -96,16 +98,20 @@ function saveTurn(chatJID, role, text) {
 }
 
 function buildContext(hist, newUserText, senderJID) {
-  const userName = getUserName(senderJID) || 'kamu';
+  const userName = getUserName(senderJID);
   const parts = [];
   if (hist.length > 0) {
     parts.push('Konteks percakapan sebelumnya:');
     for (const t of hist) {
-      parts.push(`${t.role === 'user' ? 'User' : 'Tsukasa'}: ${t.text}`);
+      const who =
+        t.role === 'user'
+          ? `User${t.name ? ` (${t.name})` : ''}`
+          : 'Tsukasa';
+      parts.push(`${who}: ${t.text}`);
     }
     parts.push('');
   }
-  parts.push(`Nama pengguna: ${userName}`);
+  parts.push(`Nama pengguna: ${userName || 'belum diketahui (panggil "kamu")'}`);
   parts.push('');
   parts.push('Pertanyaan/teks baru:');
   parts.push(newUserText);

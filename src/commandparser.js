@@ -22,6 +22,7 @@ const KNOWN_COMMANDS = new Set([
   'update', 'upgrade', 'autoupdate',
   'geminikey', 'gkey',
   'hot', 'tsukasa', 'persona', 'mode',
+  'modegrup', 'groupmode',
   'cn',
   'tagall', 'rvo',
   'ba', 'pap', 's', 'sgif', 'stiker', 'sticker', 'brat',
