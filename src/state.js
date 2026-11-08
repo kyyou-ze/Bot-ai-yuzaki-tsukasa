@@ -29,6 +29,7 @@ class Store {
       animeChannel: raw.animeChannel || {},
       reminders: Array.isArray(raw.reminders) ? raw.reminders : [],
       groupGuard: raw.groupGuard || {},
+      afk: raw.afk || {},
     };
     this._writing = Promise.resolve();
   }
@@ -338,6 +339,52 @@ class Store {
     );
     if (this.data.reminders.length === before) return Promise.resolve(false);
     return this._save().then(() => true);
+  }
+
+  // ---------- AFK ----------
+
+  getAfk(user) {
+    const a = (this.data.afk || {})[user];
+    if (!a) return null;
+    return {
+      user,
+      reason: String(a.reason || ''),
+      chat: String(a.chat || ''),
+      since: Number(a.since) || 0,
+      updated: Number(a.updated) || 0,
+    };
+  }
+
+  setAfk(user, reason, chat) {
+    const key = String(user || '').trim();
+    if (!key) return Promise.reject(new Error('invalid afk user'));
+    const now = Date.now();
+    this.data.afk = {
+      ...(this.data.afk || {}),
+      [key]: {
+        reason: String(reason || '').slice(0, 200),
+        chat: String(chat || ''),
+        since: now,
+        updated: now,
+      },
+    };
+    return this._save();
+  }
+
+  clearAfk(user) {
+    const key = String(user || '').trim();
+    if (!key || !(this.data.afk || {})[key]) return Promise.resolve(false);
+    const next = { ...(this.data.afk || {}) };
+    delete next[key];
+    this.data.afk = next;
+    return this._save().then(() => true);
+  }
+
+  listAfkForChat(chat) {
+    return Object.entries(this.data.afk || {})
+      .filter(([, a]) => a && a.chat === chat)
+      .map(([user, a]) => ({ user, ...a }))
+      .sort((a, b) => Number(b.since) - Number(a.since));
   }
 
   // ---------- Anime channel auto-post ----------

@@ -2,6 +2,7 @@
 
 const log = require('./logger');
 const { OwnerDetector, WelcomeHandler, TagAllHandler, RvoHandler } = require('./features/basic');
+const { AfkFeature } = require('./features/afk');
 const { CnFeature } = require('./features/cn');
 const { StickerReplyFeature } = require('./features/stickerreply');
 const { StickerUtilsFeature } = require('./features/stickerutils');
@@ -160,6 +161,7 @@ class Router {
     this.store = store;
     this.animeChannel = animeChannel || null;
     this.groupTools = groupTools || new GroupTools(cfg, store);
+    this.afk = new AfkFeature(cfg, store);
     this.verif = new VerifFeature(cfg, verifStore || new VerifStore(cfg), tiktokMonitor || null);
     this.tiktokAdmin = new TikTokAdminFeature(cfg, tiktokAccounts || null, tiktokMonitor || null);
 
@@ -408,6 +410,12 @@ class Router {
     const cmdName = isCmd && parsed ? parsed.cmd : '';
     const cmdRest = isCmd && parsed ? parsed.rest : '';
 
+    // AFK: cabut status saat user aktif kembali, dan beri tahu jika ada
+    // member AFK yang di-mention/di-reply. Command .afk/.back dikecualikan.
+    if (!(isCmd && AfkFeature.isCommand(cmdName))) {
+      await this.afk.observe(chat, m, content).catch(() => {});
+    }
+
     // Moderasi ringan (antilink/antispam) untuk pesan biasa di grup.
     // Perintah yang dikenal dikecualikan supaya admin tetap bisa memakai bot,
     // tetapi teks berawalan "!" yang bukan perintah tetap ikut dimoderasi.
@@ -450,7 +458,29 @@ class Router {
     this.groupTools.recordMessage(chat, sender, txt, { isCommand: Boolean(bang) });
 
     if (bang) {
-      if (bang.cmd === 'health' || bang.cmd === 'ping' || bang.cmd === 'status') {
+      if (AfkFeature.isCommand(bang.cmd)) {
+        await this.afk.handleCommand(chat, m, bang.cmd, bang.rest, sender);
+        return;
+      }
+
+      if (bang.cmd === 'ping') {
+        const rawTs = m.messageTimestamp;
+        const sec =
+          typeof rawTs === 'number'
+            ? rawTs
+            : rawTs && typeof rawTs.toNumber === 'function'
+              ? rawTs.toNumber()
+              : Number(rawTs);
+        const latency =
+          Number.isFinite(sec) && sec > 0 ? Math.max(0, Date.now() - sec * 1000) : 0;
+        const lines = ['🏓 *Pong!*'];
+        if (latency > 0) lines.push(`• Respon: ${latency} ms`);
+        lines.push(`• Uptime: ${this.formatUptime(process.uptime())}`);
+        await wa.sendText(chat, lines.join('\n'), m);
+        return;
+      }
+
+      if (bang.cmd === 'health' || bang.cmd === 'status') {
         await wa.sendText(chat, this.healthReport(), m);
         return;
       }
@@ -470,6 +500,7 @@ class Router {
           '• .help / .menu — menu ini',
           '• .whoami — lihat JID kamu',
           '• .health / .ping / .status — status bot, uptime, RAM',
+          '• .afk [alasan] — tandai sedang AFK, contoh .afk turu (.afk off untuk kembali)',
           '',
           '*🎨 Sticker & Media*',
           '• .stiker / .s — gambar/video/URL jadi sticker',

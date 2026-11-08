@@ -16,6 +16,7 @@ const KNOWN_COMMANDS = new Set([
   'animechannel', 'anime-channel',
   'peraturan', 'rules',
   'health', 'status', 'ping',
+  'afk', 'back', 'unafk', 'kembali',
   'config', 'setting', 'pengaturan', 'set', 'isi',
   'update', 'upgrade', 'autoupdate',
   'geminikey', 'gkey',

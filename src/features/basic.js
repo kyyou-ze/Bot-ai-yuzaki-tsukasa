@@ -149,6 +149,12 @@ class TagAllHandler {
     const isBangTagAll = /^!\s*tagall\b/i.test(text);
     if (!isBangTagAll && !this.re.test(text)) return false;
 
+    // Teks setelah "tagall" dipakai sebagai pesan tag. Contoh:
+    // ".tagall woi asw" -> mention semua dengan pesan "woi asw".
+    const match = text.match(/\btagall\b\s*([\s\S]*)$/i);
+    const custom = match ? match[1].trim() : '';
+    const message = custom || '👋 Halo semuanya, hadir ya!';
+
     let meta;
     try {
       meta = await sock.groupMetadata(chat);
@@ -161,7 +167,7 @@ class TagAllHandler {
     const batch = 500;
     for (let i = 0; i < all.length; i += batch) {
       const sub = all.slice(i, i + batch);
-      await wa.sendText(chat, '👋 Halo semuanya, hadir ya!', m, sub).catch(() => {});
+      await wa.sendText(chat, message, m, sub).catch(() => {});
     }
     return true;
   }

@@ -30,6 +30,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Peraturan/Moderasi** — `!peraturan on|off|sync|status|rules|clear @user`. Bot menilai pesan grup dengan Gemini moderation, memberi warn (max 5), bisa mengeluarkan otomatis. Moderasi bawaan juga punya antilink + allowlist domain, antispam, mute sebelum kick, reset warn, log moderasi, dan jadwal buka/tutup (termasuk mode akhir pekan).
 - **Health & Rate Limit** — `!health` menampilkan status WhatsApp, uptime, RAM, cache berita, dan antrean unduhan. Command berat (`!news`, `!cosplay`, unduh episode, post channel) dibatasi agar tidak dispam.
 - **Pengaturan lewat Chat** — Owner bisa mengisi/mengubah setting penting langsung dari WhatsApp dengan `!config` atau `!set`, tanpa edit `.env` dan tanpa restart. Cocok untuk menambah link cosplay, ganti channel, atur sumber berita, batas warn, rate limit, dan lain-lain.
+- **AFK, Ping & TagAll** — `.afk turu` menandai AFK dengan alasan "turu"; bot memberi tahu saat user di-mention/di-reply dan menyambut saat user kembali. `.ping` menampilkan latency, sedangkan `.tagall <pesan>` mention semua anggota dengan pesan kustom.
 - **TagAll**, **RVO**, **Welcome**, **Owner features**.
 - **HTTP API** — `GET /`, `GET /healthz`, `GET /help`, `POST/GET /send` dengan `X-API-Key` + rate limit.
 
@@ -648,6 +649,22 @@ Perintah moderasi hanya untuk admin grup (owner juga boleh). Bot harus menjadi a
 ```
 
 Peserta yang melanggar akan diberi peringatan. Saat mencapai `MOD_WARN_LIMIT - 1`, peserta dimute `MOD_MUTE_MINUTES` menit; pelanggaran berikutnya dikeluarkan dari grup. Peringatan otomatis kedaluwarsa setelah 7 hari tanpa pelanggaran. Jadwal buka/tutup dicek tiap 30 detik, hanya dijalankan sekali per hari per aksi, mendukung jadwal lewat tengah malam, dan bisa dibatasi ke akhir pekan. Aksi moderasi dikirim ke `MOD_LOG_JID` (default owner).
+
+### AFK, Ping & TagAll
+
+```text
+.afk                   # AFK tanpa alasan
+.afk turu              # AFK dengan alasan "turu"
+.afk off               # cabut AFK (alias .back / .unafk)
+.afk list              # daftar member AFK di chat ini
+.ping                  # cek latency bot + uptime
+.tagall woi asw        # mention semua anggota dengan pesan "woi asw"
+```
+
+- Alasan AFK disimpan di `tsukasa_state.json`, jadi tetap ada setelah restart.
+- Saat user AFK di-mention atau pesannya di-reply, bot membalas status AFK beserta alasannya (dibatasi cooldown 5 menit per user/chat agar tidak spam).
+- Begitu user AFK mengirim pesan lagi, statusnya otomatis dicabut dan bot menyambut dengan durasi AFK.
+- `.tagall` bisa juga ditulis `!tagall`, `/tagall`, atau `tsukasa tagall`; teks setelah kata `tagall` dipakai sebagai isi pesan. Tanpa teks, bot memakai sapaan default.
 
 ### Anime Roulette
 
