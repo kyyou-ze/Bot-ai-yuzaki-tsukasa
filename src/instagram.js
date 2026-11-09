@@ -181,6 +181,10 @@ function isUnwantedImage(url) {
   if (/\.gif(?:\?|$)/i.test(u)) return true;
   if (/cdn\.fbsbx\.com\/v\/t59/i.test(u)) return true;
   if (/emoji|static\.cdninstagram\.com\/rsrc|sprite/i.test(u)) return true;
+  // Thumbnail rekomendasi/related post berbentuk kotak (s640x640). Foto utama
+  // carousel memakai dst-jpg_e35_tt6 tanpa suffix ukuran, jadi jangan pernah
+  // memakai thumbnail kotak supaya hasil tidak ter-crop.
+  if (/dst-jpg_e\d+_s\d+x\d+_tt\d/i.test(u)) return true;
   return false;
 }
 
@@ -486,6 +490,10 @@ async function fetchPost(input, options = {}) {
   const headers = {
     Accept: 'text/plain, text/markdown, */*',
     'X-Return-Format': 'markdown',
+    // Jina menyimpan hasil per URL. Tanpa header ini, probe slide berikutnya
+    // bisa menerima halaman cache yang sama dan carousel tampak terpotong.
+    'X-No-Cache': 'true',
+    'Cache-Control': 'no-cache',
   };
   if (JINA_KEY) headers.Authorization = `Bearer ${JINA_KEY}`;
 
@@ -497,12 +505,15 @@ async function fetchPost(input, options = {}) {
   let lastError = '';
   let prevSignature = '';
   let emptyStreak = 0;
+  let repeatStreak = 0;
   const maxProbes = MAX_IMAGES + 2;
 
   for (let index = 1; index <= maxProbes; index++) {
     try {
+      // Cache-busting: parameter tambahan hanya untuk Jina, bukan Instagram.
+      const probeUrl = `${JINA_BASE}${url}?img_index=${index}&_cb=${Date.now()}-${index}`;
       const res = await fetchWithTimeout(
-        `${JINA_BASE}${url}?img_index=${index}`,
+        probeUrl,
         { headers, redirect: 'follow' },
         timeoutMs
       );
@@ -519,14 +530,17 @@ async function fetchPost(input, options = {}) {
       }
       emptyStreak = 0;
 
+      let added = 0;
       if (!best) {
         best = post;
+        added = post.images.length;
       } else {
         const seen = new Set(best.images.map(imageId));
         for (const image of post.images) {
           if (seen.has(imageId(image))) continue;
           seen.add(imageId(image));
           best.images.push(image);
+          added += 1;
         }
         if (!best.caption) best.caption = post.caption;
         if (!best.tags.length) best.tags = post.tags;
@@ -534,12 +548,20 @@ async function fetchPost(input, options = {}) {
         if (!best.username) best.username = post.username;
       }
 
-      // Halaman index berisi slide saat ini + slide berikutnya. Kalau dua
-      // halaman berurutan punya daftar foto yang sama (dan bukan halaman
-      // pertama/kedua), berarti sudah sampai slide terakhir.
+      // Halaman index biasanya berisi slide saat ini + slide berikutnya.
+      // Jangan langsung berhenti saat signature sama: cache Jina bisa
+      // mengembalikan halaman lama, padahal slide berikutnya masih ada.
+      // Berhenti hanya kalau beberapa probe berturut-turut tidak menambah foto.
       const signature = post.images.map(imageId).join('|');
       if (best.images.length >= MAX_IMAGES) break;
-      if (index >= 3 && signature && signature === prevSignature) break;
+      if (added > 0) {
+        repeatStreak = 0;
+      } else if (signature && signature === prevSignature) {
+        repeatStreak += 1;
+        if (repeatStreak >= 3) break;
+      } else {
+        repeatStreak = 0;
+      }
       prevSignature = signature;
     } catch (err) {
       lastError = err && err.message ? err.message : String(err);

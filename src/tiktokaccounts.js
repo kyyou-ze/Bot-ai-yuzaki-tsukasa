@@ -60,6 +60,10 @@ class TikTokAccounts {
     }
 
     this._writing = Promise.resolve();
+    const total = this.list().length;
+    log.info(
+      `[TIKTOK] Daftar akun dimuat dari ${this.file} (${total} akun, sumber ${this.source()})`
+    );
   }
 
   /** Daftar akun aktif (array baru, aman untuk diubah pemanggil). */

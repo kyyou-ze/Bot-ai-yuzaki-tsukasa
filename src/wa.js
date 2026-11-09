@@ -20,7 +20,12 @@ function forwardBaileysLine(raw) {
       levelNum >= 50 ? 'error' : levelNum >= 40 ? 'warn' : levelNum >= 30 ? 'info' : 'debug';
     let message = String(entry.msg || entry.message || 'baileys');
     const detail = entry.err || entry.error;
-    if (detail && detail.message) message += ` | ${detail.message}`;
+    if (detail) {
+      const cause = detail.cause || (Array.isArray(detail.errors) ? detail.errors[0] : null);
+      const parts = [detail.message, cause && cause.message].filter(Boolean);
+      if (parts.length) message += ` | ${parts.join(' | ')}`;
+      if (detail.code) message += ` | code=${detail.code}`;
+    }
     const tag = entry.name ? `WA:${entry.name}` : 'WA';
 
     if (detail && detail.stack) {
@@ -46,7 +51,17 @@ const baileysStream = new Writable({
 baileysStream.on('error', () => {});
 
 const logger = pino(
-  { level: process.env.BAILEYS_LOG || 'error', base: null },
+  {
+    level: process.env.BAILEYS_LOG || 'error',
+    base: null,
+    // Pino hanya menyerialkan key `err` secara khusus. Baileys kadang memakai
+    // `{ error }`, sehingga tanpa serializer ini penyebab asli error hilang
+    // dan yang terlihat hanya "transaction failed, rolling back".
+    serializers: {
+      err: pino.stdSerializers.err,
+      error: pino.stdSerializers.err,
+    },
+  },
   baileysStream
 );
 

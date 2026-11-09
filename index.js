@@ -42,6 +42,7 @@ const metrics = require('./src/metrics');
 const { downloadQueue } = require('./src/downloadqueue');
 const { SessionBackup } = require('./src/backup');
 const { AuditLog } = require('./src/audit');
+const { hardenAuthState } = require('./src/waauth');
 
 // Logger Baileys sudah diarahkan ke logger aplikasi (lihat src/wa.js).
 const logger = wa.logger;
@@ -228,6 +229,7 @@ async function main() {
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(cfg.sessionDir);
+    hardenAuthState(baileys, state, cfg.sessionDir);
     let pairingRequested = false;
 
     let version;

@@ -7,7 +7,8 @@ const sharp = require('sharp');
 
 const wa = require('../wa');
 const log = require('../logger');
-const { escapeXml } = require('../util');
+const memory = require('../memory');
+const { escapeXml, jidUser } = require('../util');
 const { runFfmpeg } = require('./media');
 
 const SIZE = 512;
@@ -106,40 +107,181 @@ function textSvg(text, options) {
   );
 }
 
-function quoteSvg(text, name) {
-  const author = normalText(name) || 'Kamu';
+const QUOTE_FONT = "DejaVu Sans, Noto Sans, Arial, sans-serif";
+const QUOTE_CARD_W = 452;
+const QUOTE_CARD_X = (SIZE - QUOTE_CARD_W) / 2;
+const QUOTE_PAD_X = 34;
+const QUOTE_HEADER_H = 98;
+const QUOTE_FOOTER_H = 48;
+const QUOTE_MAX_H = SIZE - 40;
+
+const QUOTE_THEMES = {
+  dark: {
+    bg1: '#132029',
+    bg2: '#0b141a',
+    fg: '#e9edef',
+    muted: '#8aa0ab',
+    accent: '#25d366',
+    avatarFg: '#06231a',
+    border: '#22333d',
+    shadow: '#000000',
+    shadowOpacity: 0.5,
+  },
+  light: {
+    bg1: '#ffffff',
+    bg2: '#f2f7f4',
+    fg: '#12211b',
+    muted: '#5e7a70',
+    accent: '#1faa59',
+    avatarFg: '#ffffff',
+    border: '#dfe9e3',
+    shadow: '#0b2418',
+    shadowOpacity: 0.18,
+  },
+};
+
+const QUOTE_THEME_ALIASES = {
+  terang: 'light',
+  putih: 'light',
+  gelap: 'dark',
+  hitam: 'dark',
+};
+
+function quoteTheme(value) {
+  const key = String(value || '').toLowerCase();
+  const name = QUOTE_THEME_ALIASES[key] || key;
+  return QUOTE_THEMES[name] ? name : '';
+}
+
+function clipText(value, max) {
+  const text = normalText(value);
+  return text.length > max ? text.slice(0, Math.max(1, max - 1)).trimEnd() + '…' : text;
+}
+
+function quotedMediaLabel(content) {
+  const quoted = wa.quotedContent(wa.contextInfoOf(content));
+  if (!quoted) return '';
+  const type = wa.contentTypeOf(quoted);
+  const labels = {
+    imageMessage: '📷 Foto',
+    videoMessage: '🎬 Video',
+    stickerMessage: '🧩 Sticker',
+    audioMessage: '🎙️ Audio',
+    documentMessage: '📄 Dokumen',
+  };
+  return labels[type] || '';
+}
+
+function quotedAuthor(content, fallback) {
+  const ctx = wa.contextInfoOf(content);
+  if (!ctx || !ctx.quotedMessage) return normalText(fallback) || 'Kamu';
+  const jid = ctx.participant || ctx.remoteJid || '';
+  const known = jid ? memory.getUserName(jid) : '';
+  if (known) return known;
+  const user = jidUser(jid);
+  if (/^\d{5,}$/.test(user)) return `+${user}`;
+  return clipText(user || fallback || 'Kamu', 24);
+}
+
+function quoteLayout(text, fontSizeFloor = 16) {
+  const maxTextWidth = QUOTE_CARD_W - QUOTE_PAD_X * 2;
+  let chosen = null;
+  for (let fontSize = 34; fontSize >= fontSizeFloor; fontSize -= 2) {
+    const maxChars = Math.max(8, Math.floor(maxTextWidth / (fontSize * 0.55)));
+    const lineHeight = Math.round(fontSize * 1.42);
+    const lines = wrapText(text, maxChars, 40);
+    const quoteHeight = lines.length * lineHeight;
+    const cardHeight = QUOTE_HEADER_H + quoteHeight + QUOTE_FOOTER_H;
+    if (cardHeight <= QUOTE_MAX_H) {
+      chosen = { fontSize, lineHeight, lines, quoteHeight, cardHeight };
+      break;
+    }
+  }
+  if (!chosen) {
+    const fontSize = fontSizeFloor;
+    const maxChars = Math.max(8, Math.floor(maxTextWidth / (fontSize * 0.55)));
+    const lineHeight = Math.round(fontSize * 1.42);
+    const lines = wrapText(text, maxChars, 14);
+    const quoteHeight = lines.length * lineHeight;
+    chosen = {
+      fontSize,
+      lineHeight,
+      lines,
+      quoteHeight,
+      cardHeight: Math.min(QUOTE_MAX_H, QUOTE_HEADER_H + quoteHeight + QUOTE_FOOTER_H),
+    };
+  }
+  return chosen;
+}
+
+function quoteSvg(text, name, options = {}) {
+  const themeName = quoteTheme(options.theme) || 'dark';
+  const theme = QUOTE_THEMES[themeName];
+  const author = clipText(name, 24) || 'Kamu';
   const initial = (author.match(/[a-z0-9]/i) || ['?'])[0].toUpperCase();
-  const fontSize = 38;
-  const maxChars = Math.max(8, Math.floor((SIZE * 0.72) / (fontSize * 0.58)));
-  const lines = wrapText(text, maxChars, 5);
-  const lineHeight = Math.round(fontSize * 1.32);
-  const startY = 178;
-  const tspans = lines
+  const mediaLabel = normalText(options.mediaLabel);
+  const layout = quoteLayout(normalText(text));
+  const cardH = Math.max(220, layout.cardHeight);
+  const cardY = Math.round((SIZE - cardH) / 2);
+  const avatarX = QUOTE_CARD_X + QUOTE_PAD_X + 24;
+  const avatarY = cardY + 50;
+  const nameX = avatarX + 40;
+  const quoteX = QUOTE_CARD_X + QUOTE_PAD_X;
+  const quoteStartY = cardY + QUOTE_HEADER_H + layout.fontSize;
+  const footerLineY = cardY + cardH - QUOTE_FOOTER_H + 4;
+  const footerTextY = cardY + cardH - 20;
+
+  const tspans = layout.lines
     .map(
       (line, i) =>
-        `<tspan x="76" y="${startY + i * lineHeight}">${escapeXml(line)}</tspan>`
+        `<tspan x="${quoteX}" y="${quoteStartY + i * layout.lineHeight}">${escapeXml(line)}</tspan>`
     )
     .join('');
 
   return Buffer.from(
     `<svg width="${SIZE}" height="${SIZE}" xmlns="http://www.w3.org/2000/svg">` +
-      `<defs><linearGradient id="card" x1="0" y1="0" x2="1" y2="1">` +
-      `<stop offset="0%" stop-color="#101c24"/>` +
-      `<stop offset="100%" stop-color="#0b141a"/>` +
-      `</linearGradient></defs>` +
-      `<rect width="${SIZE}" height="${SIZE}" rx="34" fill="url(#card)"/>` +
-      `<rect x="0" y="0" width="12" height="${SIZE}" rx="6" fill="#25d366"/>` +
-      `<circle cx="70" cy="92" r="34" fill="#25d366"/>` +
-      `<text x="70" y="104" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" ` +
-      `font-size="34" font-weight="bold" fill="#0b141a">${escapeXml(initial)}</text>` +
-      `<text x="118" y="88" font-family="DejaVu Sans, Arial, sans-serif" font-size="26" ` +
-      `font-weight="bold" fill="#e9edef">${escapeXml(author.slice(0, 24))}</text>` +
-      `<text x="118" y="116" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" ` +
-      `fill="#8696a0">mengutip pesan</text>` +
-      `<text font-family="DejaVu Sans, Arial, sans-serif" font-size="${fontSize}" ` +
-      `fill="#e9edef">${tspans}</text>` +
-      `<text x="76" y="${SIZE - 36}" font-family="DejaVu Sans, Arial, sans-serif" ` +
-      `font-size="17" fill="#8696a0">Tsukasa • Quote Card</text>` +
+      `<defs>` +
+      `<linearGradient id="card" x1="0" y1="0" x2="1" y2="1">` +
+      `<stop offset="0%" stop-color="${theme.bg1}"/>` +
+      `<stop offset="100%" stop-color="${theme.bg2}"/>` +
+      `</linearGradient>` +
+      `<linearGradient id="avatar" x1="0" y1="0" x2="1" y2="1">` +
+      `<stop offset="0%" stop-color="${theme.accent}"/>` +
+      `<stop offset="100%" stop-color="#0f9d58"/>` +
+      `</linearGradient>` +
+      `<filter id="softShadow" x="-20%" y="-20%" width="140%" height="160%">` +
+      `<feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="${theme.shadow}" flood-opacity="${theme.shadowOpacity}"/>` +
+      `</filter>` +
+      `</defs>` +
+      `<g filter="url(#softShadow)">` +
+      `<rect x="${QUOTE_CARD_X}" y="${cardY}" width="${QUOTE_CARD_W}" height="${cardH}" ` +
+      `rx="28" fill="url(#card)" stroke="${theme.border}" stroke-width="1"/>` +
+      `</g>` +
+      `<rect x="${QUOTE_CARD_X + QUOTE_PAD_X}" y="${cardY}" width="52" height="4" rx="2" fill="${theme.accent}"/>` +
+      `<text x="${QUOTE_CARD_X + QUOTE_CARD_W - 28}" y="${cardY + 82}" text-anchor="end" ` +
+      `font-family="${QUOTE_FONT}" font-size="84" font-weight="bold" fill="${theme.accent}" ` +
+      `fill-opacity="0.16">“</text>` +
+      `<circle cx="${avatarX}" cy="${avatarY}" r="24" fill="url(#avatar)"/>` +
+      `<text x="${avatarX}" y="${avatarY + 8}" text-anchor="middle" font-family="${QUOTE_FONT}" ` +
+      `font-size="23" font-weight="bold" fill="${theme.avatarFg}">${escapeXml(initial)}</text>` +
+      `<text x="${nameX}" y="${cardY + 46}" font-family="${QUOTE_FONT}" font-size="23" ` +
+      `font-weight="bold" fill="${theme.fg}">${escapeXml(author)}</text>` +
+      `<text x="${nameX}" y="${cardY + 69}" font-family="${QUOTE_FONT}" font-size="12.5" ` +
+      `letter-spacing="1.4" fill="${theme.muted}">MENGUTIP PESAN</text>` +
+      `<text font-family="${QUOTE_FONT}" font-size="${layout.fontSize}" ` +
+      `fill="${theme.fg}">${tspans}</text>` +
+      `<line x1="${quoteX}" y1="${footerLineY}" x2="${QUOTE_CARD_X + QUOTE_CARD_W - QUOTE_PAD_X}" ` +
+      `y2="${footerLineY}" stroke="${theme.border}" stroke-width="1"/>` +
+      `<circle cx="${quoteX + 4}" cy="${footerTextY - 5}" r="3" fill="${theme.accent}"/>` +
+      `<text x="${quoteX + 14}" y="${footerTextY}" font-family="${QUOTE_FONT}" font-size="15" ` +
+      `font-weight="bold" fill="${theme.accent}">Tsukasa</text>` +
+      `<text x="${quoteX + 82}" y="${footerTextY}" font-family="${QUOTE_FONT}" font-size="15" ` +
+      `fill="${theme.muted}">• Quote Card</text>` +
+      (mediaLabel
+        ? `<text x="${QUOTE_CARD_X + QUOTE_CARD_W - QUOTE_PAD_X}" y="${footerTextY}" ` +
+          `text-anchor="end" font-family="${QUOTE_FONT}" font-size="14" ` +
+          `fill="${theme.muted}">${escapeXml(mediaLabel)}</text>`
+        : '') +
       `</svg>`
   );
 }
@@ -191,13 +333,56 @@ class StickerUtilsFeature {
   }
 
   static isCommand(name) {
-    return ['toimg', 'ttp', 'attp', 'qc', 'wm', 'stickerinfo', 'smeta'].includes(
-      String(name || '').toLowerCase()
-    );
+    return [
+      'toimg',
+      'ttp',
+      'attp',
+      'qc',
+      'qcimg',
+      'qci',
+      'wm',
+      'stickerinfo',
+      'smeta',
+    ].includes(String(name || '').toLowerCase());
   }
 
   textFrom(content, rest) {
     return normalText(rest) || quotedText(content);
+  }
+
+  parseQuoteOptions(rest) {
+    const tokens = String(rest || '').split(/\s+/).filter(Boolean);
+    let theme = 'dark';
+    while (tokens.length) {
+      const token = tokens[0].toLowerCase();
+      if (token === '--theme' || token === 'theme') {
+        tokens.shift();
+        const picked = quoteTheme(tokens[0]);
+        if (picked) {
+          theme = picked;
+          tokens.shift();
+        }
+        continue;
+      }
+      const picked = quoteTheme(token);
+      if (picked) {
+        theme = picked;
+        tokens.shift();
+        continue;
+      }
+      if (token === '--light' || token === 'light') {
+        theme = 'light';
+        tokens.shift();
+        continue;
+      }
+      if (token === '--dark' || token === 'dark') {
+        theme = 'dark';
+        tokens.shift();
+        continue;
+      }
+      break;
+    }
+    return { text: normalText(tokens.join(' ')), theme };
   }
 
   async sendSticker(chat, m, buf) {
@@ -307,17 +492,36 @@ class StickerUtilsFeature {
     }
   }
 
-  async makeQuoteCard(chat, m, content, rest) {
-    const text = this.textFrom(content, rest);
+  async makeQuoteCard(chat, m, content, rest, asImage = false) {
+    const parsed = this.parseQuoteOptions(rest);
+    let text = parsed.text || quotedText(content);
+    const mediaLabel = quotedMediaLabel(content);
+    if (!text && mediaLabel) {
+      text = `Mengirim ${mediaLabel.replace(/^[^\s]+\s/, '').toLowerCase()}`;
+    }
     if (!text) {
       await wa
-        .sendText(chat, 'Reply pesan lalu ketik *.qc*, atau *.qc <teks>*.', m)
+        .sendText(
+          chat,
+          'Reply pesan lalu ketik *.qc*, atau *.qc <teks>*. Contoh tema: *.qc light*.',
+          m
+        )
         .catch(() => {});
       return;
     }
-    const name = String(m.pushName || '').trim() || 'Kamu';
-    const svg = quoteSvg(text, name);
-    const webp = await sharp(svg).webp({ quality: 86, effort: 4 }).toBuffer();
+
+    const name = quotedAuthor(content, m.pushName || 'Kamu');
+    const svg = quoteSvg(text, name, { theme: parsed.theme, mediaLabel });
+
+    if (asImage) {
+      const png = await sharp(svg, { density: 144 }).png().toBuffer();
+      await wa.sendImage(chat, png, '🖼️ Quote Card', m);
+      return;
+    }
+
+    const webp = await sharp(svg)
+      .webp({ quality: 90, effort: 4, alphaQuality: 100 })
+      .toBuffer();
     await this.sendSticker(chat, m, webp);
   }
 
@@ -429,6 +633,11 @@ class StickerUtilsFeature {
         return true;
       }
 
+      if (name === 'qcimg' || name === 'qci') {
+        await this.makeQuoteCard(chat, m, content, rest, true);
+        return true;
+      }
+
       if (name === 'wm') {
         await this.watermark(chat, m, content, rest);
         return true;
@@ -445,4 +654,4 @@ class StickerUtilsFeature {
   }
 }
 
-module.exports = { StickerUtilsFeature, extractSticker };
+module.exports = { StickerUtilsFeature, extractSticker, quoteSvg, quoteLayout };

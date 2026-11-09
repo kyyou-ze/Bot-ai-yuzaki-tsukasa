@@ -28,7 +28,7 @@ const KNOWN_COMMANDS = new Set([
   'tagall', 'rvo',
   'ba', 'pap', 's', 'sgif', 'stiker', 'sticker', 'brat',
   'srandom', 'spack', 'sadd', 'slist', 'sdel',
-  'toimg', 'ttp', 'attp', 'qc', 'wm', 'stickerinfo', 'smeta',
+  'toimg', 'ttp', 'attp', 'qc', 'qcimg', 'qci', 'wm', 'stickerinfo', 'smeta',
   'emojimix', 'emojikitchen',
   'flip', 'mirror', 'flipv', 'rotate', 'putar',
   'grayscale', 'gray', 'greyscale', 'bw', 'blur', 'crop',

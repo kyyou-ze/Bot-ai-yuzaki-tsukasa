@@ -52,12 +52,23 @@ function parseJson(text) {
   }
 }
 
+function emptyValue(value) {
+  if (value === undefined || value === null) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === 'object') {
+    const keys = Object.keys(value);
+    if (keys.length === 0) return true;
+    return keys.every((key) => emptyValue(value[key]));
+  }
+  return false;
+}
+
 /**
  * Migrasi database TikTok lama ke folder data/tiktok/.
  *
- * Hanya menyalin jika target belum ada. Setelah salinan berhasil, file lama
- * diubah kembali ke bentuk kosong agar tidak terus dianggap perubahan lokal
- * oleh git (penyebab data hilang saat auto-update).
+ * Menyalin jika target belum ada atau masih kosong. Setelah salinan berhasil,
+ * file lama diubah kembali ke bentuk kosong agar tidak terus dianggap
+ * perubahan lokal oleh git (penyebab data hilang saat auto-update).
  */
 function migrateTikTokData(cfg) {
   if (!cfg || !cfg.tiktokDataDir) return 0;
@@ -85,7 +96,18 @@ function migrateTikTokData(cfg) {
       continue;
     }
 
-    if (!fs.existsSync(target)) {
+    // Jangan menimpa data baru. Tapi kalau target sudah ada dalam keadaan
+    // kosong (mis. dibuat saat file lama belum berisi), salin ulang dari file
+    // lama supaya daftar akun tidak "hilang" setelah restart/update.
+    let targetParsed;
+    try {
+      targetParsed = parseJson(fs.readFileSync(target, 'utf8'));
+    } catch {
+      targetParsed = undefined;
+    }
+    const targetEmpty = targetParsed === undefined || emptyValue(targetParsed);
+    if (emptyValue(parsed)) continue;
+    if (targetEmpty) {
       try {
         fs.mkdirSync(path.dirname(target), { recursive: true });
         const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
@@ -99,7 +121,7 @@ function migrateTikTokData(cfg) {
       }
     }
 
-    // Data sudah ada di target; kosongkan file lama agar working tree bersih.
+    // Data sudah aman di target; kosongkan file lama agar working tree bersih.
     try {
       fs.writeFileSync(legacy, JSON.stringify(item.empty, null, 2));
     } catch {

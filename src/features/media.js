@@ -272,6 +272,56 @@ class StickerFeature {
 }
 
 // ---------------- Brat ----------------
+const BRAT_SIZE = 512;
+const BRAT_FONT =
+  "'Roboto Condensed', 'Arial Narrow', 'Liberation Sans Narrow', 'DejaVu Sans Condensed', sans-serif";
+
+const BRAT_THEMES = {
+  green: { bg: '#8ACE00', fg: '#000000' },
+  white: { bg: '#F4F4EF', fg: '#111111' },
+  black: { bg: '#111111', fg: '#F4F4EF' },
+  pink: { bg: '#FF9EC4', fg: '#111111' },
+  blue: { bg: '#8FB8FF', fg: '#111111' },
+  red: { bg: '#FF4D4D', fg: '#FFFFFF' },
+};
+
+const BRAT_THEME_ALIASES = {
+  hijau: 'green',
+  putih: 'white',
+  hitam: 'black',
+  biru: 'blue',
+  merah: 'red',
+};
+
+function bratTheme(value) {
+  const key = String(value || '').toLowerCase();
+  return BRAT_THEMES[BRAT_THEME_ALIASES[key] || key] ? BRAT_THEME_ALIASES[key] || key : '';
+}
+
+function wrapBrat(text, maxChars, maxLines) {
+  const words = String(text || '').split(/\s+/).filter(Boolean);
+  const lines = [];
+  let current = '';
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length <= maxChars) {
+      current = next;
+      continue;
+    }
+    if (current) lines.push(current);
+    current = word;
+    // Kata yang lebih panjang dari satu baris dipotong paksa.
+    while (current.length > maxChars && lines.length < maxLines) {
+      lines.push(current.slice(0, maxChars));
+      current = current.slice(maxChars);
+    }
+    if (lines.length >= maxLines) break;
+  }
+  if (current && lines.length < maxLines) lines.push(current);
+  if (lines.length === 0) lines.push('brat');
+  return lines.slice(0, maxLines);
+}
+
 class BratFeature {
   constructor(triggerRegex) {
     this.triggerRegex = triggerRegex;
@@ -279,68 +329,98 @@ class BratFeature {
   }
 
   extractStickerText(text) {
-    let cleaned = String(text || '')
+    return String(text || '')
       .replace(this.triggerRegex, ' ')
       .replace(this.reBrat, ' ')
+      .replace(/^[\s!/.]+/, '')
       .replace(/\s+/g, ' ')
       .trim();
-    if (!cleaned) {
-      cleaned = String(text || '')
-        .replace(this.triggerRegex, '')
-        .replace(this.reBrat, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-    }
-    return cleaned;
   }
 
-  buildSvg(text) {
-    const size = 512;
-    const lower = text.toLowerCase();
-    const len = lower.length;
-    let fontSize = 48;
-    if (len <= 5) fontSize = 60;
-    else if (len <= 10) fontSize = 48;
-    else if (len <= 20) fontSize = 36;
-    else if (len <= 40) fontSize = 28;
-    else fontSize = 20;
-    fontSize = (fontSize * size) / 400;
+  parseOptions(text) {
+    let raw = this.extractStickerText(text);
+    let theme = 'green';
+    let blur = 0.35;
 
-    const charWidth = fontSize * 0.55;
-    const maxChars = Math.max(3, Math.floor((size * 0.9) / charWidth));
-    const words = lower.split(/\s+/).filter(Boolean);
-    const lines = [];
-    let current = '';
-    for (const word of words) {
-      const test = current ? `${current} ${word}` : word;
-      if (test.length <= maxChars) current = test;
-      else {
-        if (current) lines.push(current);
-        current = word;
+    // Format: .brat white halo / .brat --theme black --blur 1 halo
+    const tokens = raw.split(/\s+/).filter(Boolean);
+    while (tokens.length) {
+      const token = tokens[0].toLowerCase();
+      if (token === '--theme' || token === 'theme') {
+        tokens.shift();
+        const picked = bratTheme(tokens[0]);
+        if (picked) {
+          theme = picked;
+          tokens.shift();
+        }
+        continue;
+      }
+      if (token === '--blur' || token === 'blur') {
+        tokens.shift();
+        const n = Number(tokens[0]);
+        if (Number.isFinite(n) && n >= 0 && tokens[0] !== undefined) {
+          blur = Math.max(0, Math.min(4, n));
+          tokens.shift();
+        } else {
+          blur = 1.2;
+        }
+        continue;
+      }
+      const picked = bratTheme(token);
+      // Nama tema hanya dipakai kalau masih ada teks setelahnya.
+      if (picked && tokens.length > 1) {
+        theme = picked;
+        tokens.shift();
+        continue;
+      }
+      break;
+    }
+
+    raw = tokens.join(' ').trim();
+    return { text: raw, theme, blur };
+  }
+
+  buildSvg(text, options = {}) {
+    const themeName = bratTheme(options.theme) || 'green';
+    const theme = BRAT_THEMES[themeName];
+    const lower = String(text || '').toLowerCase().replace(/\s+/g, ' ').trim() || 'brat';
+    const boxWidth = BRAT_SIZE * 0.86;
+    const boxHeight = BRAT_SIZE * 0.78;
+    const maxLines = 8;
+
+    let chosen = null;
+    for (let fontSize = 132; fontSize >= 20; fontSize -= 2) {
+      const charWidth = fontSize * 0.52;
+      const maxChars = Math.max(3, Math.floor(boxWidth / charWidth));
+      const lines = wrapBrat(lower, maxChars, maxLines);
+      const lineHeight = fontSize * 1.04;
+      const totalHeight = lines.length * lineHeight;
+      const longEnough = lines.every((line) => line.length <= maxChars);
+      if (longEnough && totalHeight <= boxHeight) {
+        chosen = { fontSize, lines, lineHeight, totalHeight };
+        break;
       }
     }
-    if (current) lines.push(current);
-    if (lines.length === 0) lines.push('brat');
+    if (!chosen) {
+      const fontSize = 20;
+      const maxChars = Math.max(3, Math.floor(boxWidth / (fontSize * 0.52)));
+      const lines = wrapBrat(lower, maxChars, maxLines);
+      chosen = { fontSize, lines, lineHeight: fontSize * 1.04, totalHeight: lines.length * fontSize * 1.04 };
+    }
 
-    const lineHeight = fontSize * 1.2;
-    const totalHeight = lines.length * lineHeight;
-    const startY = (size - totalHeight) / 2 + fontSize;
-
-    let tspans = '';
-    lines.forEach((line, i) => {
-      const y = startY + i * lineHeight;
-      if (y > size - 15) return;
-      const single = lines.length === 1 && len <= 12;
-      const x = single ? size / 2 : 20;
-      const anchor = single ? 'middle' : 'start';
-      tspans += `<text x="${x}" y="${y}" text-anchor="${anchor}" font-family="DejaVu Sans, Arial, sans-serif" font-size="${fontSize}" fill="#000">${escapeXml(
-        line
-      )}</text>`;
-    });
+    const startY = (BRAT_SIZE - chosen.totalHeight) / 2 + chosen.fontSize * 0.8;
+    const tspans = chosen.lines
+      .map(
+        (line, i) =>
+          `<text x="${BRAT_SIZE / 2}" y="${startY + i * chosen.lineHeight}" ` +
+          `text-anchor="middle" font-family="${BRAT_FONT}" font-size="${chosen.fontSize}" ` +
+          `font-weight="500" letter-spacing="-0.5" fill="${theme.fg}">${escapeXml(line)}</text>`
+      )
+      .join('');
 
     return Buffer.from(
-      `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">` +
-        `<rect width="${size}" height="${size}" fill="#8EFF8E"/>${tspans}</svg>`
+      `<svg width="${BRAT_SIZE}" height="${BRAT_SIZE}" xmlns="http://www.w3.org/2000/svg">` +
+        `<rect width="${BRAT_SIZE}" height="${BRAT_SIZE}" fill="${theme.bg}"/>${tspans}</svg>`
     );
   }
 
@@ -349,13 +429,16 @@ class BratFeature {
     if (!this.triggerRegex.test(text)) return false;
     if (!this.reBrat.test(text)) return false;
 
-    let stickerText = this.extractStickerText(text);
+    const parsed = this.parseOptions(text);
+    let stickerText = parsed.text;
     if (!stickerText.trim()) stickerText = 'brat';
 
     const chat = m.key.remoteJid;
     try {
-      const svg = this.buildSvg(stickerText);
-      const webp = await sharp(svg).webp({ lossless: true, effort: 4 }).toBuffer();
+      const svg = this.buildSvg(stickerText, parsed);
+      let image = sharp(svg);
+      if (parsed.blur > 0) image = image.blur(parsed.blur);
+      const webp = await image.webp({ lossless: true, effort: 4 }).toBuffer();
       await wa.sendSticker(chat, webp, m);
     } catch (err) {
       log.error('[BRAT] gagal:', err.message);

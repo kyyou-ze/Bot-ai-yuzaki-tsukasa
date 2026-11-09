@@ -15,7 +15,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Hijabin** (`tsukasa hijabin` / reply gambar) — Tambahkan hijab (JPEG/PNG).
 - **Brat & Sticker** — `tsukasa brat <teks>` untuk sticker gaya brat. Sticker biasa dari gambar/URL/video (animated memakai ffmpeg).
 - **Sticker Pack & Auto Sticker Reply** — Bot punya pack sticker per mood (`lucu`, `sedih`, `marah`, `love`, `ngantuk`, `hai`, `kaget`). Kalau user mengirim sticker, bot kadang membalas sticker random sambil meng-quote pesan tersebut (peluang & cooldown bisa diatur). Kelola pack dari WhatsApp: `.sadd <mood>` (reply sticker), `.srandom <mood>`, `.s lucu`, `.slist`, `.sdel <mood> <nomor>`.
-- **Sticker Utility** — `.toimg` (sticker → PNG), `.ttp <teks>` (sticker teks), `.attp <teks>` (sticker teks animasi), `.qc` (quote card dari pesan yang di-reply), `.wm <teks>` (watermark sticker), dan `.stickerinfo` (info format/ukuran/frame).
+- **Sticker Utility** — `.toimg` (sticker → PNG), `.ttp <teks>` (sticker teks), `.attp <teks>` (sticker teks animasi), `.qc` (quote card dari pesan yang di-reply, tema `light`/`dark`), `.qcimg`/`.qci` (quote card sebagai gambar), `.wm <teks>` (watermark sticker), dan `.stickerinfo` (info format/ukuran/frame).
 - **Sticker Transform & Emoji Mix** — `.emojimix 😀 😍` (gabung dua emoji ala Emoji Kitchen), `.flip`/`.flipv`/`.rotate <derajat>`, `.grayscale`/`.invert`/`.blur`, `.crop`, dan `.resize <px>`. Bisa dipakai pada sticker langsung maupun sticker/gambar yang di-reply.
 - **AI Tool Calling** — Saat mengobrol, AI bisa memilih aksi sendiri: mengirim sticker sesuai mood, memberi reaksi emoji, membuat gambar, membuat pengingat, atau mencari info terbaru di web. Contoh: AI membalas "wkwk" lalu mengirim sticker `lucu`.
 - **Blue Archive & Pap** — `ba` / `!ba` atau kata kunci terkait, `!pap` / `pap`.
@@ -511,6 +511,11 @@ Utility sticker (bisa direct atau reply):
 .attp Halo dunia        # sticker teks animasi
 .qc                     # quote card dari pesan yang di-reply
 .qc Teks bebas          # quote card dengan teks sendiri
+.qc light               # quote card tema terang (dark = gelap)
+.qcimg / .qci           # quote card dikirim sebagai gambar PNG
+.brat halo              # sticker brat hijau khas Charli XCX
+.brat white halo        # tema: green/white/black/pink/blue/red
+.brat --blur 1.2 halo   # blur halus (0 = tanpa blur)
 .wm @Tsukasa            # watermark sticker (reply sticker)
 .stickerinfo            # info format, ukuran, jumlah frame, size
 ```
