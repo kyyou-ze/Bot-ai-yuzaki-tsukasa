@@ -1,6 +1,7 @@
 'use strict';
 
 const log = require('./logger');
+const emotion = require('./emotion');
 const { atomicWriteJson, safeReadJson } = require('./util');
 
 const WARN_LIMIT = 5;
@@ -33,6 +34,8 @@ class Store {
       // Fitur yang dinonaktifkan per grup: { [chat]: { brat: false, qc: false } }.
       // Hanya fitur yang dimatikan yang disimpan, jadi default-nya selalu aktif.
       groupFeatures: raw.groupFeatures || {},
+      // Suasana hati Tsukasa per chat: { [chat]: { mood, intensity, reason, updated } }.
+      emotions: raw.emotions || {},
       afk: raw.afk || {},
     };
     this._writing = Promise.resolve();
@@ -191,6 +194,36 @@ class Store {
     const target = String(chat || '').trim();
     if (!target || !this.data.groupFeatures[target]) return Promise.resolve(false);
     delete this.data.groupFeatures[target];
+    return this._save().then(() => true);
+  }
+
+  // ---------- Suasana hati (emosi) ----------
+
+  getEmotion(chat) {
+    return emotion.normalizeState(this.data.emotions[chat]);
+  }
+
+  setEmotion(chat, mood, intensity, reason) {
+    const target = String(chat || '').trim();
+    if (!target) return Promise.reject(new Error('invalid chat for emotion'));
+    const key = emotion.normalizeMood(mood);
+    if (key === 'netral') {
+      delete this.data.emotions[target];
+    } else {
+      this.data.emotions[target] = {
+        mood: key,
+        intensity: Math.max(0, Math.min(1, Number(intensity) || 0.5)),
+        reason: String(reason || '').slice(0, 120),
+        updated: Date.now(),
+      };
+    }
+    return this._save().then(() => this.getEmotion(target));
+  }
+
+  clearEmotion(chat) {
+    const target = String(chat || '').trim();
+    if (!target || !this.data.emotions[target]) return Promise.resolve(false);
+    delete this.data.emotions[target];
     return this._save().then(() => true);
   }
 

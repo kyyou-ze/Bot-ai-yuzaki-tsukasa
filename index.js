@@ -70,6 +70,19 @@ function isTransientWaError(tag, message) {
   const text = String(message || '')
     .toLowerCase()
     .replace(/\s+/g, ' ');
+
+  // Race normal di grup: pesan tiba sebelum SenderKey dibagikan, sehingga
+  // libsignal gagal mendekripsi lalu transaksi di-rollback. WhatsApp akan
+  // mengirim ulang pesan/sesi secara otomatis; bukan kegagalan bot dan tidak
+  // perlu memicu notifikasi error ke owner.
+  if (/no session found to decrypt message/.test(text)) return true;
+  if (
+    /transaction failed, rolling back/.test(text) &&
+    /(decrypt|decryption|session|senderkey|sender key)/.test(text)
+  ) {
+    return true;
+  }
+
   if (!/(timed out|timeout)/.test(text)) return false;
   return /unexpected error in '(init queries|presence update requests)'/.test(text);
 }

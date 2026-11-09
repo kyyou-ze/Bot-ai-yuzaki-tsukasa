@@ -8,6 +8,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 
 - **Chat AI berkarakter Tsukasa** — Mode `MANUAL` (butuh trigger `tsukasa`) atau `AUTO`. Persona `tsukasa1`/`tsukasa2` bisa diubah per chat (`!tsukasa persona ...`). Mode Pro bisa diaktifkan per chat. Tsukasa hanya bersikap istimewa (romantis/manja) kepada owner; user lain diperlakukan sebagai orang biasa dan dipanggil sesuai nama mereka (nama tersimpan atau pushName WhatsApp), bukan "Kyouu".
 - **Mode Dewasa (owner-only)** — Di chat pribadi, jika owner memulai obrolan hot/flirty, bot otomatis mengikuti (18+, sugestif) selama 30 menit. Kirim `stop` untuk kembali normal.
+- **Emosi otomatis** — Tsukasa punya suasana hati yang berubah dari obrolan: senang, sedih, marah, kesal, malu, kaget, takut, cemburu, bangga, bingung, prihatin, dan manja (khusus owner). Emosi memudar setelah ±20 menit dan **tidak mengirim pemberitahuan apa pun** ke chat.
 - **Vision** — Kirim/reply gambar + sebut `tsukasa` untuk dianalisis Gemini.
 - **VN → Teks → Auto-reply** — VN langsung akan ditranskrip & dibalas. VN hasil _quote_ hanya diproses jika menyebut `tsukasa`.
 - **TTS VN** (`tsukasa vn <teks>`) — Hasilkan voice note via ElevenLabs (bisa pakai konteks balasan).
@@ -831,4 +832,5 @@ Semua pengaturan di atas juga bisa diubah lewat chat:
 - **Sticker animasi gagal**: Pastikan `npm install` selesai (ffmpeg-static terpasang) atau set `FFMPEG_PATH`.
 - **Reconnecting terus**: Hapus isi folder sesi hanya jika benar-benar ingin pairing ulang (akan minta QR/kode baru).
 - **Pesan bot tertulis “Menunggu pesan ini…” di chat penerima**: Ini bukan teks bot, melainkan pesan WhatsApp yang gagal didekripsi. Bot memakai Baileys v7 (LID-native) dan tetap mengarahkan kiriman `@lid` ke nomor telepon asli bila pemetaannya tersedia (`data/lidmap.json`). Jika masih muncul, minta penerima mengirim pesan baru ke bot agar pemetaan LID→nomor terbentuk, lalu balas lagi. Setelah upgrade dari Baileys 6.7.x, jika sesi lama bermasalah, pairing ulang sekali (QR/kode) lalu kirim pesan baru.
+- **Log `No session found to decrypt message` / `transaction failed, rolling back`**: Ini race normal saat pesan grup tiba sebelum SenderKey dibagikan. WhatsApp otomatis mengirim ulang sesi/pesan, jadi tidak perlu tindakan. Sejak update ini error tersebut tidak lagi memicu notifikasi “Error Tsukasa” ke owner, tetapi tetap tercatat di log panel untuk diagnosis.
 - **HTTP API tidak bisa diakses**: Pastikan allocation/port benar, aplikasi listen `0.0.0.0`, dan firewall node mengizinkan port tersebut.

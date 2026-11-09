@@ -30,6 +30,7 @@ const { downloadQueue } = require('./downloadqueue');
 const { RateLimiter } = require('./ratelimit');
 const tiktok = require('./tiktok');
 const llm = require('./llm');
+const emotion = require('./emotion');
 const memory = require('./memory');
 const wa = require('./wa');
 const { isGroupJid, jidUser } = require('./util');
@@ -512,6 +513,7 @@ class Router {
       lines: [
         '• Chat pribadi: reply pesan apa pun, aku tetap jawab.',
         '• Grup: default hanya merespons saat dipanggil "tsukasa". Admin bisa ubah lewat .modegrup.',
+        '• Suasana hatiku berubah otomatis dari obrolan — tanpa pemberitahuan.',
         '• Fitur grup bisa dimatikan tanpa mengganggu fitur lain: .fitur off brat qc',
         '• Katakan "panggil aku [nama]" supaya aku ingat namamu!',
       ],
@@ -1510,11 +1512,7 @@ class Router {
       adult = false;
       log.info(`[ADULT] nonaktif untuk chat=${chat}`);
     } else if (ownerDm && isHotCue(txt)) {
-      if (!state.adult) {
-        await wa
-          .sendText(chat, '🔥 _Mode dewasa aktif (18+). Kirim "stop" untuk kembali normal._', m)
-          .catch(() => {});
-      }
+      // Aktif otomatis tanpa pemberitahuan di chat.
       adult = true;
       await this.store.setAdult(chat, true);
       log.info(`[ADULT] aktif untuk chat=${chat} sender=${sender}`);
@@ -1528,6 +1526,11 @@ class Router {
       );
     }
 
+    // Suasana hati Tsukasa diperbarui otomatis dari obrolan. Tidak ada pesan
+    // pemberitahuan ke chat; emosi hanya memengaruhi gaya balasan AI.
+    const mood = await this.updateEmotion(chat, txt, isOwner && !isGroupJid(chat));
+    const emotionPrompt = emotion.prompt(mood);
+
     const hist = memory.load(chat);
     const ctxTxt = memory.buildContext(hist, txt, sender);
 
@@ -1540,7 +1543,9 @@ class Router {
       ctxTxt,
       sender,
       adult,
-      this.aiTools.systemPrompt({ allowSearch: true }),
+      [emotionPrompt, this.aiTools.systemPrompt({ allowSearch: true })]
+        .filter(Boolean)
+        .join('\n\n'),
       isOwner
     );
 
@@ -1566,7 +1571,9 @@ class Router {
         searchCtx,
         sender,
         adult,
-        this.aiTools.systemPrompt({ allowSearch: false }),
+        [emotionPrompt, this.aiTools.systemPrompt({ allowSearch: false })]
+          .filter(Boolean)
+          .join('\n\n'),
         isOwner
       );
       aiParsed = this.aiTools.parse(rawReply);
@@ -1581,6 +1588,20 @@ class Router {
       await wa.sendText(chat, out.text, m, out.mentions);
     }
     await this.aiTools.run(chat, m, aiParsed.actions, txt);
+  }
+
+  /**
+   * Perbarui suasana hati Tsukasa dari pesan terakhir. Dijalankan otomatis,
+   * tanpa mengirim pemberitahuan apa pun ke chat.
+   */
+  async updateEmotion(chat, text, isOwner) {
+    const prev = this.store.getEmotion(chat);
+    const detected = emotion.detect(text, { isOwner: Boolean(isOwner) });
+    if (!detected) return prev;
+    const next = emotion.merge(prev, detected);
+    return this.store
+      .setEmotion(chat, next.mood, next.intensity, next.reason)
+      .catch(() => next);
   }
 
   async handleAdultMode(chat, m, isOwner, arg) {
