@@ -13,7 +13,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **TTS VN** (`tsukasa vn <teks>`) — Hasilkan voice note via ElevenLabs (bisa pakai konteks balasan).
 - **Buat Gambar** (`tsukasa buatin gambar <prompt>`) atau `!gambar <prompt>` — Generate gambar dengan Gemini.
 - **Hijabin** (`tsukasa hijabin` / reply gambar) — Tambahkan hijab (JPEG/PNG).
-- **Brat & Sticker** — `tsukasa brat <teks>` untuk sticker gaya brat. Sticker biasa dari gambar/URL/video (animated memakai ffmpeg).
+- **Brat & Sticker** — `.brat <teks>` atau `tsukasa brat <teks>` untuk sticker gaya brat (tema `green`/`white`/`black`/`pink`/`blue`/`red`). Sticker biasa dari gambar/URL/video (animated memakai ffmpeg).
 - **Sticker Pack & Auto Sticker Reply** — Bot punya pack sticker per mood (`lucu`, `sedih`, `marah`, `love`, `ngantuk`, `hai`, `kaget`). Kalau user mengirim sticker, bot kadang membalas sticker random sambil meng-quote pesan tersebut (peluang & cooldown bisa diatur). Kelola pack dari WhatsApp: `.sadd <mood>` (reply sticker), `.srandom <mood>`, `.s lucu`, `.slist`, `.sdel <mood> <nomor>`.
 - **Sticker Utility** — `.toimg` (sticker → PNG), `.ttp <teks>` (sticker teks), `.attp <teks>` (sticker teks animasi), `.qc` (quote card dari pesan yang di-reply, tema `light`/`dark`), `.qcimg`/`.qci` (quote card sebagai gambar), `.wm <teks>` (watermark sticker), dan `.stickerinfo` (info format/ukuran/frame).
 - **Sticker Transform & Emoji Mix** — `.emojimix 😀 😍` (gabung dua emoji ala Emoji Kitchen), `.flip`/`.flipv`/`.rotate <derajat>`, `.grayscale`/`.invert`/`.blur`, `.crop`, dan `.resize <px>`. Bisa dipakai pada sticker langsung maupun sticker/gambar yang di-reply.
@@ -106,7 +106,7 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `TIKTOK_CN_KEYWORD` | `ECN` | Keyword CN yang dicari di nickname (Unicode dinormalisasi) |
 | `TIKTOK_HASHTAG` | `#margaecn` | Hashtag wajib yang dicek di caption |
 | `TIKTOK_CHECK_MIN` | `3` | Interval cek video baru (menit) |
-| `TIKTOK_NOTIFY_JID` | - | JID tujuan notifikasi tambahan |
+| `TIKTOK_NOTIFY_JID` | - | JID grup tujuan notifikasi tambahan (bisa diubah dari WhatsApp lewat `/detector setgc`) |
 | `TIKTOK_API_URL` | - | Endpoint scraper sendiri dengan placeholder `{username}` & `{count}` (opsional) |
 | `TIKTOK_API_KEY` | - | API key untuk `TIKTOK_API_URL` (opsional) |
 | `TIKTOK_DL_API_URL` / `TIKTOK_DL_API_KEY` | - | Endpoint download media sendiri, placeholder `{url}` (opsional) |
@@ -581,7 +581,7 @@ Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTO
 - Caption mengandung hashtag `TIKTOK_HASHTAG` (default `#margaecn`, case-insensitive).
 - Nickname/display name akun mengandung `TIKTOK_CN_KEYWORD` (default `ECN`). Huruf Unicode seperti `𝙀𝘾𝙉`, `〆𝙀𝘾𝙉`, dan `ft 𝙀𝘾𝙉` otomatis dinormalisasi jadi `ECN` sebelum dicocokkan.
 
-Notifikasi otomatis dikirim ke grup yang sudah memverifikasi ACC terkait. Bot mencoba mengirim cover video sebagai gambar preview; kalau cover gagal diunduh, notifikasi jatuh ke teks biasa. Formatnya:
+Notifikasi otomatis dikirim **hanya ke grup** yang sudah memverifikasi ACC terkait (plus grup tambahan dari `TIKTOK_NOTIFY_JID`/`/detector setgc`). Bot mencoba mengirim cover video sebagai gambar preview; kalau cover gagal diunduh, notifikasi jatuh ke teks biasa. Nama peng-verif di-tag memakai nomor WhatsApp-nya. Formatnya:
 
 ```text
 🎬 Tsukasa Detector
@@ -591,13 +591,18 @@ ACC: ECN
 📌 CN ECN - Cocok ✅
 📝 Caption: ...
 🔗 https://www.tiktok.com/@rinorstr/video/...
+🙋 UP oleh: @62812xxxxxxx
 ```
+
+Kalau caption tidak memuat hashtag, statusnya `❎` dan bot menambahkan peringatan agar uploader melengkapi hashtag tersebut.
 
 Command verif (bisa ` / `, `.`, `!`, atau diawali `Tsukasa`):
 
 ```text
-/verif ECN         # verif ACC di grup ini
+/verif ECN         # verif ACC di grup ini + tautkan ke nomor WhatsApp kamu
 /veriv ECN         # alias typo
+/me                # lihat akun TikTok yang tertaut ke nomor WhatsApp kamu
+/me ECN            # filter salah satu akun
 /listverif         # daftar ACC terverif di grup ini
 /unverif ECN       # hapus ACC dari grup ini
 /siapaup           # 5 video/akun terbaru yang UP hari ini
@@ -607,6 +612,8 @@ Command verif (bisa ` / `, `.`, `!`, atau diawali `Tsukasa`):
 /cn Budi           # contoh CN TikTok (3 gaya) untuk nama Budi
 ```
 
+Saat `/verif`, bot menyimpan `userJid`/`userPn` pengirim. Saat akun itu UP, detector memberi notifikasi ke grup dan men-tag nomor WhatsApp peng-verif. Kalau akun sudah pernah diverif tetapi belum tertaut, kirim ulang `/verif <acc>` dengan nama yang sama untuk melengkapi tautan tanpa membuat duplikat. `.me` menampilkan grup asal, CN/hashtag, status UP hari ini (✅/❎ hashtag), caption, dan link video.
+
 ### Kelola akun pantauan dari WhatsApp
 
 Tanpa edit `.env` dan tanpa restart (owner atau admin grup):
@@ -614,11 +621,17 @@ Tanpa edit `.env` dan tanpa restart (owner atau admin grup):
 ```text
 /addakun @username   # tambah akun ke daftar pantauan
 /delakun @username   # hapus akun dari daftar pantauan
-/listakun            # lihat semua akun + status detector
-/detector status     # status detector + kesehatan (cek/sukses terakhir, cooldown WAF, error)
-/detector on         # aktifkan detector (khusus owner)
-/detector off        # matikan detector (khusus owner)
+/listakun                 # lihat semua akun + status detector
+/detector status          # status detector + kesehatan + grup notifikasi
+/detector setgc           # pakai grup ini sebagai grup notifikasi TikTok
+/detector setgc <link>    # atur grup lain lewat link undangan (owner)
+/detector setgc off       # matikan grup notifikasi tambahan
+/detector setgc status    # lihat grup notifikasi saat ini
+/detector on              # aktifkan detector (khusus owner)
+/detector off             # matikan detector (khusus owner)
 ```
+
+`/detector setgc` menyimpan `TIKTOK_NOTIFY_JID` dan langsung berlaku tanpa restart. Notifikasi tetap dikirim ke grup yang punya akun terverifikasi; grup tambahan ini berguna kalau ingin semua laporan UP masuk ke satu grup pantauan.
 
 Daftar akun disimpan di `data/tiktok/accounts.json`. Selama file itu belum punya daftar akun, bot memakai `TIKTOK_ACCOUNTS` dari `.env`. Begitu ada `/addakun` atau `/delakun`, daftar di file JSON yang menjadi acuan.
 
@@ -703,8 +716,22 @@ Admin grup (dan owner bot) bisa mengatur kapan Tsukasa membalas di grup masing-m
 
 - Default grup adalah `call`: bot hanya merespons saat ada panggilan `tsukasa`.
 - Semua perintah (`.help`, `.stiker`, `.tagall`, dll.) dan fitur tetap berfungsi di mode mana pun.
-- Di mode `reply`, pesan harus berupa balasan/quote ke pesan lain sekaligus menyebut `tsukasa`.
+- Di mode `reply`, pesan harus berupa balasan/quote ke pesan lain, lalu menyebut `tsukasa` **atau** membalas pesan bot. Quote video/dokumen/sticker/caption juga dihitung sebagai balasan.
 - Di mode `all`, bot membalas semua pesan grup tanpa perlu trigger.
+
+### Aktif/nonaktifkan fitur per grup
+
+Admin grup bisa mematikan fitur tertentu tanpa mengganggu fitur lain. Fitur yang dimatikan langsung hilang dari `.help` di grup itu dan perintahnya ditolak.
+
+```text
+.fitur status              # daftar fitur aktif/nonaktif
+.fitur off brat qc         # matikan Brat dan Quote Card
+.fitur on brat             # aktifkan lagi
+.fitur off all             # matikan semua fitur
+.fitur reset               # aktifkan semua fitur
+```
+
+Nama fitur yang tersedia: `ai`, `sticker`, `brat`, `qc`, `media`, `anime`, `news`, `cosplay`, `animechannel`, `verif`, `detector`, `tools`, `moderation`. Perintah pengelolaan seperti `.help` dan `.fitur` sendiri tidak bisa dimatikan. Pengaturan disimpan per grup di `tsukasa_state.json` (`groupFeatures`) dan berlaku juga untuk bentuk natural (mis. `tsukasa brat ...`).
 
 ### AFK, Ping & TagAll
 

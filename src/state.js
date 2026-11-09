@@ -30,6 +30,9 @@ class Store {
       reminders: Array.isArray(raw.reminders) ? raw.reminders : [],
       groupGuard: raw.groupGuard || {},
       groupReplyMode: raw.groupReplyMode || {},
+      // Fitur yang dinonaktifkan per grup: { [chat]: { brat: false, qc: false } }.
+      // Hanya fitur yang dimatikan yang disimpan, jadi default-nya selalu aktif.
+      groupFeatures: raw.groupFeatures || {},
       afk: raw.afk || {},
     };
     this._writing = Promise.resolve();
@@ -148,6 +151,47 @@ class Store {
       [chat]: m,
     };
     return this._save().then(() => m);
+  }
+
+  // ---------- Fitur per grup ----------
+  //
+  // Fitur default aktif. Admin grup bisa mematikan mis. `brat` dan `qc`;
+  // perintahnya otomatis ditolak dan barisnya hilang dari menu di grup itu.
+
+  getGroupFeatures(chat) {
+    const g = this.data.groupFeatures[chat];
+    return g && typeof g === 'object' ? { ...g } : {};
+  }
+
+  listDisabledFeatures(chat) {
+    return Object.keys(this.getGroupFeatures(chat)).filter(
+      (key) => this.data.groupFeatures[chat][key] === false
+    );
+  }
+
+  isFeatureEnabled(chat, key) {
+    const g = this.data.groupFeatures[chat];
+    if (!g || typeof g !== 'object') return true;
+    return g[key] !== false;
+  }
+
+  setFeatureEnabled(chat, key, enabled) {
+    const target = String(chat || '').trim();
+    const name = String(key || '').trim().toLowerCase();
+    if (!target || !name) return Promise.reject(new Error('invalid group feature'));
+    const cur = this.getGroupFeatures(target);
+    if (enabled) delete cur[name];
+    else cur[name] = false;
+    if (Object.keys(cur).length) this.data.groupFeatures[target] = cur;
+    else delete this.data.groupFeatures[target];
+    return this._save().then(() => Boolean(enabled));
+  }
+
+  clearGroupFeatures(chat) {
+    const target = String(chat || '').trim();
+    if (!target || !this.data.groupFeatures[target]) return Promise.resolve(false);
+    delete this.data.groupFeatures[target];
+    return this._save().then(() => true);
   }
 
   getGroupGuard(chat) {

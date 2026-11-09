@@ -36,6 +36,12 @@ const { isGroupJid, jidUser } = require('./util');
 const { shortError } = require('./logfmt');
 const { isHotCue, isStopCue } = require('./adultmode');
 const {
+  featureForCommand,
+  normalizeFeatureKey,
+  featureLabel,
+  featureList,
+} = require('./featurescatalog');
+const {
   escapeRegExp,
   KNOWN_COMMANDS,
   parseCommand,
@@ -134,13 +140,27 @@ function extractText(m, content) {
 }
 
 function quotedInfo(quoted) {
-  const info = { img: false, aud: false, text: '' };
+  // Semua jenis pesan yang bisa di-quote harus dihitung sebagai "ada quote".
+  // Dulu video/dokumen/sticker dan caption gambar tidak terdeteksi, sehingga
+  // mode grup `reply` menganggap pesan bukan balasan dan tidak merespons.
+  const info = { img: false, aud: false, vid: false, doc: false, sticker: false, text: '' };
   if (!quoted) return info;
   info.img = Boolean(quoted.imageMessage);
   info.aud = Boolean(quoted.audioMessage);
+  info.vid = Boolean(quoted.videoMessage);
+  info.doc = Boolean(quoted.documentMessage);
+  info.sticker = Boolean(quoted.stickerMessage);
+
+  const captionOf = (node) => String((node && node.caption) || '').trim();
   if (quoted.conversation) info.text = quoted.conversation;
   else if (quoted.extendedTextMessage && quoted.extendedTextMessage.text) {
     info.text = quoted.extendedTextMessage.text;
+  } else {
+    info.text =
+      captionOf(quoted.imageMessage) ||
+      captionOf(quoted.videoMessage) ||
+      captionOf(quoted.documentMessage) ||
+      '';
   }
   return info;
 }
@@ -367,6 +387,268 @@ class Router {
     return lines.join('\n');
   }
 
+  /**
+   * Menu AI-first. Baris menu dipetakan ke fitur lewat `featureForCommand`,
+   * lalu fitur yang dimatikan admin grup otomatis hilang dari daftar.
+   */
+  buildMenu(chat, sender, isOwner) {
+    const isGroup = isGroupJid(chat);
+    const enabled = (key) => !isGroup || this.store.isFeatureEnabled(chat, key);
+    const userName = memory.getUserName(sender) || '';
+    const greeting = userName ? `Hai ${userName}!` : 'Hai!';
+
+    const sections = [
+      {
+        title: '🤖 *AI — Fitur Utama*',
+        feature: 'ai',
+        lines: [
+          '• tsukasa <tanya> — ngobrol natural; AI bisa kirim sticker, reaksi, gambar, pengingat, cari web',
+          '• kirim/reply gambar + sebut "tsukasa" — analisis gambar (Vision)',
+          '• tsukasa vn <teks> — voice note AI',
+          '• .gambar <prompt> — buat gambar AI',
+          '• .info <topik> — info apa saja dalam Bahasa Indonesia',
+          '• .rangkum [jumlah] — rangkum percakapan terakhir',
+        ],
+      },
+      {
+        title: '💬 *Umum*',
+        lines: [
+          '• .help / .menu — menu ini',
+          '• .whoami — lihat JID kamu',
+          '• .health / .ping / .status — status bot, uptime, RAM',
+          '• .afk [alasan] — tandai AFK (.afk off untuk kembali)',
+          '• .statistik — statistik aktivitas chat',
+        ],
+      },
+      {
+        title: '🎨 *Sticker & Quote*',
+        lines: [
+          '• .stiker / .s — gambar/video/URL jadi sticker',
+          '• .sgif — sticker animasi (GIF/video)',
+          '• .brat [tema] <teks> — sticker brat (green/white/black/pink/blue/red)',
+          '• .srandom <mood> / .s <mood> — sticker random dari pack',
+          '• .sadd <mood> — simpan sticker (reply sticker) ke pack',
+          '• .slist / .sdel <mood> <nomor> — kelola pack sticker',
+          '• .toimg — sticker jadi gambar PNG',
+          '• .ttp <teks> / .attp <teks> — sticker teks statis/animasi',
+          '• .qc [light|dark] — quote card dari pesan yang di-reply',
+          '• .qcimg / .qci — quote card sebagai gambar PNG',
+          '• .wm <teks> — watermark sticker',
+          '• .stickerinfo / .smeta — info sticker',
+          '• .emojimix 😀 😍 — gabung dua emoji',
+          '• .flip / .flipv / .rotate <derajat> — balik/putar sticker',
+          '• .grayscale / .invert / .blur [sigma] — filter sticker',
+          '• .crop / .resize <px> — potong/resize sticker',
+        ],
+      },
+      {
+        title: '🖼️ *Media & Anime*',
+        lines: [
+          '• .rvo — buka media sekali lihat (reply)',
+          '• .ba — gambar Blue Archive',
+          '• .pap — kirim pap',
+          '• .hijabin — hijabkan gambar (kirim/reply gambar)',
+          '• .anime ... — info anime (new/movie/schedule/search/detail)',
+          '• .anime roulette [genre] — rekomendasi anime acak',
+          '• .news [topik] — berita anime/manga/gacha/cosplay',
+          '• .cosplay <link IG> — ambil foto dari post Instagram',
+        ],
+      },
+      {
+        title: '✅ *Verif TikTok & CN*',
+        lines: [
+          '• .cn <nama> — contoh CN TikTok (3 gaya)',
+          '• .verif <acc> — verif ACC TikTok dan tautkan nomor WA kamu',
+          '• .me — lihat akun TikTok yang tertaut ke nomor kamu',
+          '• .listverif — daftar ACC terverifikasi',
+          '• .unverif <acc> — hapus ACC dari daftar verif',
+          '• .siapaup / .whoup — siapa yang UP hari ini',
+          '• .cekup @username — cek akun sudah UP atau belum',
+          '• .history — rekap UP 7 hari terakhir',
+          '• .addakun / .delakun / .listakun — kelola pantauan',
+          '• .detector status — status detector TikTok',
+          '• .detector setgc — atur grup notifikasi TikTok dari WhatsApp',
+          '• .detector on|off — kontrol detector (owner)',
+        ],
+      },
+      {
+        title: '🛠️ *Admin Grup*',
+        lines: [
+          '• .fitur on|off <nama> — aktif/nonaktifkan fitur di grup ini',
+          '• .fitur status — daftar fitur aktif/nonaktif',
+          '• .modegrup all|reply|call — atur cara bot membalas',
+          '• .tagall <pesan> — mention semua anggota (khusus admin grup)',
+          '• .peraturan on|off|status — moderasi grup',
+          '• .antilink on|off / .antilink allow domain.com',
+          '• .antispam on|off',
+          '• .mute [menit] @user / .unmute @user / .resetwarn @user|all',
+          '• .jadwal buka 06:00 / .jadwal tutup 22:00',
+          '• .jadwal weekend on|off / .jadwal test',
+          '• .ingatkan <waktu> <teks> — pengingat',
+          '• .poll <tanya> | <opsi1> | <opsi2> — polling grup',
+        ],
+      },
+    ];
+
+    if (isOwner) {
+      sections.push({
+        title: '🔧 *Owner*',
+        lines: [
+          '• .config / .set <KEY> <nilai> — ubah pengaturan lewat chat',
+          '• .update status|check|now|auto on|off — auto-update & restart',
+          '• .panel status|logs|install|restart — kelola panel dari chat pribadi',
+          '• .animechannel status|test|news|info|cosplay|check <judul>',
+          '• .tsukasa persona tsukasa1|tsukasa2 — pilih persona AI',
+          '• .tsukasa mode pro on|off / .hot on|off|status',
+          '• .geminikey list|add <key>|remove <key>',
+          '• .backup [status|run] — backup sesi WhatsApp',
+          '• .audit [jumlah|clear] — audit command owner',
+        ],
+      });
+    }
+
+    sections.push({
+      title: '💡 *Tips*',
+      lines: [
+        '• Chat pribadi: reply pesan apa pun, aku tetap jawab.',
+        '• Grup: default hanya merespons saat dipanggil "tsukasa". Admin bisa ubah lewat .modegrup.',
+        '• Fitur grup bisa dimatikan tanpa mengganggu fitur lain: .fitur off brat qc',
+        '• Katakan "panggil aku [nama]" supaya aku ingat namamu!',
+      ],
+    });
+
+    const featureOfLine = (line) => {
+      const match = line.match(/^\s*•\s+\.([a-z0-9-]+)/i);
+      return match ? featureForCommand(match[1]) : '';
+    };
+
+    const lines = [
+      '✨ *MENU TSUKASA* ✨',
+      greeting,
+      '',
+      'Pakai perintah dengan awalan *!*, */*, *.*, atau sebut "' + this.cfg.trigger + '".',
+      '',
+    ];
+
+    for (const section of sections) {
+      const visible = section.lines.filter((line) => {
+        const key = featureOfLine(line) || section.feature;
+        return !key || enabled(key);
+      });
+      if (!visible.length) continue;
+      lines.push(section.title, ...visible, '');
+    }
+
+    return lines.join('\n').trim();
+  }
+
+  async handleFiturCommand(chat, m, rest) {
+    const parts = String(rest || '').trim().split(/\s+/).filter(Boolean);
+    const action = String(parts[0] || 'status').toLowerCase();
+    const rawKeys = parts.slice(1);
+    const features = featureList();
+
+    const summary = () => {
+      const disabled = new Set(this.store.listDisabledFeatures(chat));
+      const lines = [
+        '⚙️ *Fitur Grup*',
+        `Aktif: ${features.length - disabled.size}/${features.length}`,
+        '',
+      ];
+      for (const feature of features) {
+        lines.push(`${disabled.has(feature.key) ? '❎' : '✅'} ${feature.label} (\`${feature.key}\`)`);
+      }
+      lines.push(
+        '',
+        'Atur:',
+        '.fitur off brat qc — matikan fitur tertentu',
+        '.fitur on brat — aktifkan lagi',
+        '.fitur off all — matikan semua',
+        '.fitur reset — aktifkan semua',
+        '',
+        'Fitur yang dimatikan otomatis hilang dari .help di grup ini.'
+      );
+      return lines.join('\n');
+    };
+
+    if (!parts.length || ['status', 'list', 'daftar', 'info', 'cek'].includes(action)) {
+      await wa.sendText(chat, summary(), m);
+      return;
+    }
+
+    if (['reset', 'default', 'restore'].includes(action)) {
+      await this.store.clearGroupFeatures(chat);
+      await wa.sendText(chat, '♻️ Semua fitur di grup ini diaktifkan kembali.\n\n' + summary(), m);
+      return;
+    }
+
+    const on = ['on', 'enable', 'aktif', 'aktifkan', 'nyala', '1', 'ya'].includes(action);
+    const off = [
+      'off',
+      'disable',
+      'mati',
+      'matikan',
+      'nonaktif',
+      'nonaktifkan',
+      '0',
+      'tidak',
+    ].includes(action);
+    if (!on && !off) {
+      await wa.sendText(
+        chat,
+        'Gunakan:\n.fitur status\n.fitur off <nama>\n.fitur on <nama>\n.fitur reset',
+        m
+      );
+      return;
+    }
+
+    const keys = [];
+    const unknown = [];
+    let all = false;
+    for (const raw of rawKeys) {
+      const lower = String(raw || '').toLowerCase();
+      if (['all', 'semua', '*'].includes(lower)) {
+        all = true;
+        continue;
+      }
+      const key = normalizeFeatureKey(raw);
+      if (!key) {
+        unknown.push(raw);
+        continue;
+      }
+      if (!keys.includes(key)) keys.push(key);
+    }
+
+    if (unknown.length) {
+      await wa.sendText(
+        chat,
+        `❌ Fitur tidak dikenal: ${unknown.join(', ')}\n\n` +
+          'Fitur yang tersedia:\n' +
+          features.map((f) => `• ${f.key} — ${f.label}`).join('\n'),
+        m
+      );
+      return;
+    }
+
+    const targets = all ? features.map((f) => f.key) : keys;
+    if (!targets.length) {
+      await wa.sendText(chat, summary(), m);
+      return;
+    }
+
+    for (const key of targets) {
+      await this.store.setFeatureEnabled(chat, key, on);
+    }
+
+    await wa.sendText(
+      chat,
+      `${on ? '✅' : '❎'} Fitur ${on ? 'diaktifkan' : 'dinonaktifkan'}: ` +
+        targets.map(featureLabel).join(', ') +
+        (on ? '' : '\nFitur tersebut sekarang hilang dari .help dan perintahnya ditolak.'),
+      m
+    );
+  }
+
   async handleGroupParticipantsUpdate(ev) {
     try {
       await this.welcome.handle(this.sock, ev);
@@ -450,6 +732,27 @@ class Router {
             .catch(() => {});
         }
       }
+    }
+
+    // Fitur yang dimatikan admin grup lewat `.fitur` langsung ditolak di sini.
+    // `.help`, `.fitur`, dan perintah owner tidak termasuk katalog sehingga
+    // tetap bisa dipakai untuk mengaktifkan kembali fitur.
+    const commandFeature = cmdName ? featureForCommand(cmdName) : '';
+    const featureBlocked = Boolean(
+      isCmd &&
+        commandFeature &&
+        isGroupJid(chat) &&
+        !this.store.isFeatureEnabled(chat, commandFeature)
+    );
+    if (featureBlocked) {
+      await wa
+        .sendText(
+          chat,
+          `🔒 Fitur *${featureLabel(commandFeature)}* sedang dimatikan di grup ini oleh admin.`,
+          m
+        )
+        .catch(() => {});
+      return;
     }
 
     // AFK: cabut status saat user aktif kembali, dan beri tahu jika ada
@@ -539,13 +842,13 @@ class Router {
         }
         const labels = {
           all: 'balas semua pesan',
-          reply: 'balas saat pesan di-reply dan menyebut tsukasa',
+          reply: 'balas saat pesan di-reply (sebut tsukasa atau balas pesan bot)',
           call: 'balas hanya saat dipanggil tsukasa',
         };
         const help =
           '⚙️ *Mode Balasan Grup*\n' +
           '• .modegrup all — balas semua pesan\n' +
-          '• .modegrup reply — balas saat pesan di-reply dan menyebut tsukasa\n' +
+          '• .modegrup reply — balas saat pesan di-reply dan menyebut tsukasa (atau reply pesan bot)\n' +
           '• .modegrup call — balas hanya saat dipanggil tsukasa (default)\n' +
           '• .modegrup status — lihat mode aktif';
         const sub = String(bang.rest || '').trim().toLowerCase();
@@ -659,98 +962,21 @@ class Router {
       }
 
       if (bang.cmd === 'help' || bang.cmd === 'menu') {
-        const userName = memory.getUserName(sender) || '';
-        const greeting = userName ? `Hai ${userName}!` : 'Hai!';
-        const lines = [
-          '✨ *MENU TSUKASA* ✨',
-          greeting,
-          '',
-          'Pakai perintah dengan awalan *!*, */*, *.*, atau sebut "' +
-            this.cfg.trigger +
-            '".',
-          '',
-          '*💬 Umum*',
-          '• .help / .menu — menu ini',
-          '• .whoami — lihat JID kamu',
-          '• .health / .ping / .status — status bot, uptime, RAM',
-          '• .afk [alasan] — tandai sedang AFK, contoh .afk turu (.afk off untuk kembali)',
-          '',
-          '*🎨 Sticker & Media*',
-          '• .stiker / .s — gambar/video/URL jadi sticker',
-          '• .sgif — sticker animasi (GIF/video)',
-          '• .brat [tema] <teks> — sticker brat (green/white/black/pink/blue/red)',
-          '• .srandom <mood> / .s <mood> — sticker random dari pack',
-          '• .sadd <mood> — simpan sticker (reply sticker) ke pack',
-          '• .slist / .sdel <mood> <nomor> — kelola pack sticker',
-          '• .toimg — sticker jadi gambar PNG',
-          '• .ttp <teks> / .attp <teks> — sticker teks statis/animasi',
-          '• .qc [light|dark] — quote card dari pesan yang di-reply',
-          '• .qcimg / .qci — quote card sebagai gambar PNG',
-          '• .wm <teks> — watermark sticker',
-          '• .stickerinfo / .smeta — info sticker',
-          '• .emojimix 😀 😍 — gabung dua emoji (Emoji Kitchen)',
-          '• .flip / .flipv / .rotate <derajat> — balik/putar sticker',
-          '• .grayscale / .invert / .blur [sigma] — filter sticker',
-          '• .crop / .resize <px> — potong/resize sticker',
-          '• .rvo — buka media sekali lihat (reply)',
-          '• .ba — gambar Blue Archive',
-          '• .pap — kirim pap',
-          '• .hijabin — hijabkan gambar (kirim/reply gambar)',
-          '• tsukasa vn <teks> — kirim voice note',
-          '• kirim/reply gambar + sebut "tsukasa" — analisis gambar',
-          '',
-          '*🖼️ AI & Info*',
-          '• .gambar <prompt> — generate gambar AI',
-          '• tsukasa <tanya> — AI bisa kirim sticker, reaksi, gambar, pengingat, cari web',
-          '• .anime ... — info anime (new/movie/schedule/search/detail)',
-          '• .anime roulette [genre] — rekomendasi anime acak',
-          '• .info <topik> — info apa saja dalam Bahasa Indonesia',
-          '• .news [topik] — berita anime/manga/gacha/cosplay',
-          '• .cosplay <link IG> — ambil foto dari post Instagram',
-          '• .rangkum [jumlah] — rangkum percakapan terakhir',
-          '• .statistik — statistik aktivitas chat',
-          '',
-          '*✅ Verif TikTok & CN*',
-          '• .cn <nama> — contoh CN TikTok (3 gaya)',
-          '• .verif <acc> — verif ACC TikTok di grup ini',
-          '• .listverif — daftar ACC terverifikasi',
-          '• .unverif <acc> — hapus ACC dari daftar verif',
-          '• .siapaup / .whoup — siapa yang UP hari ini',
-          '• .cekup @username — cek akun sudah UP atau belum',
-          '• .history — rekap UP 7 hari terakhir',
-          '• .addakun @user / .delakun @user / .listakun — kelola pantauan',
-          '• .detector on|off|status — kontrol detector (on/off owner)',
-          '',
-          '*🛠️ Admin Grup*',
-          '• .modegrup all|reply|call — atur cara bot membalas di grup ini',
-          '• .tagall <pesan> — mention semua anggota (khusus admin grup)',
-          '• .peraturan on|off|status — moderasi grup',
-          '• .antilink on|off / .antilink allow domain.com',
-          '• .antispam on|off',
-          '• .mute [menit] @user / .unmute @user / .resetwarn @user|all',
-          '• .jadwal buka 06:00 / .jadwal tutup 22:00',
-          '• .jadwal weekend on|off / .jadwal test',
-          '• .ingatkan <waktu> <teks> — pengingat',
-          '• .poll <tanya> | <opsi1> | <opsi2> — polling grup',
-          '',
-          '*🔧 Owner*',
-          '• .config / .set <KEY> <nilai> — ubah pengaturan lewat chat',
-          '• .update status|check|now|auto on|off — auto-update & restart',
-          '• .panel status|logs|install|restart — kelola panel dari chat pribadi',
-          '• .animechannel status|test|news|info|cosplay|check <judul>',
-          '• .tsukasa persona tsukasa1|tsukasa2 — pilih persona AI',
-          '• .tsukasa mode pro on|off / .hot on|off|status',
-          '• .geminikey list|add <key>|remove <key>',
-          '• .backup [status|run] — backup sesi WhatsApp',
-          '• .audit [jumlah|clear] — audit command owner',
-          '',
-          '*💡 Tips*',
-          '• Chat pribadi: reply pesan apa pun, aku tetap jawab.',
-          '• Grup: default hanya merespons saat dipanggil "tsukasa". Admin bisa ubah lewat .modegrup.',
-          '• Contoh: .cn Budi',
-          '• Katakan "panggil aku [nama]" supaya aku ingat namamu!',
-        ];
-        await wa.sendText(chat, lines.join('\n'), m);
+        await wa.sendText(chat, this.buildMenu(chat, sender, isOwner), m);
+        return;
+      }
+
+      if (bang.cmd === 'fitur' || bang.cmd === 'feature' || bang.cmd === 'features' || bang.cmd === 'togglefitur') {
+        if (!isGroupJid(chat)) {
+          await wa.sendText(chat, 'Perintah .fitur hanya berlaku di dalam grup.', m);
+          return;
+        }
+        const allowed = isOwner || (await this.peraturan.isAdmin(this.sock, chat, sender));
+        if (!allowed) {
+          await wa.sendText(chat, 'Perintah ini khusus admin grup atau owner bot.', m);
+          return;
+        }
+        await this.handleFiturCommand(chat, m, bang.rest);
         return;
       }
 
@@ -1125,16 +1351,23 @@ class Router {
     const modeAll = !isGroup || groupMode === 'all';
 
     const qCtx = wa.contextInfoOf(content);
-    const hasQuoted = q.img || q.aud || q.text !== '';
+    const hasQuoted = q.img || q.aud || q.vid || q.doc || q.sticker || q.text !== '';
+    // Di mode `reply`, membalas pesan bot sendiri tetap dilayani tanpa harus
+    // menyebut trigger. Ini perilaku lama yang sempat hilang.
+    const quotedFromBot = hasQuoted && this.isQuotedFromBot(qCtx);
+    const replyModeReply = groupMode === 'reply' && quotedFromBot;
     if (hasQuoted && !hasTrig && !isCmd) {
       // Chat pribadi: balasan ke pesan apa pun tetap dilayani. Di grup,
-      // mode all membalas semua quote; mode reply/call menunggu trigger.
-      if (!modeAll) return;
+      // mode all membalas semua quote; mode reply menunggu reply ke bot;
+      // mode call menunggu trigger.
+      if (!modeAll && !replyModeReply) return;
     }
 
     const hasImage = Boolean(content.imageMessage);
     const hasVideo = Boolean(content.videoMessage);
-    if (isGroup && (hasImage || hasVideo) && !hasTrig && !isCmd && !modeAll) return;
+    if (isGroup && (hasImage || hasVideo) && !hasTrig && !isCmd && !modeAll && !replyModeReply) {
+      return;
+    }
 
     // TikTok text termasuk matchedText dari preview link
     let tiktokText = origTxt;
@@ -1182,17 +1415,26 @@ class Router {
     // Perintah bang (!ba, !pap, !s, !stiker, dll) juga harus jalan di grup
     // walaupun tidak ada trigger.
     const allowNonCmd = !isGroup || hasTrig || isCmd || modeAll;
+    // Fitur yang dimatikan juga tidak boleh dijalankan lewat bentuk natural
+    // ("tsukasa brat ..."), bukan hanya lewat perintah berawalan titik.
+    const featureOn = (key) => !isGroup || this.store.isFeatureEnabled(chat, key);
     if (allowNonCmd) {
-      if (await this.pap.handle(chat, m, content, origTxt)) return;
-      if (await this.ba.handle(chat, m, content, origTxt)) return;
-      if (await this.hijab.handle(this.sock, m, content, origTxt)) return;
-      if (await this.brat.handle(this.sock, m, content, origTxt)) return;
-      if (await this.stickerReply.handleAuto(this.sock, m, content)) return;
-      if (await this.sticker.handle(this.sock, m, content, origTxt)) return;
-      if (await this.vision.handle(this.sock, m, content, origTxt)) return;
-      if (await this.anime.handle(this.sock, m, origTxt)) return;
-      if (await this.info.handle(this.sock, m, origTxt)) return;
-      if (await this.tts.handle(this.sock, m, content, origTxt)) return;
+      if (featureOn('media')) {
+        if (await this.pap.handle(chat, m, content, origTxt)) return;
+        if (await this.ba.handle(chat, m, content, origTxt)) return;
+        if (await this.hijab.handle(this.sock, m, content, origTxt)) return;
+      }
+      if (featureOn('brat') && (await this.brat.handle(this.sock, m, content, origTxt))) return;
+      if (featureOn('sticker')) {
+        if (await this.stickerReply.handleAuto(this.sock, m, content)) return;
+        if (await this.sticker.handle(this.sock, m, content, origTxt)) return;
+      }
+      if (featureOn('ai')) {
+        if (await this.vision.handle(this.sock, m, content, origTxt)) return;
+        if (await this.info.handle(this.sock, m, origTxt)) return;
+        if (await this.tts.handle(this.sock, m, content, origTxt)) return;
+      }
+      if (featureOn('anime') && (await this.anime.handle(this.sock, m, origTxt))) return;
     }
 
     // VN selalu dicek (juga saat tidak ada teks)
@@ -1216,10 +1458,18 @@ class Router {
     // ke suatu pesan sekaligus menyebut trigger. Mode all tidak dibatasi.
     if (isGroup && !isTagAllCmd) {
       if (groupMode === 'call' && !hasTrig) return;
-      if (groupMode === 'reply' && (!hasTrig || !hasQuoted)) return;
+      if (groupMode === 'reply') {
+        // Wajib berupa balasan/quote, lalu sebut trigger atau balas pesan bot.
+        if (!hasQuoted) return;
+        if (!hasTrig && !quotedFromBot) return;
+      }
     }
 
     if (!String(txt).trim()) return;
+
+    // Jika admin grup mematikan fitur AI, obrolan natural juga berhenti.
+    // Perintah lain sudah ditangani/di-gate sebelum titik ini.
+    if (isGroup && !this.store.isFeatureEnabled(chat, 'ai')) return;
 
     // Permintaan ubah nama
     const nameReq = memory.detectNameRequest(txt);

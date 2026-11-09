@@ -75,6 +75,23 @@ function validEntry(e) {
   return Boolean(e && e.gcId && e.accName);
 }
 
+function bareJid(value) {
+  return String(value || '')
+    .replace(/:\d+@/, '@')
+    .trim();
+}
+
+/**
+ * Ambil digit nomor telepon dari JID. JID @lid bukan nomor telepon, jadi
+ * jangan dipakai untuk pencocokan supaya tidak salah orang.
+ */
+function phoneDigits(value) {
+  const jid = bareJid(value);
+  if (!jid || /@lid$/i.test(jid)) return '';
+  const digits = jid.split('@')[0].replace(/\D+/g, '');
+  return digits.length >= 8 ? digits : '';
+}
+
 /**
  * Penyimpanan JSON untuk verif ACC, riwayat UP, hitungan harian, dan cache
  * video yang sudah pernah dilihat detector.
@@ -135,6 +152,12 @@ class VerifStore {
       cnKeyword: normalizeCn(e.cnKeyword),
       hashtag: normalizeHashtag(e.hashtag),
       gcName: String(e.gcName || '').trim(),
+      // Penautan akun TikTok ke nomor WhatsApp peng-verif. `userJid` dipakai
+      // untuk mention/tag saat detector menemukan video baru, `userName`
+      // disimpan sebagai fallback tampilan.
+      userJid: bareJid(e.userJid),
+      userPn: bareJid(e.userPn),
+      userName: String(e.userName || '').trim().slice(0, 80),
       createdAt: Number(e.createdAt) || Date.now(),
     };
   }
@@ -183,12 +206,23 @@ class VerifStore {
   async add(entry) {
     const clean = this._cleanEntry(entry);
     if (!clean.gcId || !clean.accName) throw new Error('data verif tidak lengkap');
-    if (this.find(clean.gcId, clean.accName)) {
-      return { added: false, entry: this.find(clean.gcId, clean.accName) };
+    const existing = this.find(clean.gcId, clean.accName);
+    if (existing) {
+      // Akun lama mungkin belum tertaut ke nomor WhatsApp. Saat user verif
+      // ulang, lengkapi penautannya tanpa membuat duplikat.
+      let changed = false;
+      for (const key of ['userJid', 'userPn', 'userName']) {
+        if (clean[key] && existing[key] !== clean[key]) {
+          existing[key] = clean[key];
+          changed = true;
+        }
+      }
+      if (changed) await this.saveVerif();
+      return { added: false, updated: changed, entry: { ...existing } };
     }
     this.entries.push(clean);
     await this.saveVerif();
-    return { added: true, entry: clean };
+    return { added: true, entry: { ...clean } };
   }
 
   async remove(group, accName) {
@@ -206,18 +240,80 @@ class VerifStore {
   /**
    * Grup yang perlu menerima notifikasi untuk sebuah video. Cocokkan username
    * dengan accName, atau CN video dengan cnKeyword yang diverifikasi di grup.
+   *
+   * Hasilnya menyertakan JID peng-verif per grup supaya detector bisa
+   * men-tag orang yang UP ("UP oleh: @nomor").
    */
   notifyTargets(video) {
     const username = normalizeAccount(video && video.username).toLowerCase();
     const cn = normalizeCn(video && video.cn);
-    const set = new Set();
+    const targets = new Map();
+
     for (const e of this.entries) {
       const acc = normalizeAccount(e.accName).toLowerCase();
       const ecn = normalizeCn(e.cnKeyword);
-      if (username && acc === username) set.add(e.gcId);
-      if (cn && ecn && ecn === cn) set.add(e.gcId);
+      const byAccount = Boolean(username && acc === username);
+      const byCn = Boolean(cn && ecn && ecn === cn);
+      if (!byAccount && !byCn) continue;
+
+      const gcId = String(e.gcId || '').trim();
+      if (!gcId) continue;
+      let target = targets.get(gcId);
+      if (!target) {
+        target = { gcId, users: new Map() };
+        targets.set(gcId, target);
+      }
+      // Untuk mention, nomor telepon lebih andal daripada JID @lid.
+      const jid = bareJid(e.userPn || e.userJid);
+      if (jid) target.users.set(jid, String(e.userName || '').trim());
     }
-    return [...set];
+
+    return [...targets.values()].map((target) => ({
+      gcId: target.gcId,
+      users: [...target.users.entries()].map(([jid, name]) => ({ jid, name })),
+    }));
+  }
+
+  /** Semua entri verif yang tertaut ke salah satu JID WhatsApp user. */
+  entriesForUser(jids, group) {
+    const list = Array.isArray(jids) ? jids : [jids];
+    const wanted = new Set();
+    const wantedDigits = new Set();
+    for (const value of list) {
+      const jid = bareJid(value);
+      if (!jid) continue;
+      wanted.add(jid.toLowerCase());
+      const digits = phoneDigits(jid);
+      if (digits) wantedDigits.add(digits);
+    }
+    if (!wanted.size && !wantedDigits.size) return [];
+
+    const gc = String(group || '').trim();
+    return this.entries
+      .filter((e) => {
+        if (gc && e.gcId !== gc) return false;
+        // Cocokkan ke dua bentuk identitas: nomor telepon (userPn) dan JID
+        // asli (userJid). JID @lid tidak punya digit nomor, jadi jangan
+        // sampai salah satu bentuk gagal dicocokkan.
+        const linked = [e.userPn, e.userJid].map(bareJid).filter(Boolean);
+        for (const value of linked) {
+          if (wanted.has(value.toLowerCase())) return true;
+          const digits = phoneDigits(value);
+          if (digits && wantedDigits.has(digits)) return true;
+        }
+        return false;
+      })
+      .sort((a, b) => a.accName.localeCompare(b.accName))
+      .map((e) => ({ ...e }));
+  }
+
+  /** Cari entri berdasarkan username TikTok tanpa terikat grup. */
+  entriesByAccount(accName) {
+    const acc = normalizeAccount(accName).toLowerCase();
+    if (!acc) return [];
+    return this.entries
+      .filter((e) => normalizeAccount(e.accName).toLowerCase() === acc)
+      .map((e) => ({ ...e }));
   }
 
   // ---------- Cache video terlihat ----------

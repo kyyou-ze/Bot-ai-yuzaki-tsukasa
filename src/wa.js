@@ -309,9 +309,10 @@ async function sendText(jid, text, quoted, mentions) {
   return res;
 }
 
-async function sendImage(jid, buffer, caption, quoted, mimetype) {
+async function sendImage(jid, buffer, caption, quoted, mimetype, mentions) {
   const content = { image: buffer, caption: caption || '' };
   if (mimetype) content.mimetype = mimetype;
+  if (mentions && mentions.length) content.mentions = mentions;
   return sendMessage(jid, content, quoted);
 }
 

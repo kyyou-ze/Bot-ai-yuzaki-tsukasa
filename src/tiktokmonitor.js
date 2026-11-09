@@ -2,7 +2,7 @@
 
 const log = require('./logger');
 const wa = require('./wa');
-const { sleep, downloadBytes } = require('./util');
+const { sleep, downloadBytes, isGroupJid, jidUser } = require('./util');
 const { shortError } = require('./logfmt');
 const {
   desktopHeaders,
@@ -433,15 +433,21 @@ function formatDetectorMessage(video, cfg) {
   const cn = normalizeCn((cfg && cfg.tiktokCnKeyword) || 'ECN');
   const hashtag = normalizeHashtag((cfg && cfg.tiktokHashtag) || '#margaecn');
   const nick = video.nickname ? ` (${video.nickname})` : '';
-  return [
+  const hashtagOk = video.hashtagStatus === 'Ada';
+  const cnOk = video.cnStatus === 'Cocok';
+  const lines = [
     '🎬 *Tsukasa Detector*',
     `👤 UP: ${video.username}${nick}`,
     `ACC: ${video.cn || cn}`,
-    `📌 ${hashtag} - ${video.hashtagStatus} ${video.hashtagStatus === 'Ada' ? '✅' : '❌'}`,
-    `📌 CN ${cn} - ${video.cnStatus} ${video.cnStatus === 'Cocok' ? '✅' : '❌'}`,
+    `📌 ${hashtag} - ${video.hashtagStatus} ${hashtagOk ? '✅' : '❎'}`,
+    `📌 CN ${cn} - ${video.cnStatus} ${cnOk ? '✅' : '❎'}`,
     `📝 Caption: ${truncate(video.caption, CAPTION_MAX) || '-'}`,
     `🔗 ${video.link}`,
-  ].join('\n');
+  ];
+  if (!hashtagOk) {
+    lines.push('', `⚠️ Caption belum memuat ${hashtag}. Tolong tambahkan hashtag-nya ya!`);
+  }
+  return lines.join('\n');
 }
 
 class TikTokMonitor {
@@ -672,16 +678,39 @@ class TikTokMonitor {
   }
 
   async notify(video) {
-    const targets = new Set(this.store.notifyTargets(video));
-    if (this.cfg.tiktokNotifyJid) targets.add(String(this.cfg.tiktokNotifyJid).trim());
+    // Hanya grup yang boleh menerima notifikasi, supaya yang lain tahu siapa
+    // yang UP. Map: JID grup -> daftar JID peng-verif untuk di-tag.
+    const targets = new Map();
+    const add = (jid, users) => {
+      const target = String(jid || '').trim();
+      if (!target || !isGroupJid(target)) return;
+      if (!targets.has(target)) targets.set(target, new Map());
+      const slot = targets.get(target);
+      for (const user of Array.isArray(users) ? users : []) {
+        const ju = String((user && user.jid) || '').trim();
+        if (!ju) continue;
+        slot.set(ju, String((user && user.name) || '').trim());
+      }
+    };
+
+    for (const target of this.store.notifyTargets(video)) {
+      add(target.gcId, target.users);
+    }
+    // Grup tambahan yang diset dari WhatsApp lewat /detector setgc.
+    add(this.cfg.tiktokNotifyJid, []);
+
     if (!targets.size) {
       log.info(`[TIKTOK] ${video.username} UP | belum ada grup terverif`);
       return;
     }
 
-    const text = formatDetectorMessage(video, this.cfg);
-    for (const jid of targets) {
-      if (!jid) continue;
+    const baseText = formatDetectorMessage(video, this.cfg);
+    for (const [jid, userMap] of targets) {
+      const mentions = [...userMap.keys()].filter((u) => !/@lid$/i.test(u));
+      const mentionLine = mentions.length
+        ? `\n🙋 UP oleh: ${mentions.map((u) => `@${jidUser(u)}`).join(', ')}`
+        : '';
+      const text = baseText + mentionLine;
       try {
         // Kirim cover sebagai preview supaya notifikasi terlihat seperti post
         // TikTok, bukan cuma teks. Kalau cover gagal diunduh, fallback teks.
@@ -690,14 +719,14 @@ class TikTokMonitor {
           try {
             const got = await downloadBytes(video.cover, 8 * 1024 * 1024, 20000);
             if (/^image\//i.test(got.mime || '')) {
-              await wa.sendImage(jid, got.data, text, null, got.mime);
+              await wa.sendImage(jid, got.data, text, null, got.mime, mentions);
               sent = true;
             }
           } catch (err) {
             log.debug(`[TIKTOK] cover ${video.id} gagal: ${shortError(err)}`);
           }
         }
-        if (!sent) await wa.sendText(jid, text);
+        if (!sent) await wa.sendText(jid, text, null, mentions);
       } catch (err) {
         log.error(`[TIKTOK] notif ke ${jid} gagal: ${shortError(err)}`);
       }

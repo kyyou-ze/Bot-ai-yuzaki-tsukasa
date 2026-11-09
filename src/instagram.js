@@ -483,6 +483,107 @@ async function identifyWithAI(post) {
   return post;
 }
 
+function metaContent(html, key) {
+  const tags = String(html || '').match(/<meta\b[^>]*>/gi) || [];
+  const wanted = String(key || '').toLowerCase();
+  for (const tag of tags) {
+    const prop = (tag.match(/(?:property|name)\s*=\s*["']([^"']+)["']/i) || [])[1];
+    if (!prop || prop.toLowerCase() !== wanted) continue;
+    const content = (tag.match(/content\s*=\s*["']([\s\S]*?)["']/i) || [])[1];
+    if (content !== undefined) return decodeEntities(content).trim();
+  }
+  return '';
+}
+
+/**
+ * Fallback saat Jina Reader menolak (mis. HTTP 402) atau tidak memberi foto.
+ * vxinstagram merender halaman publik Instagram lalu menyediakan tautan
+ * unduhan langsung ke CDN Facebook (scontent/fbcdn). Tidak perlu login.
+ */
+function parseVxinstagram(html, url) {
+  const source = String(html || '');
+  const shortcode = extractShortcode(url) || extractShortcode(source) || '';
+  const title = metaContent(source, 'og:title');
+  const description = metaContent(source, 'og:description');
+  const creator = metaContent(source, 'twitter:creator');
+
+  let author = '';
+  let username = '';
+  const titleMatch = title.match(/^(.*?)\s*\(@([A-Za-z0-9._]+)\)\s*$/);
+  if (titleMatch) {
+    author = cleanCaption(titleMatch[1]);
+    username = titleMatch[2].toLowerCase();
+  } else if (title) {
+    author = cleanCaption(title);
+  }
+  if (!username && creator) username = cleanCaption(creator).replace(/^@/, '').toLowerCase();
+
+  const images = [];
+  const seen = new Set();
+  const anchors = source.match(/<a\b[^>]*\bdownload\b[^>]*>/gi) || [];
+  for (const tag of anchors) {
+    const href = (tag.match(/href\s*=\s*["']([^"']+)["']/i) || [])[1];
+    if (!href) continue;
+    const cleanUrl = decodeEntities(href).replace(/\)+$/, '');
+    if (!/^https?:\/\//i.test(cleanUrl)) continue;
+    if (isUnwantedImage(cleanUrl)) continue;
+    const id = imageId(cleanUrl);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    images.push(cleanUrl);
+    if (images.length >= MAX_IMAGES) break;
+  }
+
+  if (!images.length) {
+    const ogImage = metaContent(source, 'og:image');
+    if (ogImage && /^https?:\/\//i.test(ogImage)) images.push(ogImage);
+  }
+
+  const caption = cleanCaption(description);
+  const tags = extractTags(source, caption);
+  const meta = inferMeta(tags, caption);
+  return {
+    shortcode,
+    url: shortcode ? `https://www.instagram.com/p/${shortcode}/` : normalizePostUrl(url),
+    author,
+    username,
+    caption,
+    tags,
+    images,
+    character: meta.character,
+    anime: meta.anime,
+  };
+}
+
+async function fetchViaVxinstagram(url, timeoutMs) {
+  const shortcode = extractShortcode(url);
+  if (!shortcode) throw new Error('shortcode Instagram tidak ditemukan');
+
+  const target = `https://www.vxinstagram.com/p/${shortcode}/?_cb=${Date.now()}`;
+  const res = await fetchWithTimeout(
+    target,
+    {
+      headers: {
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+          '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      },
+      redirect: 'follow',
+    },
+    timeoutMs
+  );
+  if (!res.ok) throw new Error(`vxinstagram gagal (HTTP ${res.status})`);
+  const html = await res.text();
+  if (!html || html.length < 200) throw new Error('vxinstagram tidak mengembalikan konten');
+
+  const post = parseVxinstagram(html, url);
+  if (!post.images.length) {
+    throw new Error('vxinstagram tidak menemukan foto pada post ini');
+  }
+  return post;
+}
+
 async function fetchPost(input, options = {}) {
   const url = normalizePostUrl(input);
   if (!url) throw new Error('Link Instagram tidak valid. Contoh: !cosplay https://www.instagram.com/p/xxxx/');
@@ -567,6 +668,18 @@ async function fetchPost(input, options = {}) {
       lastError = err && err.message ? err.message : String(err);
       emptyStreak += 1;
       if (emptyStreak >= 2) break;
+    }
+  }
+
+  if (!best || !best.images.length) {
+    // Jina Reader sekarang sering menolak dengan 402 untuk Instagram. Pakai
+    // proxy publik vxinstagram sebagai jalur cadangan sebelum menyerah.
+    try {
+      best = await fetchViaVxinstagram(url, timeoutMs);
+      log.info(`[COSPLAY] fallback vxinstagram berhasil: ${best.images.length} foto`);
+    } catch (err) {
+      const fallbackError = err && err.message ? err.message : String(err);
+      lastError = lastError ? `${lastError} | fallback: ${fallbackError}` : fallbackError;
     }
   }
 

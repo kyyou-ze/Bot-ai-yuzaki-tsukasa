@@ -8,6 +8,7 @@ function escapeRegExp(value) {
 // dari "tsukasa halo apa kabar" (obrolan biasa).
 const KNOWN_COMMANDS = new Set([
   'help', 'menu', 'whoami',
+  'fitur', 'feature', 'features', 'togglefitur',
   'ingatkan', 'remind', 'pengingat',
   'poll', 'voting',
   'rangkum', 'ringkas', 'summary',
@@ -37,6 +38,7 @@ const KNOWN_COMMANDS = new Set([
   'jadwal', 'jadwalgrup', 'antilink', 'antispam', 'moderasi',
   'resetwarn', 'mute', 'unmute',
   'verif', 'veriv', 'listverif', 'listveriv', 'unverif', 'unveriv',
+  'me', 'profile',
   'siapaup', 'whoup', 'cekup', 'history',
   'addakun', 'tambahakun', 'delakun', 'hapusakun',
   'listakun', 'daftarakun', 'detector', 'detektor',

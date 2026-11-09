@@ -426,7 +426,11 @@ class BratFeature {
 
   async handle(sock, m, content, rawText) {
     const text = wa.extractText(content) || rawText || '';
-    if (!this.triggerRegex.test(text)) return false;
+    // Dua bentuk yang didukung: perintah eksplisit `.brat <teks>` dan bentuk
+    // natural `tsukasa brat <teks>`. Sebelumnya hanya bentuk trigger yang
+    // diterima, sehingga `.brat` (sesuai dokumentasi) tidak pernah dibalas.
+    const explicit = /^\s*[!/.]\s*brat\b/i.test(text);
+    if (!explicit && !this.triggerRegex.test(text)) return false;
     if (!this.reBrat.test(text)) return false;
 
     const parsed = this.parseOptions(text);

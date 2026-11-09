@@ -86,6 +86,23 @@ function load(chatJID) {
   return chatHistMap.get(chatJID) || [];
 }
 
+/**
+ * Hapus riwayat percakapan satu chat, termasuk file di disk. Nama pengguna
+ * (userNameMap) sengaja tidak dihapus supaya bot tetap memanggil nama yang
+ * sudah dikenal.
+ */
+function clear(chatJID) {
+  const key = String(chatJID || '').trim();
+  if (!key) return false;
+  const existed = chatHistMap.delete(key);
+  try {
+    fs.unlinkSync(path.join(MEMORY_DIR, `${sanitizeJid(key)}.json`));
+  } catch {
+    /* file memang belum ada */
+  }
+  return existed;
+}
+
 function saveTurn(chatJID, role, text, name) {
   const hist = chatHistMap.get(chatJID) || [];
   const turn = { role, text };
@@ -170,6 +187,7 @@ function extractActualUserInput(contextText) {
 module.exports = {
   loadAll,
   load,
+  clear,
   saveTurn,
   buildContext,
   detectNameRequest,
