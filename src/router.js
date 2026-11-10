@@ -39,6 +39,7 @@ const { isHotCue, isStopCue } = require('./adultmode');
 const {
   featureForCommand,
   normalizeFeatureKey,
+  normalizeCommandKey,
   featureLabel,
   featureList,
 } = require('./featurescatalog');
@@ -191,7 +192,12 @@ class Router {
     this.animeChannel = animeChannel || null;
     this.groupTools = groupTools || new GroupTools(cfg, store);
     this.afk = new AfkFeature(cfg, store);
-    this.verif = new VerifFeature(cfg, verifStore || new VerifStore(cfg), tiktokMonitor || null);
+    this.verif = new VerifFeature(
+      cfg,
+      verifStore || new VerifStore(cfg),
+      tiktokMonitor || null,
+      tiktokAccounts || null
+    );
     this.tiktokAdmin = new TikTokAdminFeature(cfg, tiktokAccounts || null, tiktokMonitor || null);
 
     this.reTrig = normalizeTrigger(cfg);
@@ -394,7 +400,8 @@ class Router {
    */
   buildMenu(chat, sender, isOwner) {
     const isGroup = isGroupJid(chat);
-    const enabled = (key) => !isGroup || this.store.isFeatureEnabled(chat, key);
+    const featureOn = (key) => !isGroup || !key || this.store.isFeatureEnabled(chat, key);
+    const commandOn = (cmd) => !isGroup || !cmd || this.store.isCommandEnabled(chat, cmd);
     const userName = memory.getUserName(sender) || '';
     const greeting = userName ? `Hai ${userName}!` : 'Hai!';
 
@@ -463,10 +470,12 @@ class Router {
           '• .me — lihat akun TikTok yang tertaut ke nomor kamu',
           '• .listverif — daftar ACC terverifikasi',
           '• .unverif <acc> — hapus ACC dari daftar verif',
-          '• .siapaup / .whoup — siapa yang UP hari ini',
+          '• .siapaup / .whoup [CN] — siapa yang UP hari ini',
           '• .cekup @username — cek akun sudah UP atau belum',
-          '• .history — rekap UP 7 hari terakhir',
-          '• .addakun / .delakun / .listakun — kelola pantauan',
+          '• .history [CN] — rekap UP 7 hari terakhir',
+          '• .addakun <acc> — di grup sama seperti .verif; di DM khusus owner',
+          '• .delakun <acc> — hapus pantauan/verif akun',
+          '• .listakun — daftar akun yang dipantau detector',
           '• .detector status — status detector TikTok',
           '• .detector setgc — atur grup notifikasi TikTok dari WhatsApp',
           '• .detector on|off — kontrol detector (owner)',
@@ -515,13 +524,18 @@ class Router {
         '• Grup: default hanya merespons saat dipanggil "tsukasa". Admin bisa ubah lewat .modegrup.',
         '• Suasana hatiku berubah otomatis dari obrolan — tanpa pemberitahuan.',
         '• Fitur grup bisa dimatikan tanpa mengganggu fitur lain: .fitur off brat qc',
+        '• Mau satu perintah saja? .fitur off news atau .fitur off cmd:news',
         '• Katakan "panggil aku [nama]" supaya aku ingat namamu!',
       ],
     });
 
     const featureOfLine = (line) => {
-      const match = line.match(/^\s*•\s+\.([a-z0-9-]+)/i);
-      return match ? featureForCommand(match[1]) : '';
+      const first = line.match(/^\s*•\s+\.([a-z0-9-]+)/i);
+      if (!first) return { commands: [], feature: '' };
+      const commands = [...line.matchAll(/\.([a-z0-9-]+)/g)]
+        .map((match) => match[1].toLowerCase())
+        .filter(Boolean);
+      return { commands, feature: featureForCommand(first[1]) };
     };
 
     const lines = [
@@ -534,8 +548,10 @@ class Router {
 
     for (const section of sections) {
       const visible = section.lines.filter((line) => {
-        const key = featureOfLine(line) || section.feature;
-        return !key || enabled(key);
+        const info = featureOfLine(line);
+        const key = info.feature || section.feature;
+        const commandVisible = !info.commands.length || info.commands.some(commandOn);
+        return featureOn(key) && commandVisible;
       });
       if (!visible.length) continue;
       lines.push(section.title, ...visible, '');
@@ -552,23 +568,33 @@ class Router {
 
     const summary = () => {
       const disabled = new Set(this.store.listDisabledFeatures(chat));
+      const disabledCommands = this.store.listDisabledCommands(chat);
       const lines = [
         '⚙️ *Fitur Grup*',
         `Aktif: ${features.length - disabled.size}/${features.length}`,
         '',
       ];
       for (const feature of features) {
-        lines.push(`${disabled.has(feature.key) ? '❎' : '✅'} ${feature.label} (\`${feature.key}\`)`);
+        const offCommands = feature.commands.filter((cmd) => disabledCommands.includes(cmd));
+        const extra = offCommands.length ? ` — ${offCommands.length} perintah off` : '';
+        lines.push(
+          `${disabled.has(feature.key) ? '❎' : '✅'} ${feature.label} (\`${feature.key}\`)${extra}`
+        );
+      }
+      if (disabledCommands.length) {
+        lines.push('', 'Perintah nonaktif:', ...disabledCommands.map((cmd) => `❎ .${cmd}`));
       }
       lines.push(
         '',
         'Atur:',
-        '.fitur off brat qc — matikan fitur tertentu',
-        '.fitur on brat — aktifkan lagi',
-        '.fitur off all — matikan semua',
+        '.fitur off news — matikan satu perintah',
+        '.fitur off brat qc — matikan beberapa perintah',
+        '.fitur off fitur:news — matikan seluruh kelompok fitur',
+        '.fitur on news — aktifkan lagi',
+        '.fitur off all — matikan semua fitur',
         '.fitur reset — aktifkan semua',
         '',
-        'Fitur yang dimatikan otomatis hilang dari .help di grup ini.'
+        'Fitur/perintah yang dimatikan otomatis hilang dari .help di grup ini.'
       );
       return lines.join('\n');
     };
@@ -604,7 +630,34 @@ class Router {
       return;
     }
 
-    const keys = [];
+    const parseTarget = (raw) => {
+      const value = String(raw || '').trim();
+      const lower = value.toLowerCase();
+      const commandPrefix = lower.match(/^(?:cmd|command|perintah):(.*)$/);
+      if (commandPrefix) {
+        const key = normalizeCommandKey(commandPrefix[1]);
+        return key ? { type: 'command', key } : null;
+      }
+      const featurePrefix = lower.match(/^(?:fitur|feature|grup|group):(.*)$/);
+      if (featurePrefix) {
+        const key = normalizeFeatureKey(featurePrefix[1]);
+        return key ? { type: 'feature', key } : null;
+      }
+      // Token berawalan . ! / dipaksa sebagai perintah, mis. ".fitur off .news".
+      if (/^[./!]/.test(value)) {
+        const key = normalizeCommandKey(value);
+        if (key) return { type: 'command', key };
+      }
+      // Nama perintah diprioritaskan supaya bisa dimatikan satu per satu.
+      const cmd = normalizeCommandKey(value);
+      if (cmd) return { type: 'command', key: cmd };
+      const feature = normalizeFeatureKey(value);
+      if (feature) return { type: 'feature', key: feature };
+      return null;
+    };
+
+    const featureKeys = [];
+    const commandKeys = [];
     const unknown = [];
     let all = false;
     for (const raw of rawKeys) {
@@ -613,40 +666,55 @@ class Router {
         all = true;
         continue;
       }
-      const key = normalizeFeatureKey(raw);
-      if (!key) {
+      const target = parseTarget(raw);
+      if (!target) {
         unknown.push(raw);
         continue;
       }
-      if (!keys.includes(key)) keys.push(key);
+      if (target.type === 'command') {
+        if (!commandKeys.includes(target.key)) commandKeys.push(target.key);
+      } else if (!featureKeys.includes(target.key)) {
+        featureKeys.push(target.key);
+      }
     }
 
     if (unknown.length) {
       await wa.sendText(
         chat,
-        `❌ Fitur tidak dikenal: ${unknown.join(', ')}\n\n` +
+        `❌ Fitur/perintah tidak dikenal: ${unknown.join(', ')}\n\n` +
           'Fitur yang tersedia:\n' +
-          features.map((f) => `• ${f.key} — ${f.label}`).join('\n'),
+          features.map((f) => `• ${f.key} — ${f.label}`).join('\n') +
+          '\n\nPerintah bisa dimatikan satu per satu, mis. .fitur off news\n' +
+          'Untuk seluruh kelompok: .fitur off fitur:news',
         m
       );
       return;
     }
 
-    const targets = all ? features.map((f) => f.key) : keys;
-    if (!targets.length) {
+    if (all) featureKeys.splice(0, featureKeys.length, ...features.map((f) => f.key));
+    if (!featureKeys.length && !commandKeys.length) {
       await wa.sendText(chat, summary(), m);
       return;
     }
 
-    for (const key of targets) {
+    for (const key of featureKeys) {
       await this.store.setFeatureEnabled(chat, key, on);
     }
+    for (const key of commandKeys) {
+      await this.store.setCommandEnabled(chat, key, on);
+    }
 
+    const labels = [
+      ...featureKeys.map((key) => `Fitur ${featureLabel(key)}`),
+      ...commandKeys.map((key) => `Perintah .${key}`),
+    ];
     await wa.sendText(
       chat,
-      `${on ? '✅' : '❎'} Fitur ${on ? 'diaktifkan' : 'dinonaktifkan'}: ` +
-        targets.map(featureLabel).join(', ') +
-        (on ? '' : '\nFitur tersebut sekarang hilang dari .help dan perintahnya ditolak.'),
+      `${on ? '✅' : '❎'} ${on ? 'Diaktifkan' : 'Dinonaktifkan'}: ` +
+        labels.join(', ') +
+        (on
+          ? ''
+          : '\nItem tersebut sekarang hilang dari .help dan perintahnya ditolak.'),
       m
     );
   }
@@ -737,23 +805,24 @@ class Router {
     }
 
     // Fitur yang dimatikan admin grup lewat `.fitur` langsung ditolak di sini.
+    // Override bisa per fitur/kelompok atau per perintah (`cmd:<nama>`).
     // `.help`, `.fitur`, dan perintah owner tidak termasuk katalog sehingga
     // tetap bisa dipakai untuk mengaktifkan kembali fitur.
     const commandFeature = cmdName ? featureForCommand(cmdName) : '';
+    const commandBlocked = Boolean(
+      isCmd && cmdName && isGroupJid(chat) && !this.store.isCommandEnabled(chat, cmdName)
+    );
     const featureBlocked = Boolean(
       isCmd &&
         commandFeature &&
         isGroupJid(chat) &&
         !this.store.isFeatureEnabled(chat, commandFeature)
     );
-    if (featureBlocked) {
-      await wa
-        .sendText(
-          chat,
-          `🔒 Fitur *${featureLabel(commandFeature)}* sedang dimatikan di grup ini oleh admin.`,
-          m
-        )
-        .catch(() => {});
+    if (commandBlocked || featureBlocked) {
+      const text = commandBlocked
+        ? `🔒 Perintah *${cmdName}* sedang dimatikan di grup ini oleh admin.`
+        : `🔒 Fitur *${featureLabel(commandFeature)}* sedang dimatikan di grup ini oleh admin.`;
+      await wa.sendText(chat, text, m).catch(() => {});
       return;
     }
 

@@ -1,7 +1,7 @@
 'use strict';
 
 const wa = require('../wa');
-const { isGroupJid, jidUser } = require('../util');
+const { isGroupJid, jidUser, onlyDigits } = require('../util');
 const {
   normalizeAccount,
   normalizeCn,
@@ -13,6 +13,12 @@ const {
 const COMMANDS = new Set([
   'verif',
   'veriv',
+  'addakun',
+  'tambahakun',
+  'delakun',
+  'hapusakun',
+  'listakun',
+  'daftarakun',
   'listverif',
   'listveriv',
   'unverif',
@@ -29,6 +35,10 @@ function bareJid(value) {
   return String(value || '')
     .replace(/:\d+@/, '@')
     .trim();
+}
+
+function digitsOf(jid) {
+  return onlyDigits(jidUser(jid));
 }
 
 /** Ambil JID WhatsApp peng-verif dari metadata pesan. */
@@ -48,10 +58,11 @@ function senderLink(m) {
 }
 
 class VerifFeature {
-  constructor(cfg, store, monitor) {
+  constructor(cfg, store, monitor, accounts) {
     this.cfg = cfg || {};
     this.store = store;
     this.monitor = monitor || null;
+    this.accounts = accounts || null;
     this.timezone = String(this.cfg.timezone || 'Asia/Jakarta');
     this.tzOffset = Number.isFinite(Number(this.cfg.tzOffset)) ? Number(this.cfg.tzOffset) : 7;
   }
@@ -72,10 +83,15 @@ class VerifFeature {
       '/unverif <nama_acc>',
       '/me',
       '',
+      '*Pantauan akun*',
+      '/addakun <nama_acc> — sama seperti /verif di grup, khusus owner di DM',
+      '/delakun <nama_acc>',
+      '/listakun',
+      '',
       '*Cek siapa yang UP*',
-      '/siapaup',
+      '/siapaup [CN]',
       '/cekup @username',
-      '/history',
+      '/history [CN]',
       '',
       'Bisa juga: Tsukasa verif <nama_acc>, .verif <nama_acc>',
     ].join('\n');
@@ -88,11 +104,88 @@ class VerifFeature {
       .catch(() => chat);
   }
 
+  statusLine() {
+    if (!this.accounts) return 'pantauan tidak tersedia';
+    return this.accounts.isEnabled() ? 'aktif ✅' : 'nonaktif ❌';
+  }
+
+  refreshMonitor() {
+    if (this.monitor && typeof this.monitor.refresh === 'function') {
+      this.monitor.refresh();
+    }
+  }
+
+  /**
+   * Pastikan akun hasil verif ikut dipantau detector. Idempoten: kalau akun
+   * sudah ada, tidak ada penulisan ulang atau restart detector.
+   */
+  async ensureMonitored(accName) {
+    if (!this.accounts) return { ok: false, reason: 'unavailable', account: accName };
+    const res = await this.accounts.add(accName);
+    if (res.ok) this.refreshMonitor();
+    return res;
+  }
+
+  /**
+   * Sinkronkan semua akun yang pernah diverifikasi ke daftar pantauan.
+   * Dipanggil saat startup supaya akun verif lama tidak tertinggal.
+   */
+  async syncMonitoredAccounts() {
+    if (!this.accounts) return { added: 0, total: 0 };
+    let added = 0;
+    for (const item of this.store.allAccounts()) {
+      const res = await this.accounts.add(item.accName);
+      if (res.ok) added += 1;
+    }
+    if (added) {
+      // Saat startup detector mungkin belum berjalan; cukup perbarui daftar.
+      // Refresh hanya jika monitor sudah aktif supaya tidak memulai lebih awal.
+      if (this.monitor && (this.monitor.timer || this.monitor.startTimer)) {
+        this.refreshMonitor();
+      }
+    }
+    return { added, total: this.accounts.list().length };
+  }
+
+  async isGroupAdmin(sock, m, chat) {
+    if (!isGroupJid(chat)) return false;
+
+    let meta;
+    try {
+      meta = await sock.groupMetadata(chat);
+    } catch {
+      return false;
+    }
+
+    const candidates = [
+      m.key.participant,
+      m.key.participantPn,
+      m.key.participantAlt,
+      m.key.remoteJidAlt,
+      m.key.senderPn,
+    ]
+      .filter(Boolean)
+      .map(bareJid);
+    if (!candidates.length) return false;
+
+    const candDigits = new Set(candidates.map(digitsOf).filter(Boolean));
+    for (const p of meta.participants || []) {
+      if (!p || (p.admin !== 'admin' && p.admin !== 'superadmin')) continue;
+      const ids = [p.id, p.phoneNumber, p.lid].filter(Boolean).map(bareJid);
+      for (const id of ids) {
+        if (candidates.includes(id)) return true;
+        const d = digitsOf(id);
+        if (d && candDigits.has(d)) return true;
+      }
+    }
+    return false;
+  }
+
   async handle(sock, m, cmd, rest, isOwner) {
     const name = String(cmd || '').toLowerCase();
     if (!COMMANDS.has(name)) return false;
 
-    if (!rest && name === 'verif') {
+    if (!rest && (name === 'verif' || name === 'addakun' || name === 'tambahakun')) {
       await this.reply(m, this.usage());
       return true;
     }
@@ -101,6 +194,18 @@ class VerifFeature {
       case 'verif':
       case 'veriv':
         await this.handleVerif(sock, m, rest);
+        return true;
+      case 'addakun':
+      case 'tambahakun':
+        await this.handleAddAccount(sock, m, rest, isOwner);
+        return true;
+      case 'delakun':
+      case 'hapusakun':
+        await this.handleDelAccount(sock, m, rest, isOwner);
+        return true;
+      case 'listakun':
+      case 'daftarakun':
+        await this.handleListAccounts(m);
         return true;
       case 'listverif':
       case 'listveriv':
@@ -153,6 +258,9 @@ class VerifFeature {
       ...link,
     });
 
+    // Akun yang diverifikasi otomatis masuk daftar pantauan detector.
+    await this.ensureMonitored(result.entry.accName).catch(() => {});
+
     const mention = link.userPn || link.userJid;
     const mentions = mention && !/@lid$/i.test(mention) ? [mention] : [];
     const tag = mentions.length ? `@${jidUser(mention)}` : link.userName || 'kamu';
@@ -162,7 +270,7 @@ class VerifFeature {
         await wa.sendText(
           chat,
           `🔗 Akun *${result.entry.accName}* sudah terverif dan sekarang tertaut ke WhatsApp ${tag}.\n` +
-            'Detector akan men-tag kamu saat akun ini UP.',
+            'Akun ini juga dipantau detector, jadi kamu akan di-tag saat UP.',
           m,
           mentions
         );
@@ -180,6 +288,7 @@ class VerifFeature {
       chat,
       `✅ Berhasil verif ACC ${result.entry.accName} di GC ini.\n` +
         `🔗 Akun TikTok tertaut ke WhatsApp ${tag}.\n` +
+        'Akun otomatis masuk daftar pantauan detector.\n' +
         'Saat akun ini UP, detector akan memberi tahu grup ini dan men-tag kamu.',
       m,
       mentions
@@ -187,8 +296,163 @@ class VerifFeature {
   }
 
   /**
+   * `/addakun` — di grup menjadi alias `/verif` karena dasarnya sama.
+   * Di chat pribadi hanya owner yang boleh menambah akun pantauan.
+   */
+  async handleAddAccount(sock, m, rest, isOwner) {
+    const chat = m.key.remoteJid;
+    if (isGroupJid(chat)) {
+      await this.handleVerif(sock, m, rest);
+      return;
+    }
+
+    if (!isOwner) {
+      await this.reply(m, 'Menambah pantauan di chat pribadi khusus owner.\nDi grup, gunakan /verif <nama_acc>.');
+      return;
+    }
+
+    const input = String(rest || '').trim();
+    if (!input) {
+      await this.reply(m, 'Gunakan: /addakun @username\nContoh: /addakun @rinorstr');
+      return;
+    }
+
+    const res = await this.ensureMonitored(input);
+    if (res.ok) {
+      await this.reply(
+        m,
+        `✅ *${res.account}* ditambahkan ke daftar pantauan.\n` +
+          `Total: ${res.total} akun • status ${this.statusLine()}.\n` +
+          'Video berikutnya dicek otomatis dalam ±3 menit.'
+      );
+      return;
+    }
+
+    if (res.reason === 'exists') {
+      await this.reply(m, `ℹ️ *${res.account}* sudah ada di daftar pantauan.`);
+      return;
+    }
+    if (res.reason === 'unavailable') {
+      await this.reply(m, '❌ Daftar pantauan tidak tersedia saat ini.');
+      return;
+    }
+    await this.reply(
+      m,
+      '❌ Username tidak valid. Gunakan huruf, angka, titik, atau underscore (2-24 karakter).\n' +
+        'Contoh: /addakun @rinorstr'
+    );
+  }
+
+  /**
+   * `/delakun` — di grup menghapus verif grup ini (dan pantauan bila tidak
+   * ada verif lain). Di chat pribadi owner menghapus semua verif + pantauan.
+   */
+  async handleDelAccount(sock, m, rest, isOwner) {
+    const chat = m.key.remoteJid;
+    const input = String(rest || '').trim();
+    if (!input) {
+      await this.reply(m, 'Gunakan: /delakun @username\nContoh: /delakun @rinorstr');
+      return;
+    }
+
+    const accName = normalizeAccount(input);
+    if (!accName) {
+      await this.reply(m, '❌ Username tidak valid.\nContoh: /delakun @rinorstr');
+      return;
+    }
+
+    if (!isGroupJid(chat)) {
+      if (!isOwner) {
+        await this.reply(m, 'Menghapus pantauan di chat pribadi khusus owner.');
+        return;
+      }
+      const removedVerif = await this.store.removeAllByAccount(accName);
+      const res = this.accounts ? await this.accounts.remove(accName) : { ok: false };
+      if (res.ok) this.refreshMonitor();
+      if (!removedVerif && !res.ok) {
+        await this.reply(m, `ℹ️ *${accName}* tidak ada di daftar verif maupun pantauan.`);
+        return;
+      }
+      await this.reply(
+        m,
+        `🗑️ *${accName}* dihapus.\n` +
+          `Verifikasi dihapus: ${removedVerif} entri\n` +
+          `Pantauan: ${res.ok ? 'dihapus' : 'tidak ada'}\n` +
+          `Status detector: ${this.statusLine()}`
+      );
+      return;
+    }
+
+    const allowed = isOwner || (await this.isGroupAdmin(sock, m, chat));
+    if (!allowed) {
+      await this.reply(m, 'Perintah ini khusus admin grup atau owner bot.');
+      return;
+    }
+
+    const removedHere = await this.store.remove(chat, accName);
+    const remaining = this.store.entriesByAccount(accName).length;
+    let monitorRemoved = false;
+    if (remaining === 0 && this.accounts) {
+      const res = await this.accounts.remove(accName);
+      monitorRemoved = Boolean(res.ok);
+      if (monitorRemoved) this.refreshMonitor();
+    }
+
+    if (!removedHere && !monitorRemoved) {
+      await this.reply(m, `ℹ️ *${accName}* tidak ada di daftar verif grup ini maupun pantauan.`);
+      return;
+    }
+
+    const lines = [`🗑️ *${accName}* dihapus dari grup ini.`];
+    if (remaining > 0) {
+      lines.push(`Masih terverifikasi di ${remaining} grup lain, jadi tetap dipantau.`);
+    } else if (monitorRemoved) {
+      lines.push('Akun juga dihapus dari daftar pantauan detector.');
+    }
+    await this.reply(m, lines.join('\n'));
+  }
+
+  async handleListAccounts(m) {
+    const list = this.accounts ? this.accounts.list() : [];
+    const verified = new Map(
+      this.store.allAccounts().map((item) => [item.accName.toLowerCase(), item])
+    );
+    const seen = new Set(list.map((acc) => acc.toLowerCase()));
+
+    const lines = [
+      '📋 *Akun TikTok yang dipantau*',
+      `Status: ${this.statusLine()} • ${list.length} akun`,
+      '',
+    ];
+
+    if (!list.length && !verified.size) {
+      lines.push('Belum ada akun. Tambahkan dengan /addakun @username atau /verif <nama_acc>.');
+      await this.reply(m, lines.join('\n'));
+      return;
+    }
+
+    list.forEach((account, i) => {
+      const info = verified.get(account.toLowerCase());
+      const status = info ? `terverif di ${info.groups} grup` : 'pantauan';
+      lines.push(`${i + 1}. ${account} — ${status}`);
+    });
+
+    const extra = [...verified.values()].filter((item) => !seen.has(item.accName.toLowerCase()));
+    if (extra.length) {
+      lines.push('', 'Terverifikasi tapi belum masuk pantauan:');
+      for (const item of extra) lines.push(`• ${item.accName} — ${item.groups} grup`);
+    }
+
+    lines.push('');
+    lines.push('Tambah: /addakun @username atau /verif <nama_acc>');
+    lines.push('Hapus: /delakun @username');
+    await this.reply(m, lines.join('\n'));
+  }
+
+  /**
    * `.me` — tampilkan akun TikTok yang tertaut ke nomor WhatsApp user,
-   * lengkap dengan status UP hari ini. Bisa dipakai di grup maupun chat pribadi.
+   * lengkap dengan status UP, hashtag, dan CN hari ini. Bisa dipakai di grup
+   * maupun chat pribadi.
    */
   async handleMe(m, rest) {
     const link = senderLink(m);
@@ -220,34 +484,48 @@ class VerifFeature {
       return;
     }
 
+    const defaultHashtag = normalizeHashtag(this.cfg.tiktokHashtag || '#margaecn');
+    const defaultCn = normalizeCn(this.cfg.tiktokCnKeyword || 'ECN');
+    const today = this.store.todayVideos();
+
     const lines = ['👤 *Profil TikTok kamu*', ''];
     for (const entry of entries) {
       const acc = normalizeAccount(entry.accName);
-      const videos = this.store
-        .todayVideos(entry.cnKeyword)
-        .filter((v) => normalizeAccount(v.username).toLowerCase() === acc.toLowerCase());
+      const hashtag = normalizeHashtag(entry.hashtag) || defaultHashtag;
+      const cn = normalizeCn(entry.cnKeyword) || defaultCn;
+      const videos = today.filter(
+        (v) => normalizeAccount(v.username).toLowerCase() === acc.toLowerCase()
+      );
       const latest = videos[0];
+
       lines.push(`🎵 *@${acc}*`);
       if (entry.userName) lines.push(`   Nama WA: ${entry.userName}`);
       lines.push(`   Grup: ${entry.gcName || entry.gcId}`);
-      lines.push(
-        `   CN: ${entry.cnKeyword || '-'} • Hashtag: ${entry.hashtag || this.cfg.tiktokHashtag || '#margaecn'}`
-      );
+      lines.push(`   Target: ${hashtag} • CN ${cn}`);
+
       if (latest) {
-        const tag =
-          latest.hashtagStatus === 'Ada'
-            ? `✅ ${normalizeHashtag(latest.hashtag) || entry.hashtag}`
-            : `❎ ${normalizeHashtag(latest.hashtag) || entry.hashtag} (belum ada)`;
+        const hashtagOk = latest.hashtagStatus === 'Ada';
+        const cnOk = latest.cnStatus === 'Cocok';
         lines.push(
-          `   UP hari ini: ${formatClock(latest.timestamp, this.timezone)} WIB • ${tag}`
+          `   UP hari ini: ${formatClock(latest.timestamp, this.timezone)} WIB • ${videos.length} video`
         );
+        lines.push(`   ${hashtagOk ? '✅' : '❎'} ${hashtag} ${hashtagOk ? 'ada' : 'belum ada'}`);
+        lines.push(`   ${cnOk ? '✅' : '❎'} CN ${cn} ${cnOk ? 'cocok' : 'belum cocok'}`);
+        if (!hashtagOk) {
+          lines.push(`   ⚠️ Caption belum memakai ${hashtag}. Tambahkan supaya detector menandai ✅.`);
+        }
+        if (!cnOk) {
+          lines.push(`   ⚠️ Nickname belum memuat ${cn}. Perbarui bio/nama supaya CN cocok.`);
+        }
         lines.push(`   Caption: ${String(latest.caption || '-').slice(0, 140)}`);
         lines.push(`   Link: ${latest.link || '-'}`);
       } else {
         lines.push('   UP hari ini: belum ada');
+        lines.push(`   ${hashtag}: belum ada video untuk dicek`);
       }
       lines.push('');
     }
+
     lines.push(`Total akun tertaut: ${entries.length}`);
     lines.push('Hapus tautan: /unverif <nama_acc>');
     await this.reply(m, lines.join('\n'));
@@ -268,7 +546,11 @@ class VerifFeature {
 
     const lines = ['📋 *Daftar ACC terverif di GC ini*', ''];
     list.forEach((e, i) => {
-      lines.push(`${i + 1}. *${e.accName}* — ${e.hashtag || '-'} (CN ${e.cnKeyword || '-'})`);
+      const linked = e.userPn || e.userJid;
+      const by = linked && !/@lid$/i.test(linked) ? ` — @${jidUser(linked)}` : '';
+      lines.push(
+        `${i + 1}. *${e.accName}*${by} — ${e.hashtag || '-'} (CN ${e.cnKeyword || '-'})`
+      );
     });
     lines.push('');
     lines.push('Hapus: /unverif <nama_acc>');
@@ -289,31 +571,42 @@ class VerifFeature {
     }
 
     const removed = await this.store.remove(chat, accName);
-    await this.reply(
-      m,
-      removed
-        ? `🗑️ ACC ${accName} dihapus dari daftar verif GC ini.`
-        : `ACC ${accName} tidak ditemukan di daftar verif GC ini.`
-    );
+    const remaining = this.store.entriesByAccount(accName).length;
+    let monitorRemoved = false;
+    if (removed && remaining === 0 && this.accounts) {
+      const res = await this.accounts.remove(accName);
+      monitorRemoved = Boolean(res.ok);
+      if (monitorRemoved) this.refreshMonitor();
+    }
+
+    let text = removed
+      ? `🗑️ ACC ${accName} dihapus dari daftar verif GC ini.`
+      : `ACC ${accName} tidak ditemukan di daftar verif GC ini.`;
+    if (monitorRemoved) text += '\nAkun juga dihapus dari daftar pantauan detector.';
+    else if (remaining > 0) text += `\nAkun masih terverifikasi di ${remaining} grup lain.`;
+    await this.reply(m, text);
   }
 
   async handleSiapaUp(m, rest) {
-    const cn = normalizeCn(rest) || normalizeCn(this.cfg.tiktokCnKeyword || 'ECN');
-    const videos = this.store.latestPerAccount(1, cn).slice(0, 5);
+    // Tanpa argumen tampilkan semua akun, bukan hanya CN default.
+    const cn = normalizeCn(rest);
+    const scope = cn ? `ACC ${cn}` : 'semua akun';
+    const videos = this.store.latestPerAccount(1, cn).slice(0, 30);
 
     if (!videos.length) {
-      await this.reply(m, `Belum ada yang UP hari ini untuk ACC ${cn}.`);
+      await this.reply(m, `Belum ada yang UP hari ini untuk ${scope}.`);
       return;
     }
 
-    const lines = [`📋 *Siapa yang UP hari ini (${cn}):*`];
+    const lines = [`📋 *Siapa yang UP hari ini (${scope}):*`];
     videos.forEach((v, i) => {
       const hashtag = v.hashtagStatus === 'Ada' ? 'Ada ✅' : 'Tidak Ada ❌';
+      const cnPart = v.cn ? ` • CN ${v.cn} ${v.cnStatus === 'Cocok' ? '✅' : '❎'}` : '';
       lines.push(
         `${i + 1}. ${v.username} (${v.nickname || '-'}) - ${formatClock(
           v.timestamp,
           this.timezone
-        )} WIB - # ${hashtag}`
+        )} WIB - # ${hashtag}${cnPart}`
       );
     });
     await this.reply(m, lines.join('\n'));
@@ -326,10 +619,10 @@ class VerifFeature {
       return;
     }
 
-    const cn = normalizeCn(this.cfg.tiktokCnKeyword || 'ECN');
     const target = username.toLowerCase();
+    // Tanpa filter CN: video tetap terlihat walau nickname belum memuat CN.
     const videos = this.store
-      .todayVideos(cn)
+      .todayVideos()
       .filter((v) => normalizeAccount(v.username).toLowerCase() === target);
 
     if (!videos.length) {
@@ -343,22 +636,25 @@ class VerifFeature {
       '',
       `📝 Caption: ${v.caption || '-'}`,
       `📌 ${normalizeHashtag(v.hashtag) || this.cfg.tiktokHashtag} - ${v.hashtagStatus}`,
+      `📌 CN ${v.cn || this.cfg.tiktokCnKeyword || 'ECN'} - ${v.cnStatus}`,
       `🔗 ${v.link}`,
     ];
     await this.reply(m, lines.join('\n'));
   }
 
   async handleHistory(m, rest) {
-    const cn = normalizeCn(rest) || normalizeCn(this.cfg.tiktokCnKeyword || 'ECN');
+    // Tanpa argumen tampilkan semua akun, bukan hanya CN default.
+    const cn = normalizeCn(rest);
+    const scope = cn ? `ACC ${cn}` : 'semua akun';
     const summary = this.store.historySummary(7, cn);
 
     if (!summary.length) {
-      await this.reply(m, `Belum ada riwayat UP 7 hari terakhir untuk ACC ${cn}.`);
+      await this.reply(m, `Belum ada riwayat UP 7 hari terakhir untuk ${scope}.`);
       return;
     }
 
-    const lines = [`📅 *Rekap UP 7 hari terakhir (${cn})*`, ''];
-    summary.slice(0, 15).forEach((row, i) => {
+    const lines = [`📅 *Rekap UP 7 hari terakhir (${scope})*`, ''];
+    summary.slice(0, 30).forEach((row, i) => {
       const last = row.lastAt
         ? `${formatDate(row.lastAt, this.timezone)} ${formatClock(row.lastAt, this.timezone)}`
         : '-';
@@ -367,6 +663,7 @@ class VerifFeature {
           `${row.total} video (terakhir: ${last})`
       );
     });
+    if (summary.length > 30) lines.push('', `…dan ${summary.length - 30} akun lainnya.`);
     await this.reply(m, lines.join('\n'));
   }
 }

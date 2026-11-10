@@ -4,16 +4,7 @@ const wa = require('../wa');
 const settings = require('../settings');
 const { isGroupJid, jidUser, onlyDigits } = require('../util');
 
-const COMMANDS = new Set([
-  'addakun',
-  'tambahakun',
-  'delakun',
-  'hapusakun',
-  'listakun',
-  'daftarakun',
-  'detector',
-  'detektor',
-]);
+const COMMANDS = new Set(['detector', 'detektor']);
 
 function bareJid(jid) {
   return String(jid || '')
@@ -81,10 +72,9 @@ class TikTokAdminFeature {
 
   usage() {
     return [
-      '*Kelola akun TikTok yang dipantau*',
-      '/addakun @username',
-      '/delakun @username',
-      '/listakun',
+      '*Detector TikTok*',
+      '/detector status — status detector & daftar akun',
+      '/detector on|off — kontrol detector (owner)',
       '',
       'Grup notifikasi:',
       '/detector setgc — pakai grup ini',
@@ -92,10 +82,8 @@ class TikTokAdminFeature {
       '/detector setgc off — matikan notifikasi tambahan',
       '/detector setgc status — lihat grup notifikasi',
       '',
-      'Khusus owner:',
-      '/detector on|off|status',
-      '',
-      'Bisa juga: Tsukasa addakun @username, !addakun @username',
+      'Kelola akun pantauan: /addakun, /delakun, /listakun',
+      'Bisa juga: Tsukasa detector status, !detector setgc',
     ].join('\n');
   }
 
@@ -226,18 +214,6 @@ class TikTokAdminFeature {
     }
 
     switch (name) {
-      case 'addakun':
-      case 'tambahakun':
-        await this.handleAdd(m, rest);
-        return true;
-      case 'delakun':
-      case 'hapusakun':
-        await this.handleRemove(m, rest);
-        return true;
-      case 'listakun':
-      case 'daftarakun':
-        await this.handleList(m);
-        return true;
       case 'detector':
       case 'detektor':
         await this.handleDetector(sock, m, rest, isOwner);
@@ -250,78 +226,6 @@ class TikTokAdminFeature {
   statusLine() {
     if (!this.accounts) return 'detector tidak tersedia';
     return this.accounts.isEnabled() ? 'aktif ✅' : 'nonaktif ❌';
-  }
-
-  async handleAdd(m, rest) {
-    if (!rest) {
-      await this.reply(m, 'Gunakan: /addakun @username\nContoh: /addakun @rinorstr');
-      return;
-    }
-
-    const res = await this.accounts.add(rest);
-    if (res.ok) {
-      if (this.monitor) this.monitor.refresh();
-      await this.reply(
-        m,
-        `✅ *${res.account}* ditambahkan ke daftar pantauan.\n` +
-          `Total: ${res.total} akun • status ${this.statusLine()}.\n` +
-          'Video berikutnya dicek otomatis dalam ±3 menit.'
-      );
-      return;
-    }
-
-    if (res.reason === 'exists') {
-      await this.reply(m, `ℹ️ *${res.account}* sudah ada di daftar pantauan.`);
-      return;
-    }
-    await this.reply(
-      m,
-      '❌ Username tidak valid. Gunakan huruf, angka, titik, atau underscore (2-24 karakter).\n' +
-        'Contoh: /addakun @rinorstr'
-    );
-  }
-
-  async handleRemove(m, rest) {
-    if (!rest) {
-      await this.reply(m, 'Gunakan: /delakun @username\nContoh: /delakun @rinorstr');
-      return;
-    }
-
-    const res = await this.accounts.remove(rest);
-    if (res.ok) {
-      if (this.monitor) this.monitor.refresh();
-      await this.reply(
-        m,
-        `🗑️ *${res.account}* dihapus dari daftar pantauan.\n` +
-          `Sisa: ${res.total} akun • status ${this.statusLine()}.`
-      );
-      return;
-    }
-
-    if (res.reason === 'missing') {
-      await this.reply(m, `ℹ️ *${res.account}* tidak ada di daftar pantauan.`);
-      return;
-    }
-    await this.reply(m, '❌ Username tidak valid.\nContoh: /delakun @rinorstr');
-  }
-
-  async handleList(m) {
-    const list = this.accounts ? this.accounts.list() : [];
-    const lines = [
-      '📋 *Akun TikTok yang dipantau*',
-      `Status: ${this.statusLine()} • ${list.length} akun`,
-      '',
-    ];
-
-    if (!list.length) {
-      lines.push('Belum ada akun. Tambahkan dengan /addakun @username');
-    } else {
-      list.forEach((acc, i) => lines.push(`${i + 1}. ${acc}`));
-      lines.push('');
-      lines.push('Tambah: /addakun @username • Hapus: /delakun @username');
-    }
-
-    await this.reply(m, lines.join('\n'));
   }
 
   async handleDetector(sock, m, rest, isOwner) {

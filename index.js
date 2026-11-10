@@ -307,6 +307,16 @@ async function main() {
       audit
     );
 
+    // Akun yang sudah diverifikasi sebelum fitur ini ada tetap ikut dipantau.
+    router.verif
+      .syncMonitoredAccounts()
+      .then((res) => {
+        if (res && res.added) {
+          log.info(`[TIKTOK] ${res.added} akun verif ditambahkan ke daftar pantauan`);
+        }
+      })
+      .catch((err) => log.error('[TIKTOK] gagal sinkron akun verif:', err.message));
+
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', (update) => {

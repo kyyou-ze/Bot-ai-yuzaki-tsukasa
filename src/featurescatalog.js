@@ -108,32 +108,33 @@ const FEATURES = [
   {
     key: 'verif',
     label: 'Verif TikTok',
-    description: 'Verif ACC TikTok, daftar verif, dan profil .me.',
+    description: 'Verif ACC TikTok, pantauan akun, daftar verif, dan profil .me.',
     commands: [
       'verif',
       'veriv',
-      'listverif',
-      'listveriv',
-      'unverif',
-      'unveriv',
-      'me',
-    ],
-  },
-  {
-    key: 'detector',
-    label: 'Detector UP',
-    description: 'Siapa UP hari ini, cek UP, riwayat, dan kelola pantauan.',
-    commands: [
-      'siapaup',
-      'whoup',
-      'cekup',
-      'history',
       'addakun',
       'tambahakun',
       'delakun',
       'hapusakun',
       'listakun',
       'daftarakun',
+      'listverif',
+      'listveriv',
+      'unverif',
+      'unveriv',
+      'me',
+      'profile',
+    ],
+  },
+  {
+    key: 'detector',
+    label: 'Detector UP',
+    description: 'Siapa UP hari ini, cek UP, riwayat, dan kelola detector.',
+    commands: [
+      'siapaup',
+      'whoup',
+      'cekup',
+      'history',
       'detector',
       'detektor',
     ],
@@ -207,13 +208,36 @@ for (const feature of FEATURES) {
   }
 }
 
+function cleanToken(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^[#./!]+/, '');
+}
+
 function featureForCommand(command) {
-  const cmd = String(command || '').trim().toLowerCase();
-  return COMMAND_FEATURE.get(cmd) || '';
+  return COMMAND_FEATURE.get(cleanToken(command)) || '';
+}
+
+function isKnownCommand(command) {
+  return COMMAND_FEATURE.has(cleanToken(command));
+}
+
+/**
+ * Nama perintah yang valid untuk override `.fitur on/off` per perintah.
+ * Mengembalikan string kosong jika bukan perintah yang terdaftar.
+ */
+function normalizeCommandKey(value) {
+  const cmd = cleanToken(value);
+  return COMMAND_FEATURE.has(cmd) ? cmd : '';
+}
+
+function allCommands() {
+  return [...COMMAND_FEATURE.keys()];
 }
 
 function normalizeFeatureKey(value) {
-  const raw = String(value || '').trim().toLowerCase().replace(/^[#./!]+/, '');
+  const raw = cleanToken(value);
   const key = FEATURE_ALIASES[raw] || raw;
   return FEATURES.some((f) => f.key === key) ? key : '';
 }
@@ -234,6 +258,9 @@ function featureList() {
 module.exports = {
   FEATURES,
   featureForCommand,
+  isKnownCommand,
+  normalizeCommandKey,
+  allCommands,
   normalizeFeatureKey,
   featureLabel,
   featureByKey,

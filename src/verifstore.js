@@ -316,6 +316,46 @@ class VerifStore {
       .map((e) => ({ ...e }));
   }
 
+  /**
+   * Daftar akun unik dari semua verifikasi. Dipakai untuk memastikan setiap
+   * akun yang pernah diverifikasi otomatis masuk daftar pantauan detector.
+   */
+  allAccounts() {
+    const map = new Map();
+    for (const e of this.entries) {
+      const acc = normalizeAccount(e.accName);
+      if (!acc) continue;
+      const key = acc.toLowerCase();
+      const cur = map.get(key);
+      if (cur) {
+        cur.groups += 1;
+        cur.cnKeyword = cur.cnKeyword || normalizeCn(e.cnKeyword);
+        cur.hashtag = cur.hashtag || normalizeHashtag(e.hashtag);
+        continue;
+      }
+      map.set(key, {
+        accName: acc,
+        groups: 1,
+        cnKeyword: normalizeCn(e.cnKeyword),
+        hashtag: normalizeHashtag(e.hashtag),
+      });
+    }
+    return [...map.values()].sort((a, b) => a.accName.localeCompare(b.accName));
+  }
+
+  /** Hapus semua verifikasi untuk satu akun di semua grup. */
+  async removeAllByAccount(accName) {
+    const acc = normalizeAccount(accName).toLowerCase();
+    if (!acc) return 0;
+    const before = this.entries.length;
+    this.entries = this.entries.filter(
+      (e) => normalizeAccount(e.accName).toLowerCase() !== acc
+    );
+    const removed = before - this.entries.length;
+    if (removed) await this.saveVerif();
+    return removed;
+  }
+
   // ---------- Cache video terlihat ----------
 
   getSeenState(account) {

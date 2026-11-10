@@ -22,7 +22,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **AI Tool Calling** — Saat mengobrol, AI bisa memilih aksi sendiri: mengirim sticker sesuai mood, memberi reaksi emoji, membuat gambar, membuat pengingat, atau mencari info terbaru di web. Contoh: AI membalas "wkwk" lalu mengirim sticker `lucu`.
 - **Blue Archive & Pap** — `ba` / `!ba` atau kata kunci terkait, `!pap` / `pap`.
 - **TikTok (multi-API + fallback)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Sumber TikWM otomatis dialihkan ke TikHub/tiktok-api23/Ensig bila kena WAF. Batas ukuran bisa dikonfigurasi.
-- **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 3 menit, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Akun bisa dikelola dari WhatsApp (`/addakun`, `/delakun`, `/listakun`, `/detector`). Command verif: `/verif`, `/listverif`, `/unverif`, `/siapaup`, `/cekup`, `/history` (juga bisa `Tsukasa ...` atau `.verif`).
+- **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 3 menit, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Akun hasil `/verif` otomatis masuk pantauan; kelola lewat `/addakun`, `/delakun`, `/listakun`, `/detector`. Command verif: `/verif`, `/listverif`, `/unverif`, `/me`, `/siapaup`, `/cekup`, `/history` (tanpa argumen menampilkan semua akun; juga bisa `Tsukasa ...` atau `.verif`).
 - **CN TikTok** — `.cn <nama>` menampilkan tiga contoh CN siap pakai dengan nama memakai huruf bold Unicode (tanpa tanda bintang saat disalin): `` `𝙀𝘾𝙉᭄ ``, `ft 𝙀𝘾𝙉`, dan `〆𝙀𝘾𝙉`. Keyword mengikuti `TIKTOK_CN_KEYWORD`.
 - **Reply & Tag Status** — Di chat pribadi bot tetap membalas walaupun pesanmu adalah reply/quote. Di grup, reply ke pesan bot juga diproses tanpa trigger. Tag status WhatsApp yang menyebut bot terdeteksi dan dibalas di chat terkait.
 - **AnimeKita** — `!anime ...` (new/movie/schedule/list/genre/search/detail/episode/roulette). Episode dengan link Pixeldrain bisa diunduh otomatis.
@@ -607,23 +607,25 @@ Command verif (bisa ` / `, `.`, `!`, atau diawali `Tsukasa`):
 /me ECN            # filter salah satu akun
 /listverif         # daftar ACC terverif di grup ini
 /unverif ECN       # hapus ACC dari grup ini
-/siapaup           # 5 video/akun terbaru yang UP hari ini
+/siapaup           # semua akun yang UP hari ini
+/siapaup ECN       # filter hanya CN ECN
 /whoup             # alias /siapaup
 /cekup @rinorstr   # cek akun sudah UP hari ini atau belum
-/history           # rekap UP 7 hari terakhir per ACC
+/history           # rekap UP 7 hari terakhir semua akun
+/history ECN       # rekap khusus CN ECN
 /cn Budi           # contoh CN TikTok (3 gaya) untuk nama Budi
 ```
 
-Saat `/verif`, bot menyimpan `userJid`/`userPn` pengirim. Saat akun itu UP, detector memberi notifikasi ke grup dan men-tag nomor WhatsApp peng-verif. Kalau akun sudah pernah diverif tetapi belum tertaut, kirim ulang `/verif <acc>` dengan nama yang sama untuk melengkapi tautan tanpa membuat duplikat. `.me` menampilkan grup asal, CN/hashtag, status UP hari ini (✅/❎ hashtag), caption, dan link video.
+Saat `/verif`, bot menyimpan `userJid`/`userPn` pengirim dan **otomatis menambahkan akun ke daftar pantauan detector**. Saat akun itu UP, detector memberi notifikasi ke grup dan men-tag nomor WhatsApp peng-verif. Kalau akun sudah pernah diverif tetapi belum tertaut, kirim ulang `/verif <acc>` dengan nama yang sama untuk melengkapi tautan tanpa membuat duplikat. `.me` menampilkan grup asal, target hashtag/CN, status UP hari ini, tanda ✅/❎ untuk `#margaecn` dan CN, peringatan bila belum lengkap, caption, dan link video.
 
 ### Kelola akun pantauan dari WhatsApp
 
-Tanpa edit `.env` dan tanpa restart (owner atau admin grup):
+Tanpa edit `.env` dan tanpa restart:
 
 ```text
-/addakun @username   # tambah akun ke daftar pantauan
-/delakun @username   # hapus akun dari daftar pantauan
-/listakun                 # lihat semua akun + status detector
+/addakun @username   # di grup sama seperti /verif; di DM khusus owner
+/delakun @username   # grup: hapus verif grup ini; DM owner: hapus semua verif + pantauan
+/listakun            # lihat semua akun pantauan + status verif
 /detector status          # status detector + kesehatan + grup notifikasi
 /detector setgc           # pakai grup ini sebagai grup notifikasi TikTok
 /detector setgc <link>    # atur grup lain lewat link undangan (owner)
@@ -633,9 +635,11 @@ Tanpa edit `.env` dan tanpa restart (owner atau admin grup):
 /detector off             # matikan detector (khusus owner)
 ```
 
+`/addakun` di grup tidak perlu admin karena dasarnya sama dengan `/verif`. Di chat pribadi, hanya owner yang bisa menambah pantauan. `/delakun` di grup khusus admin grup/owner dan hanya menghapus verifikasi grup tersebut; akun tetap dipantau jika masih terverifikasi di grup lain. Saat startup, semua akun yang pernah diverifikasi disinkronkan otomatis ke daftar pantauan.
+
 `/detector setgc` menyimpan `TIKTOK_NOTIFY_JID` dan langsung berlaku tanpa restart. Notifikasi tetap dikirim ke grup yang punya akun terverifikasi; grup tambahan ini berguna kalau ingin semua laporan UP masuk ke satu grup pantauan.
 
-Daftar akun disimpan di `data/tiktok/accounts.json`. Selama file itu belum punya daftar akun, bot memakai `TIKTOK_ACCOUNTS` dari `.env`. Begitu ada `/addakun` atau `/delakun`, daftar di file JSON yang menjadi acuan.
+Daftar akun disimpan di `data/tiktok/accounts.json`. Selama file itu belum punya daftar akun, bot memakai `TIKTOK_ACCOUNTS` dari `.env`. Begitu ada `/addakun`, `/verif`, atau `/delakun`, daftar di file JSON yang menjadi acuan.
 
 Data verif disimpan di `data/tiktok/` (`verif.json`, `history_up.json`, `up_today.json`, `seen_videos.json`, `accounts.json`). Folder ini diabaikan git sehingga data tidak hilang saat update/restart. Lokasi bisa diubah lewat `TIKTOK_DATA_DIR` atau path individual `VERIF_DB`, `HISTORY_UP_DB`, `UP_TODAY_DB`, `SEEN_VIDEOS_DB`, `TIKTOK_ACCOUNTS_DB`. Data lama di `database/*.json` dimigrasikan otomatis saat pertama dijalankan.
 
@@ -723,17 +727,21 @@ Admin grup (dan owner bot) bisa mengatur kapan Tsukasa membalas di grup masing-m
 
 ### Aktif/nonaktifkan fitur per grup
 
-Admin grup bisa mematikan fitur tertentu tanpa mengganggu fitur lain. Fitur yang dimatikan langsung hilang dari `.help` di grup itu dan perintahnya ditolak.
+Admin grup bisa mematikan fitur atau **perintah individual** tanpa mengganggu yang lain. Item yang dimatikan langsung hilang dari `.help` di grup itu dan perintahnya ditolak.
 
 ```text
-.fitur status              # daftar fitur aktif/nonaktif
-.fitur off brat qc         # matikan Brat dan Quote Card
-.fitur on brat             # aktifkan lagi
+.fitur status              # daftar fitur + perintah yang nonaktif
+.fitur off news            # matikan perintah .news saja
+.fitur off cosplay         # matikan perintah .cosplay saja
+.fitur off brat qc         # matikan beberapa perintah sekaligus
+.fitur on news             # aktifkan lagi
+.fitur off fitur:news      # matikan seluruh kelompok fitur news
+.fitur off cmd:history     # paksa override per perintah
 .fitur off all             # matikan semua fitur
-.fitur reset               # aktifkan semua fitur
+.fitur reset               # aktifkan semua fitur dan perintah
 ```
 
-Nama fitur yang tersedia: `ai`, `sticker`, `brat`, `qc`, `media`, `anime`, `news`, `cosplay`, `animechannel`, `verif`, `detector`, `tools`, `moderation`. Perintah pengelolaan seperti `.help` dan `.fitur` sendiri tidak bisa dimatikan. Pengaturan disimpan per grup di `tsukasa_state.json` (`groupFeatures`) dan berlaku juga untuk bentuk natural (mis. `tsukasa brat ...`).
+Nama perintah (mis. `news`, `cosplay`, `history`, `s`) diprioritaskan sebagai override per perintah. Untuk mematikan seluruh kelompok fitur yang namanya sama dengan perintah, gunakan awalan `fitur:` (mis. `fitur:news`, `fitur:verif`). Nama fitur yang tersedia: `ai`, `sticker`, `brat`, `qc`, `media`, `anime`, `news`, `cosplay`, `animechannel`, `verif`, `detector`, `tools`, `moderation`. Perintah pengelolaan seperti `.help` dan `.fitur` sendiri tidak bisa dimatikan. Pengaturan disimpan per grup di `tsukasa_state.json` (`groupFeatures`) dan berlaku juga untuk bentuk natural (mis. `tsukasa brat ...`).
 
 ### AFK, Ping & TagAll
 

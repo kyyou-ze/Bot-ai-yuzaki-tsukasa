@@ -170,7 +170,7 @@ class Store {
 
   listDisabledFeatures(chat) {
     return Object.keys(this.getGroupFeatures(chat)).filter(
-      (key) => this.data.groupFeatures[chat][key] === false
+      (key) => !key.startsWith('cmd:') && this.data.groupFeatures[chat][key] === false
     );
   }
 
@@ -178,6 +178,42 @@ class Store {
     const g = this.data.groupFeatures[chat];
     if (!g || typeof g !== 'object') return true;
     return g[key] !== false;
+  }
+
+  /** Override per perintah, terpisah dari override per fitur/kelompok. */
+  isCommandEnabled(chat, command) {
+    const name = String(command || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^[#./!]+/, '');
+    if (!name) return true;
+    const g = this.data.groupFeatures[chat];
+    if (!g || typeof g !== 'object') return true;
+    return g[`cmd:${name}`] !== false;
+  }
+
+  listDisabledCommands(chat) {
+    const g = this.getGroupFeatures(chat);
+    return Object.keys(g)
+      .filter((key) => key.startsWith('cmd:') && g[key] === false)
+      .map((key) => key.slice(4))
+      .sort();
+  }
+
+  setCommandEnabled(chat, command, enabled) {
+    const target = String(chat || '').trim();
+    const name = String(command || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^[#./!]+/, '');
+    if (!target || !name) return Promise.reject(new Error('invalid group command'));
+    const cur = this.getGroupFeatures(target);
+    const key = `cmd:${name}`;
+    if (enabled) delete cur[key];
+    else cur[key] = false;
+    if (Object.keys(cur).length) this.data.groupFeatures[target] = cur;
+    else delete this.data.groupFeatures[target];
+    return this._save().then(() => Boolean(enabled));
   }
 
   setFeatureEnabled(chat, key, enabled) {
