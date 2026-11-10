@@ -4,6 +4,7 @@ const log = require('./logger');
 const path = require('path');
 require('dotenv').config();
 const settings = require('./settings');
+const { tzOffsetHours } = require('./util');
 
 function getenv(key, def) {
   const v = process.env[key];
@@ -64,19 +65,21 @@ function load() {
     sessionDir = sessionDir.replace(/\.(db|json|sqlite|sqlite3)$/i, '') + '_auth';
   }
 
+  // Zona waktu untuk pengingat, notifikasi, dan statistik. Offset diturunkan
+  // otomatis dari BOT_TIMEZONE supaya tidak perlu diisi manual dan tidak
+  // tertinggal saat zona diubah. BOT_TZ_OFFSET hanya untuk override darurat.
+  const timezone = getenv('BOT_TIMEZONE', 'Asia/Jakarta');
+  const tzOffsetEnv = parseFloat(getenv('BOT_TZ_OFFSET', ''));
+  const tzOffset = Number.isFinite(tzOffsetEnv) ? tzOffsetEnv : tzOffsetHours(timezone);
+
   const cfg = {
     sessionDir: path.resolve(sessionDir),
     stateDb: path.resolve(getenv('STATE_DB', 'tsukasa_state.json')),
     botName: getenv('BOT_NAME', 'Tsukasa'),
     mode: getenv('MODE', 'MANUAL').toUpperCase(),
     trigger: getenv('TRIGGER', 'tsukasa').toLowerCase(),
-    // Zona waktu untuk pengingat & statistik. Offset dipakai untuk
-    // mengubah "jam 15:30" menjadi waktu UTC yang tepat.
-    timezone: getenv('BOT_TIMEZONE', 'Asia/Jakarta'),
-    tzOffset: (() => {
-      const n = parseFloat(getenv('BOT_TZ_OFFSET', '7'));
-      return Number.isFinite(n) ? n : 7;
-    })(),
+    timezone,
+    tzOffset,
     // Opsional: nomor WhatsApp (format internasional, mis. 628xxxx) untuk
     // pairing code. Sangat membantu di Pterodactyl yang consolenya sempit.
     pairingNumber: String(getenv('PAIRING_NUMBER', '')).replace(/\D+/g, ''),

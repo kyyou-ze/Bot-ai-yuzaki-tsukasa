@@ -3,13 +3,14 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
+const { localParts, formatDateTime } = require('./util');
 
-function stamp(date = new Date()) {
-  const pad = (n) => String(n).padStart(2, '0');
-  return (
-    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-` +
-    `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
-  );
+function stamp(date = new Date(), timezone = 'Asia/Jakarta') {
+  const p = localParts(date instanceof Date ? date.getTime() : date, timezone);
+  return `${p.year}${String(p.month).padStart(2, '0')}${String(p.day).padStart(2, '0')}-` +
+    `${String(p.hour).padStart(2, '0')}${String(p.minute).padStart(2, '0')}${String(
+      p.second
+    ).padStart(2, '0')}`;
 }
 
 function inside(child, parent) {
@@ -29,6 +30,7 @@ class SessionBackup {
   /** Terapkan ulang konfigurasi (dipakai saat setting diubah lewat chat). */
   configure(cfg) {
     const conf = cfg || {};
+    this.timezone = conf.timezone || 'Asia/Jakarta';
     this.enabled = conf.sessionBackupEnabled !== false;
     this.sessionDir = path.resolve(conf.sessionDir || './session');
     this.dir = path.resolve(conf.sessionBackupDir || './backups/session');
@@ -78,7 +80,7 @@ class SessionBackup {
     if (!this.enabled) return this.lastError ? `nonaktif (${this.lastError})` : 'nonaktif';
     if (this.running) return 'sedang berjalan...';
     if (!this.last) return `aktif, belum ada backup (tiap ${Math.round(this.intervalMs / 3600000)} jam)`;
-    const when = new Date(this.last.at).toLocaleString('id-ID');
+    const when = formatDateTime(this.last.at, this.timezone);
     return `${this.last.files} file, ${when}`;
   }
 
@@ -120,7 +122,7 @@ class SessionBackup {
       }
 
       await fs.promises.mkdir(this.dir, { recursive: true });
-      const name = `session-${stamp()}`;
+      const name = `session-${stamp(Date.now(), this.timezone)}`;
       const dest = path.join(this.dir, name);
       await fs.promises.cp(this.sessionDir, dest, { recursive: true, force: true });
       const files = await this._countFiles(dest);

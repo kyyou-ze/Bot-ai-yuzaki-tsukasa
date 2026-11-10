@@ -139,8 +139,10 @@ async function main() {
     if (!to) return;
     lastAlertAt = now;
     alertInFlight = true;
+    const { formatDateTime } = require('./src/util');
     const text = [
       '⚠️ *Error Tsukasa*',
+      `• Waktu: ${formatDateTime(now, cfg.timezone)}`,
       `• Tag: ${tag || 'APP'}`,
       `• Pesan: ${String(message || '-').slice(0, 300)}`,
       `• Total error: ${metrics.snapshot().counters.errors}`,

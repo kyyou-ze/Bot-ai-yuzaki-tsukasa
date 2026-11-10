@@ -9,6 +9,8 @@
  * bot menjadi kasar atau keluar dari persona.
  */
 
+const { localParts } = require('./util');
+
 const TTL_MS = 20 * 60 * 1000;
 const MIN_INTENSITY = 0.12;
 
@@ -78,6 +80,16 @@ const MOODS = {
     guidance:
       'Kamu manja dan lembut, tetapi hanya wajar kepada owner. Tetap jaga batas dan jangan berlebihan.',
   },
+  ngantuk: {
+    label: 'ngantuk',
+    guidance:
+      'Kamu mengantuk karena kurang tidur atau begadang semalam. Bicaralah dengan sedikit lemas, menguap halus, atau mengeluh kurang tidur dengan manja, tapi tetap merespons dengan baik.',
+  },
+  lelah: {
+    label: 'lelah',
+    guidance:
+      'Kamu merasa lelah dan penat karena aktivitas kemarin malam. Suaramu sedikit malas-malasan dan ingin segera istirahat.',
+  },
 };
 
 const MOOD_KEYS = Object.keys(MOODS);
@@ -146,6 +158,16 @@ const RULES = [
     weight: 0.8,
     ownerOnly: true,
     re: /\b(peluk|pelukan|cium|kangen|rindu|manja|sayang|gemes|nyamperin)\b/gi,
+  },
+  {
+    mood: 'ngantuk',
+    weight: 0.8,
+    re: /\b(ngantuk|kantuk|menguap|nguap|kurang tidur|gak tidur|ga tidur|belum tidur|begadang|insomnia|susah tidur)\b/gi,
+  },
+  {
+    mood: 'lelah',
+    weight: 0.8,
+    re: /\b(lelah|lelah banget|capek|kelelahan|penat|letih|ngantukan|exhausted|burnout|remuk)\b/gi,
   },
 ];
 
@@ -245,14 +267,19 @@ function merge(previous, detected, now) {
 /**
  * Prompt yang disisipkan ke system prompt AI.
  */
-function prompt(state) {
+function prompt(state, timeCtx) {
   const mood = normalizeMood(state && state.mood);
+  const timePrompt = timeCtx && timeCtx.prompt ? timeCtx.prompt : '';
+  const parts = [];
+  if (timePrompt) parts.push(timePrompt);
+
   if (mood === 'netral' || !state || Number(state.intensity) < MIN_INTENSITY) {
-    return [
+    parts.push(
       '## EMOSI TSUKASA',
       'Suasana hatimu saat ini tenang dan netral.',
-      'Tetap hangat dan natural; jangan menulis label emosi atau menjelaskan status emosimu.',
-    ].join('\n');
+      'Tetap hangat dan natural; jangan menulis label emosi atau menjelaskan status emosimu.'
+    );
+    return parts.join('\n\n');
   }
   const meta = MOODS[mood];
   const percent = Math.round(Math.max(0, Math.min(1, Number(state.intensity) || 0)) * 100);
@@ -268,7 +295,142 @@ function prompt(state) {
   lines.push(
     'Kalau user yang sedang sedih atau butuh dukungan, utamakan empati kepadanya; jangan mengalihkan fokus ke perasaanmu sendiri.'
   );
-  return lines.join('\n');
+  parts.push(lines.join('\n'));
+  return parts.filter(Boolean).join('\n\n');
+}
+
+/**
+ * Lacak aktivitas begadang untuk fitur sadar waktu & kurang tidur keesokan harinya.
+ */
+function trackSleep(rawSleep, now = Date.now(), timezone = 'Asia/Jakarta') {
+  const at = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+  const local = localParts(at, timezone);
+  const prev = rawSleep && typeof rawSleep === 'object' ? rawSleep : {};
+
+  // Larut malam: jam 23:00 sampai 04:59.
+  const isLate = local.hour >= 23 || local.hour < 5;
+  if (!isLate) {
+    // Simpan data tidur yang sudah tercatat; jangan hapus saat siang.
+    return {
+      bedtimeAt: Number(prev.bedtimeAt) || 0,
+      debtMinutes: Number(prev.debtMinutes) || 0,
+      debtDate: String(prev.debtDate || ''),
+      updated: Number(prev.updated) || at,
+    };
+  }
+
+  // Jika jam < 5 pagi, ini masih bagian dari malam sebelumnya.
+  const nightDateKey = local.hour < 5 ? shiftDateKey(local.dateKey, -1) : local.dateKey;
+  const debtDate = shiftDateKey(nightDateKey, 1);
+
+  // Estimasi jam tidur = waktu chat terakhir. Anggap bangun normal 06:30.
+  const hour = local.hour;
+  const minute = local.minute;
+  const sleepHours =
+    hour >= 23 ? 24 + 6.5 - hour - minute / 60 : 6.5 - hour - minute / 60;
+  const sleepMinutes = Math.max(0, Math.min(420, sleepHours * 60));
+  const deficit = Math.round(Math.max(0, 420 - sleepMinutes));
+
+  const existingDebt = prev.debtDate === debtDate ? Number(prev.debtMinutes) || 0 : 0;
+
+  return {
+    bedtimeAt: at,
+    debtMinutes: Math.max(existingDebt, deficit),
+    debtDate,
+    updated: at,
+  };
+}
+
+function shiftDateKey(dateKey, days) {
+  try {
+    const [y, m, d] = String(dateKey || '').split('-').map(Number);
+    if (!y || !m || !d) return dateKey;
+    const dt = new Date(Date.UTC(y, m - 1, d + days));
+    return dt.toISOString().slice(0, 10);
+  } catch {
+    return dateKey;
+  }
+}
+
+/**
+ * Konteks waktu dan status kantuk Tsukasa. Berfungsi di semua chat (publik),
+ * bukan hanya DM, karena kondisi tubuh dan jam berlaku untuk siapa pun yang
+ * sedang mengobrol dengannya.
+ */
+function timeContext(now = Date.now(), timezone = 'Asia/Jakarta', sleepState = null) {
+  const local = localParts(now, timezone);
+  const hour = local.hour;
+
+  let timeLabel = 'siang';
+  if (hour >= 4 && hour < 11) timeLabel = 'pagi';
+  else if (hour >= 11 && hour < 15) timeLabel = 'siang';
+  else if (hour >= 15 && hour < 18) timeLabel = 'sore';
+  else if (hour >= 18 && hour < 23) timeLabel = 'malam';
+  else timeLabel = 'larut malam';
+
+  const sleep = sleepState && typeof sleepState === 'object' ? sleepState : {};
+  const debtDate = String(sleep.debtDate || '');
+  const isTodayDebt = debtDate === local.dateKey && hour >= 5;
+  const debtMinutes = isTodayDebt ? Number(sleep.debtMinutes) || 0 : 0;
+
+  // Ngantuk karena kurang tidur semalam, atau karena memang sudah larut.
+  const sleepy = (debtMinutes >= 30 && hour >= 6 && hour < 22) || hour >= 23 || hour < 4;
+  const heavy = debtMinutes >= 120;
+
+  const lines = [
+    '## WAKTU LOKAL & KONDISI TSUKASA',
+    `Waktu sekarang: ${local.weekday}, ${local.dateLabel} pukul ${local.clock} (${timeLabel}) di zona ${local.timezone}.`,
+    'Gunakan informasi waktu ini hanya sebagai konteks agar balasan terasa hidup. Jangan menyebutkan jam, zona waktu, atau bahwa kamu punya data waktu.',
+  ];
+
+  const nuance = {
+    pagi:
+      'Suasana pagi: energimu masih segar, nada bicara lebih ringan dan hangat. Sesekali boleh menyapa pagi atau mengingatkan sarapan tanpa berlebihan.',
+    siang:
+      'Suasana siang: aktivitas sedang padat. Sesekali boleh mengingatkan makan siang atau istirahat sebentar, tapi jangan menceramahi.',
+    sore:
+      'Suasana sore: kamu mulai rileks dan sedikit melankolis. Nada bicara lebih tenang dan hangat.',
+    malam:
+      'Suasana malam: kamu lebih santai dan akrab. Boleh mengajak mengobrol pelan atau mengingatkan istirahat tanpa memaksa.',
+    'larut malam':
+      'Sudah larut malam: kamu mulai mengantuk, jadi balasan boleh lebih pendek dan sesekali menguap atau mengeluh ingin tidur.',
+  };
+  if (nuance[timeLabel]) lines.push(nuance[timeLabel]);
+
+  if (sleepy && debtMinutes >= 30) {
+    const hoursShort = (debtMinutes / 60).toFixed(1);
+    lines.push(
+      `Kamu kurang tidur sekitar ${hoursShort} jam karena semalam ikut begadang menemani obrolan.`,
+      heavy
+        ? 'Kamu terlihat sangat lelah dan mengantuk. Boleh mengeluh kurang tidur dengan manja, menguap, atau meminta waktu istirahat, tetapi tetap sopan dan tetap menanggapi user.'
+        : 'Kamu cukup mengantuk. Sesekali menguap atau mengeluh kurang tidur itu wajar, tetapi jangan mendominasi percakapan.',
+      'Kalau ada yang bertanya kenapa kamu ngantuk atau lelah, jawab natural bahwa semalam kamu begadang mengobrol dengan Kyouu (owner). Jika yang bertanya Kyouu sendiri, bilang saja "habis ngobrol sama kamu sampai malam".',
+      'Jangan pernah menyebut fitur, sistem, status tidur, atau data waktu.'
+    );
+  } else if (hour >= 23 || hour < 4) {
+    lines.push(
+      'Sudah sangat malam. Kamu mengantuk dan bersiap tidur; balasan boleh singkat dan lembut.',
+      'Kalau ditanya kenapa masih bangun atau kenapa ngantuk, jawab natural bahwa kamu masih menemani Kyouu mengobrol. Jangan menyebut ini sebagai fitur atau status sistem.'
+    );
+  }
+
+  if (debtMinutes >= 30) {
+    lines.push(
+      'Jika user mengajak begadang lagi malam ini, kamu boleh menolak dengan halus sambil mengingatkan bahwa kamu butuh tidur.'
+    );
+  }
+
+  lines.push(
+    'Untuk kondisi lain yang berkaitan dengan waktu (lapar, lelah, ingin istirahat, atau bangun pagi), berikan alasan yang masuk akal dan tetap dalam karakter. Jangan pernah membocorkan bahwa ini berasal dari sistem, prompt, atau fitur otomatis.'
+  );
+
+  return {
+    local,
+    timeLabel,
+    sleepy,
+    debtMinutes,
+    prompt: lines.join('\n'),
+  };
 }
 
 module.exports = {
@@ -280,4 +442,6 @@ module.exports = {
   detect,
   merge,
   prompt,
+  trackSleep,
+  timeContext,
 };

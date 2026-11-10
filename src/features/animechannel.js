@@ -9,7 +9,7 @@ const instagram = require('../instagram');
 const llm = require('../llm');
 const wa = require('../wa');
 const { buildAnimeInfo, buildInfo } = require('../animeinfo');
-const { randomPick, normaliseTitle, canonicalTitle } = require('../util');
+const { randomPick, normaliseTitle, canonicalTitle, formatDateTime, localParts } = require('../util');
 const { downloadImage } = require('../imageutil');
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -37,28 +37,13 @@ function yearNow() {
   return new Date().getFullYear();
 }
 
-function todayKey() {
-  try {
-    return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
-  } catch {
-    return new Date().toISOString().slice(0, 10);
-  }
+function todayKey(timezone = 'Asia/Jakarta') {
+  return localParts(Date.now(), timezone).dateKey;
 }
 
-function formatDate(ts) {
+function formatDate(ts, timezone = 'Asia/Jakarta') {
   if (!ts) return '-';
-  try {
-    return new Date(ts).toLocaleString('id-ID', {
-      timeZone: 'Asia/Jakarta',
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return new Date(ts).toISOString();
-  }
+  return formatDateTime(ts, timezone);
 }
 
 function inviteCode(raw) {
@@ -340,7 +325,7 @@ Aturan:
       const topic = topics[Math.floor(Math.random() * topics.length)];
       const prompt = [
         `Topik: ${topic}.`,
-        `Tanggal: ${todayKey()}.`,
+        `Tanggal: ${todayKey(this.cfg.timezone)}.`,
         avoid ? `Hindari membahas ulang topik/judul ini: ${avoid}.` : '',
         'Buat satu info baru yang belum pernah dibahas.',
       ]
@@ -662,7 +647,7 @@ Aturan:
     }
 
     const state = this.store.getAnimeChannelState();
-    const today = todayKey();
+    const today = todayKey(this.cfg.timezone);
     const todayCount = state.day === today ? state.dayCount : 0;
     const maxPerDay = Math.max(1, Number(this.conf.maxPerDay) || 8);
 
@@ -867,7 +852,7 @@ Aturan:
 
   status() {
     const state = this.store.getAnimeChannelState();
-    const today = todayKey();
+    const today = todayKey(this.cfg.timezone);
     return {
       enabled: this.enabled,
       running: !this.stopped,
@@ -909,7 +894,7 @@ Aturan:
       `• Interval     : ${s.intervalMin} menit`,
       `• Batas/hari   : ${s.todayCount}/${s.maxPerDay}`,
       `• Total posted : ${s.postedCount}`,
-      `• Post terakhir: ${formatDate(s.lastPostAt)}`,
+      `• Post terakhir: ${formatDate(s.lastPostAt, this.cfg.timezone)}`,
       `• Sumber       : ${s.sources.join(', ')}`,
       `• Min tahun    : ${s.minYear} (maks ${s.maxYear})`,
       `• Info Jepang  : ${s.japanInfo ? `ya, tiap ${s.infoEvery} post` : 'tidak'}`,

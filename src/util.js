@@ -160,6 +160,147 @@ async function headInfo(url, timeoutMs = 30000) {
   }
 }
 
+// ---------- Waktu lokal ----------
+//
+// Bot bisa berjalan di server yang zona waktunya UTC (umum di panel/Pterodactyl),
+// jadi JANGAN memakai getHours()/toLocaleString() tanpa timeZone. Helper ini
+// membaca jam dinding sesuai BOT_TIMEZONE dan dipakai seluruh bot.
+
+const DEFAULT_TIMEZONE = 'Asia/Jakarta';
+const TZ_OFFSET_CACHE = new Map();
+
+function safeTimezone(timezone) {
+  const tz = String(timezone || '').trim();
+  return tz || DEFAULT_TIMEZONE;
+}
+
+/**
+ * Offset zona waktu (jam) terhadap UTC pada waktu tertentu.
+ * Contoh: Asia/Jakarta -> 7, Asia/Makassar -> 8, Asia/Jayapura -> 9.
+ */
+function tzOffsetHours(timezone = DEFAULT_TIMEZONE, at = Date.now()) {
+  const tz = safeTimezone(timezone);
+  const when = Number.isFinite(Number(at)) ? Number(at) : Date.now();
+  // Cache per zona + jam (offset bisa berubah karena DST di negara lain).
+  const cacheKey = `${tz}|${Math.floor(when / 3600000)}`;
+  if (TZ_OFFSET_CACHE.has(cacheKey)) return TZ_OFFSET_CACHE.get(cacheKey);
+  let offset = 7;
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(new Date(when));
+    const get = (type) => Number((parts.find((p) => p.type === type) || {}).value);
+    const asUtc = Date.UTC(
+      get('year'),
+      get('month') - 1,
+      get('day'),
+      get('hour'),
+      get('minute'),
+      get('second')
+    );
+    const rounded = Math.floor(when / 1000) * 1000;
+    offset = Math.round(((asUtc - rounded) / 3600000) * 100) / 100;
+  } catch {
+    /* zona tidak valid: pakai WIB */
+  }
+  if (TZ_OFFSET_CACHE.size > 500) TZ_OFFSET_CACHE.clear();
+  TZ_OFFSET_CACHE.set(cacheKey, offset);
+  return offset;
+}
+
+/**
+ * Bagian waktu lokal: jam, menit, tanggal, dan nama hari.
+ * dateKey selalu `YYYY-MM-DD` di zona waktu yang dipilih.
+ */
+function localParts(at = Date.now(), timezone = DEFAULT_TIMEZONE) {
+  const tz = safeTimezone(timezone);
+  const when = Number.isFinite(Number(at)) ? Number(at) : Date.now();
+  try {
+    const parts = new Intl.DateTimeFormat('id-ID', {
+      timeZone: tz,
+      weekday: 'long',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(new Date(when));
+    const get = (type) => (parts.find((p) => p.type === type) || {}).value || '';
+    const year = Number(get('year'));
+    const month = Number(get('month'));
+    const day = Number(get('day'));
+    const hour = Number(get('hour'));
+    const minute = Number(get('minute'));
+    const second = Number(get('second'));
+    const pad = (n) => String(n).padStart(2, '0');
+    const weekdayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const weekday = weekdayNames[new Date(Date.UTC(year, month - 1, day)).getUTCDay()] || '';
+    return {
+      ts: when,
+      timezone: tz,
+      year,
+      month,
+      day,
+      hour,
+      minute,
+      second,
+      minutes: hour * 60 + minute,
+      weekday,
+      dateKey: `${year}-${pad(month)}-${pad(day)}`,
+      clock: `${pad(hour)}:${pad(minute)}`,
+      clockSeconds: `${pad(hour)}:${pad(minute)}:${pad(second)}`,
+      dateLabel: `${pad(day)}/${pad(month)}/${year}`,
+      stamp: `${year}-${pad(month)}-${pad(day)} ${pad(hour)}:${pad(minute)}:${pad(second)}`,
+    };
+  } catch {
+    // Fallback: pakai UTC agar tetap deterministik (jangan bergantung TZ host).
+    const d = new Date(when);
+    const pad = (n) => String(n).padStart(2, '0');
+    return {
+      ts: when,
+      timezone: tz,
+      year: d.getUTCFullYear(),
+      month: d.getUTCMonth() + 1,
+      day: d.getUTCDate(),
+      hour: d.getUTCHours(),
+      minute: d.getUTCMinutes(),
+      second: d.getUTCSeconds(),
+      minutes: d.getUTCHours() * 60 + d.getUTCMinutes(),
+      weekday: '',
+      dateKey: d.toISOString().slice(0, 10),
+      clock: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`,
+      clockSeconds: d.toISOString().slice(11, 19),
+      dateLabel: `${pad(d.getUTCDate())}/${pad(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`,
+      stamp: d.toISOString().replace('T', ' ').slice(0, 19),
+    };
+  }
+}
+
+/** Format tanggal+jam lokal, mis. "09/11/2026 21.05". */
+function formatDateTime(at = Date.now(), timezone = DEFAULT_TIMEZONE) {
+  const p = localParts(at, timezone);
+  return `${p.dateLabel} ${p.clock}`;
+}
+
+/** Format jam lokal, mis. "21.05". */
+function formatClock(at = Date.now(), timezone = DEFAULT_TIMEZONE) {
+  return localParts(at, timezone).clock;
+}
+
+/** Format tanggal lokal, mis. "09/11/2026". */
+function formatDate(at = Date.now(), timezone = DEFAULT_TIMEZONE) {
+  return localParts(at, timezone).dateLabel;
+}
+
 function publicPath(p) {
   if (!p) return '';
   return path.isAbsolute(p) ? p : path.resolve(process.cwd(), p);
@@ -195,6 +336,11 @@ module.exports = {
   ensureDir,
   atomicWriteJson,
   safeReadJson,
+  tzOffsetHours,
+  localParts,
+  formatDateTime,
+  formatClock,
+  formatDate,
   fetchWithTimeout,
   downloadBytes,
   headInfo,

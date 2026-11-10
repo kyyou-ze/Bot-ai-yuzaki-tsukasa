@@ -8,7 +8,8 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 
 - **Chat AI berkarakter Tsukasa** — Mode `MANUAL` (butuh trigger `tsukasa`) atau `AUTO`. Persona `tsukasa1`/`tsukasa2` bisa diubah per chat (`!tsukasa persona ...`). Mode Pro bisa diaktifkan per chat. Tsukasa hanya bersikap istimewa (romantis/manja) kepada owner; user lain diperlakukan sebagai orang biasa dan dipanggil sesuai nama mereka (nama tersimpan atau pushName WhatsApp), bukan "Kyouu".
 - **Mode Dewasa (owner-only)** — Di chat pribadi, jika owner memulai obrolan hot/flirty, bot otomatis mengikuti (18+, sugestif) selama 30 menit. Kirim `stop` untuk kembali normal.
-- **Emosi otomatis** — Tsukasa punya suasana hati yang berubah dari obrolan: senang, sedih, marah, kesal, malu, kaget, takut, cemburu, bangga, bingung, prihatin, dan manja (khusus owner). Emosi memudar setelah ±20 menit dan **tidak mengirim pemberitahuan apa pun** ke chat.
+- **Emosi otomatis** — Tsukasa punya suasana hati yang berubah dari obrolan: senang, sedih, marah, kesal, malu, kaget, takut, cemburu, bangga, bingung, prihatin, ngantuk, lelah, dan manja (khusus owner). Emosi memudar setelah ±20 menit dan **tidak mengirim pemberitahuan apa pun** ke chat.
+- **Sadar waktu (publik)** — Tsukasa menyesuaikan diri dengan jam lokal di semua chat: pagi lebih segar, siang/sore lebih santai, malam lebih akrab, dan larut malam mengantuk. Jika diajak begadang sampai malam, keesokan harinya ia bisa mengeluh kurang tidur dan terlihat lelah. Tidak ada notifikasi fitur; ini murni bagian dari perilakunya.
 - **Vision** — Kirim/reply gambar + sebut `tsukasa` untuk dianalisis Gemini.
 - **VN → Teks → Auto-reply** — VN langsung akan ditranskrip & dibalas. VN hasil _quote_ hanya diproses jika menyebut `tsukasa`.
 - **TTS VN** (`tsukasa vn <teks>`) — Hasilkan voice note via ElevenLabs (bisa pakai konteks balasan).
@@ -69,8 +70,8 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `ENV_SYNC_ENABLED` | `true` | Tambahkan variabel baru dari `.env.example` ke `.env` saat start (nilai lama tidak ditimpa) |
 | `TRIGGER` | `tsukasa` | Kata pemicu |
 | `BOT_NAME` | `Tsukasa` | Nama bot |
-| `BOT_TIMEZONE` | `Asia/Jakarta` | Zona waktu tampilan pengingat & statistik |
-| `BOT_TZ_OFFSET` | `7` | Offset UTC zona waktu (WIB = 7) untuk parsing "jam 15:30" |
+| `BOT_TIMEZONE` | `Asia/Jakarta` | Zona waktu pengingat, notifikasi admin, jadwal, dan statistik (offset dihitung otomatis) |
+| `BOT_TZ_OFFSET` | otomatis dari `BOT_TIMEZONE` | Override manual offset UTC (WIB = 7, WITA = 8, WIT = 9) |
 | `SESSION_DIR` | `./session` | Folder auth Baileys (bisa jadi `*_auth` jika diisi nama file) |
 | `PAIRING_NUMBER` | - | Nomor WhatsApp bot untuk pairing code, mis. `6281234567890` |
 | `STATE_DB` | `./tsukasa_state.json` | State JSON (persona/pro/warn/peraturan) |
@@ -654,7 +655,7 @@ Fitur ini bisa dipakai tanpa trigger (langsung dengan `!`) dan tidak memerlukan 
 ```
 
 - Waktu relatif: `10s`, `10m`, `2j`, `1 jam 30 menit`, `2 hari`.
-- Waktu absolut memakai `BOT_TIMEZONE`/`BOT_TZ_OFFSET` (default WIB).
+- Waktu absolut memakai `BOT_TIMEZONE`; offset UTC dihitung otomatis dari zona tersebut (default WIB). `BOT_TZ_OFFSET` hanya untuk override manual.
 - Pengingat disimpan di `tsukasa_state.json` dan tetap ada setelah restart.
 - Jika waktu absolut sudah lewat hari ini, pengingat dijadwalkan besok.
 

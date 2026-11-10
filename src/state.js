@@ -36,6 +36,8 @@ class Store {
       groupFeatures: raw.groupFeatures || {},
       // Suasana hati Tsukasa per chat: { [chat]: { mood, intensity, reason, updated } }.
       emotions: raw.emotions || {},
+      // Catatan waktu tidur Tsukasa: { bedtimeAt, debtMinutes, debtDate, updated }.
+      sleep: raw.sleep || {},
       afk: raw.afk || {},
     };
     this._writing = Promise.resolve();
@@ -225,6 +227,18 @@ class Store {
     if (!target || !this.data.emotions[target]) return Promise.resolve(false);
     delete this.data.emotions[target];
     return this._save().then(() => true);
+  }
+
+  // ---------- Waktu tidur Tsukasa ----------
+
+  getSleep() {
+    return { ...(this.data.sleep || {}) };
+  }
+
+  setSleep(value) {
+    const next = value && typeof value === 'object' ? { ...value } : {};
+    this.data.sleep = next;
+    return this._save().then(() => this.getSleep());
   }
 
   getGroupGuard(chat) {

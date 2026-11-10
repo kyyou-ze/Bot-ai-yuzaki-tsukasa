@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const log = require('../logger');
 const wa = require('../wa');
+const { formatDateTime } = require('../util');
 
 const COMMANDS = new Set(['panel', 'server']);
 const DEFAULT_APP_DIR = path.resolve(__dirname, '..', '..');
@@ -217,7 +218,7 @@ class PanelFeature {
     } else if (this.lastAction && this.lastActionAt) {
       line.push(
         '',
-        `Terakhir: ${this.lastAction} (${new Date(this.lastActionAt).toLocaleString('id-ID')})`
+        `Terakhir: ${this.lastAction} (${formatDateTime(this.lastActionAt, this.cfg.timezone)})`
       );
     }
     await this.reply(m, line.join('\n'));

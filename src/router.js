@@ -33,7 +33,7 @@ const llm = require('./llm');
 const emotion = require('./emotion');
 const memory = require('./memory');
 const wa = require('./wa');
-const { isGroupJid, jidUser } = require('./util');
+const { isGroupJid, jidUser, formatDateTime } = require('./util');
 const { shortError } = require('./logfmt');
 const { isHotCue, isStopCue } = require('./adultmode');
 const {
@@ -923,7 +923,7 @@ class Router {
         ];
         if (st.last) {
           lines.push(
-            `• Terakhir : ${new Date(st.last.at).toLocaleString('id-ID')} (${st.last.files} file)`
+            `• Terakhir : ${formatDateTime(st.last.at, this.cfg.timezone)} (${st.last.files} file)`
           );
         }
         if (st.lastError) lines.push(`• Error    : ${st.lastError}`);
@@ -955,7 +955,7 @@ class Router {
         }
         const lines = ['📝 *Audit Command Owner*'];
         for (const row of rows) {
-          const when = new Date(row.at).toLocaleString('id-ID');
+          const when = formatDateTime(row.at, this.cfg.timezone);
           const rest = row.rest ? ` → ${row.rest}` : '';
           lines.push(`• ${when} | ${row.command}${rest} | ${userPart(row.sender) || '-'}`);
         }
@@ -1124,9 +1124,7 @@ class Router {
           }
           const res = this.animeChannel.checkTitle(title);
           if (res.posted) {
-            const at = res.at
-              ? new Date(res.at).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
-              : '-';
+            const at = res.at ? formatDateTime(res.at, this.cfg.timezone) : '-';
             await wa.sendText(
               chat,
               `🔁 *Sudah pernah diposting*: ${title}\nTerakhir: ${at}\nKey: ${res.key}`,
@@ -1526,10 +1524,14 @@ class Router {
       );
     }
 
-    // Suasana hati Tsukasa diperbarui otomatis dari obrolan. Tidak ada pesan
-    // pemberitahuan ke chat; emosi hanya memengaruhi gaya balasan AI.
-    const mood = await this.updateEmotion(chat, txt, isOwner && !isGroupJid(chat));
-    const emotionPrompt = emotion.prompt(mood);
+    // Suasana hati & kondisi waktu Tsukasa diperbarui otomatis dari obrolan.
+    // Berlaku di semua chat (publik), tanpa pesan pemberitahuan ke chat.
+    const { mood, timeCtx } = await this.updateEmotion(
+      chat,
+      txt,
+      isOwner && !isGroupJid(chat)
+    );
+    const emotionPrompt = emotion.prompt(mood, timeCtx);
 
     const hist = memory.load(chat);
     const ctxTxt = memory.buildContext(hist, txt, sender);
@@ -1591,17 +1593,43 @@ class Router {
   }
 
   /**
-   * Perbarui suasana hati Tsukasa dari pesan terakhir. Dijalankan otomatis,
-   * tanpa mengirim pemberitahuan apa pun ke chat.
+   * Perbarui suasana hati dan catatan waktu tidur Tsukasa dari pesan terakhir.
+   * Dijalankan otomatis di semua chat, tanpa mengirim pemberitahuan apa pun.
    */
   async updateEmotion(chat, text, isOwner) {
+    const now = Date.now();
+    const timezone = (this.cfg && this.cfg.timezone) || 'Asia/Jakarta';
+
+    // Catatan tidur bersifat global (satu tubuh, satu jadwal), bukan per chat.
+    const sleep = emotion.trackSleep(this.store.getSleep(), now, timezone);
+    await this.store.setSleep(sleep).catch(() => {});
+    const timeCtx = emotion.timeContext(now, timezone, sleep);
+
     const prev = this.store.getEmotion(chat);
     const detected = emotion.detect(text, { isOwner: Boolean(isOwner) });
-    if (!detected) return prev;
-    const next = emotion.merge(prev, detected);
-    return this.store
-      .setEmotion(chat, next.mood, next.intensity, next.reason)
-      .catch(() => next);
+
+    // Kalau sedang kurang tidur dan tidak ada emosi kuat dari obrolan, rasa
+    // ngantuk/lelah otomatis muncul di chat mana pun.
+    let base = detected ? emotion.merge(prev, detected, now) : prev;
+    const weak = !base || base.mood === 'netral' || Number(base.intensity) < 0.45;
+    if (timeCtx.debtMinutes >= 30 && weak && !['sedih', 'marah', 'takut', 'prihatin'].includes(base.mood)) {
+      const tired = timeCtx.debtMinutes >= 120 ? 'lelah' : 'ngantuk';
+      base = {
+        mood: tired,
+        intensity: Math.min(0.85, 0.45 + timeCtx.debtMinutes / 600),
+        reason: 'kurang tidur karena begadang semalam',
+        updated: now,
+      };
+      await this.store
+        .setEmotion(chat, base.mood, base.intensity, base.reason)
+        .catch(() => {});
+    } else if (base && detected) {
+      await this.store
+        .setEmotion(chat, base.mood, base.intensity, base.reason)
+        .catch(() => {});
+    }
+
+    return { mood: base, timeCtx };
   }
 
   async handleAdultMode(chat, m, isOwner, arg) {
@@ -1622,9 +1650,7 @@ class Router {
       if (!st.adult) {
         await wa.sendText(chat, 'Mode dewasa sedang *tidak aktif*.', m);
       } else {
-        const until = new Date(st.adultUntil).toLocaleString('id-ID', {
-          timeZone: this.cfg.timezone || 'Asia/Jakarta',
-        });
+        const until = formatDateTime(st.adultUntil, this.cfg.timezone);
         await wa.sendText(chat, `🔥 Mode dewasa *aktif* sampai ${until}.`, m);
       }
       return true;

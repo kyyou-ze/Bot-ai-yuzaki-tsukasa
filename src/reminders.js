@@ -1,5 +1,6 @@
 'use strict';
 const wa = require('./wa');
+const { localParts } = require('./util');
 
 const REMINDERS = [
   { h: 6, m: 0, text: 'Pagi! Waktunya bangun dan mulai hari. Semangat ya.' },
@@ -27,10 +28,12 @@ class Reminders {
   }
   stop() { if (this.timer) { clearInterval(this.timer); this.timer = null; } }
   tick() {
-    const now = new Date();
-    const key = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}-${now.getMinutes()}`;
+    // Jangan pakai Date#getHours(): server panel biasanya UTC. Semua jadwal
+    // harus mengikuti BOT_TIMEZONE supaya tidak molor 7 jam.
+    const now = localParts(Date.now(), this.cfg.timezone);
+    const key = `${now.dateKey}-${now.hour}-${now.minute}`;
     for (const r of REMINDERS) {
-      if (r.h === now.getHours() && r.m === now.getMinutes()) {
+      if (r.h === now.hour && r.m === now.minute) {
         if (this.sent.has(key + r.h)) return;
         this.sent.add(key + r.h);
         wa.sendText(this.to, r.text).catch(() => {});
