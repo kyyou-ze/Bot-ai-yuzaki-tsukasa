@@ -170,8 +170,15 @@ function normalizePostUrl(input) {
 }
 
 function isProfilePicture(alt, url) {
-  if (/profile picture/i.test(alt)) return true;
-  if (/dst-jpg_s150x150|ig_cache_key=.*profile_pic/i.test(url)) return true;
+  const a = String(alt || '');
+  const u = String(url || '');
+  if (/profile\s*(picture|pic)|foto profil/i.test(a)) return true;
+  // Foto post Instagram selalu memakai path t51.xxxx-15. Avatar/profil
+  // memakai t51.xxxx-19, termasuk saat alt-nya cuma "Image 1". Tanpa filter
+  // ini avatar kecil bisa ikut terkirim di atas foto utama.
+  if (/\/t51\.\d+-19\//i.test(u)) return true;
+  if (/dst-jpg[^?]*_s150x150|_s150x150_/i.test(u)) return true;
+  if (/ig_cache_key=(?:[^&]*profile_pic|YW5vbnltb3VzX3Byb2ZpbGV)/i.test(u)) return true;
   return false;
 }
 
@@ -181,10 +188,13 @@ function isUnwantedImage(url) {
   if (/\.gif(?:\?|$)/i.test(u)) return true;
   if (/cdn\.fbsbx\.com\/v\/t59/i.test(u)) return true;
   if (/emoji|static\.cdninstagram\.com\/rsrc|sprite/i.test(u)) return true;
-  // Thumbnail rekomendasi/related post berbentuk kotak (s640x640). Foto utama
-  // carousel memakai dst-jpg_e35_tt6 tanpa suffix ukuran, jadi jangan pernah
-  // memakai thumbnail kotak supaya hasil tidak ter-crop.
-  if (/dst-jpg_e\d+_s\d+x\d+_tt\d/i.test(u)) return true;
+  // Avatar dan thumbnail kotak (s640x640/s1080x1080) adalah versi crop.
+  // URL CDN Instagram sudah ditandatangani, jadi menghapus suffix ukuran akan
+  // menghasilkan 403. Lebih aman buang thumbnail lalu andalkan sumber lengkap
+  // (vxinstagram) yang memberi URL resolusi penuh.
+  if (/\/t51\.\d+-19\//i.test(u)) return true;
+  if (/dst-jpg[^?]*_s\d+x\d+|_s\d+x\d+_tt\d/i.test(u)) return true;
+  if (/ig_cache_key=(?:[^&]*profile_pic|YW5vbnltb3VzX3Byb2ZpbGV)/i.test(u)) return true;
   return false;
 }
 
@@ -222,8 +232,9 @@ function parseImages(markdown) {
     const candidate = /!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/gi;
     while ((m = candidate.exec(main))) {
       const alt = m[1] || '';
+      const url = m[2] || '';
       if (!/(photo|video) by|^image \d+$/i.test(alt)) continue;
-      add(alt, m[2]);
+      add(alt, url);
     }
   }
 
@@ -599,87 +610,89 @@ async function fetchPost(input, options = {}) {
   if (JINA_KEY) headers.Authorization = `Bearer ${JINA_KEY}`;
 
   const timeoutMs = Math.max(15000, Number(options.timeoutMs) || 45000);
-  // Instagram hanya merender satu slide per URL. Jina membuka slide sesuai
-  // ?img_index=N, jadi probe semuanya sampai tidak ada foto baru. Cara lama
-  // cuma mencoba index 1 dan 2 sehingga carousel berisi 3+ foto terpotong.
   let best = null;
   let lastError = '';
-  let prevSignature = '';
-  let emptyStreak = 0;
-  let repeatStreak = 0;
-  const maxProbes = MAX_IMAGES + 2;
 
-  for (let index = 1; index <= maxProbes; index++) {
-    try {
-      // Cache-busting: parameter tambahan hanya untuk Jina, bukan Instagram.
-      const probeUrl = `${JINA_BASE}${url}?img_index=${index}&_cb=${Date.now()}-${index}`;
-      const res = await fetchWithTimeout(
-        probeUrl,
-        { headers, redirect: 'follow' },
-        timeoutMs
-      );
-      if (!res.ok) throw new Error(`Jina Reader gagal (HTTP ${res.status})`);
-      const markdown = await res.text();
-      if (!markdown || markdown.length < 80) throw new Error('Instagram tidak mengembalikan konten');
-
-      const post = parsePost(markdown, url);
-      if (!post.images.length) {
-        lastError = 'Tidak ada foto carousel yang bisa diambil.';
-        emptyStreak += 1;
-        if (emptyStreak >= 2) break;
-        continue;
-      }
-      emptyStreak = 0;
-
-      let added = 0;
-      if (!best) {
-        best = post;
-        added = post.images.length;
-      } else {
-        const seen = new Set(best.images.map(imageId));
-        for (const image of post.images) {
-          if (seen.has(imageId(image))) continue;
-          seen.add(imageId(image));
-          best.images.push(image);
-          added += 1;
-        }
-        if (!best.caption) best.caption = post.caption;
-        if (!best.tags.length) best.tags = post.tags;
-        if (!best.author) best.author = post.author;
-        if (!best.username) best.username = post.username;
-      }
-
-      // Halaman index biasanya berisi slide saat ini + slide berikutnya.
-      // Jangan langsung berhenti saat signature sama: cache Jina bisa
-      // mengembalikan halaman lama, padahal slide berikutnya masih ada.
-      // Berhenti hanya kalau beberapa probe berturut-turut tidak menambah foto.
-      const signature = post.images.map(imageId).join('|');
-      if (best.images.length >= MAX_IMAGES) break;
-      if (added > 0) {
-        repeatStreak = 0;
-      } else if (signature && signature === prevSignature) {
-        repeatStreak += 1;
-        if (repeatStreak >= 3) break;
-      } else {
-        repeatStreak = 0;
-      }
-      prevSignature = signature;
-    } catch (err) {
-      lastError = err && err.message ? err.message : String(err);
-      emptyStreak += 1;
-      if (emptyStreak >= 2) break;
-    }
+  // vxinstagram adalah jalur utama karena satu request sudah berisi seluruh
+  // carousel (termasuk caption). Jina harus di-probe per slide, lambat, dan
+  // sering berhenti sebelum slide terakhir sehingga foto tampak terpotong.
+  try {
+    best = await fetchViaVxinstagram(url, timeoutMs);
+    log.info(`[COSPLAY] vxinstagram: ${best.images.length} foto`);
+  } catch (err) {
+    lastError = err && err.message ? err.message : String(err);
+    log.warn('[COSPLAY] vxinstagram gagal, coba Jina:', lastError);
   }
 
+  // Fallback: Instagram hanya merender satu slide per URL. Jina membuka slide
+  // sesuai ?img_index=N, jadi probe semuanya sampai tidak ada foto baru.
   if (!best || !best.images.length) {
-    // Jina Reader sekarang sering menolak dengan 402 untuk Instagram. Pakai
-    // proxy publik vxinstagram sebagai jalur cadangan sebelum menyerah.
-    try {
-      best = await fetchViaVxinstagram(url, timeoutMs);
-      log.info(`[COSPLAY] fallback vxinstagram berhasil: ${best.images.length} foto`);
-    } catch (err) {
-      const fallbackError = err && err.message ? err.message : String(err);
-      lastError = lastError ? `${lastError} | fallback: ${fallbackError}` : fallbackError;
+    let prevSignature = '';
+    let emptyStreak = 0;
+    let repeatStreak = 0;
+    const maxProbes = MAX_IMAGES + 2;
+
+    for (let index = 1; index <= maxProbes; index++) {
+      try {
+        // Cache-busting: parameter tambahan hanya untuk Jina, bukan Instagram.
+        const probeUrl = `${JINA_BASE}${url}?img_index=${index}&_cb=${Date.now()}-${index}`;
+        const res = await fetchWithTimeout(
+          probeUrl,
+          { headers, redirect: 'follow' },
+          timeoutMs
+        );
+        if (!res.ok) throw new Error(`Jina Reader gagal (HTTP ${res.status})`);
+        const markdown = await res.text();
+        if (!markdown || markdown.length < 80) {
+          throw new Error('Instagram tidak mengembalikan konten');
+        }
+
+        const post = parsePost(markdown, url);
+        if (!post.images.length) {
+          lastError = 'Tidak ada foto carousel yang bisa diambil.';
+          emptyStreak += 1;
+          if (emptyStreak >= 2) break;
+          continue;
+        }
+        emptyStreak = 0;
+
+        let added = 0;
+        if (!best) {
+          best = post;
+          added = post.images.length;
+        } else {
+          const seen = new Set(best.images.map(imageId));
+          for (const image of post.images) {
+            if (seen.has(imageId(image))) continue;
+            seen.add(imageId(image));
+            best.images.push(image);
+            added += 1;
+          }
+          if (!best.caption) best.caption = post.caption;
+          if (!best.tags.length) best.tags = post.tags;
+          if (!best.author) best.author = post.author;
+          if (!best.username) best.username = post.username;
+        }
+
+        // Halaman index biasanya berisi slide saat ini + slide berikutnya.
+        // Jangan langsung berhenti saat signature sama: cache Jina bisa
+        // mengembalikan halaman lama, padahal slide berikutnya masih ada.
+        const signature = post.images.map(imageId).join('|');
+        if (best.images.length >= MAX_IMAGES) break;
+        if (added > 0) {
+          repeatStreak = 0;
+        } else if (signature && signature === prevSignature) {
+          repeatStreak += 1;
+          if (repeatStreak >= 3) break;
+        } else {
+          repeatStreak = 0;
+        }
+        prevSignature = signature;
+      } catch (err) {
+        lastError = err && err.message ? err.message : String(err);
+        emptyStreak += 1;
+        if (emptyStreak >= 2) break;
+      }
     }
   }
 

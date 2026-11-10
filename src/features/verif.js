@@ -41,6 +41,27 @@ function digitsOf(jid) {
   return onlyDigits(jidUser(jid));
 }
 
+/**
+ * Kunci pencocokan akun. VerifStore menyimpan nama tanpa "@", sedangkan
+ * TikTokAccounts menyimpannya dengan "@". Tanpa normalisasi ini akun yang
+ * sama bisa tampil dua kali (di pantauan dan di daftar "belum masuk pantauan").
+ */
+function accountKey(value) {
+  return normalizeAccount(value).toLowerCase();
+}
+
+function displayAccount(value) {
+  const acc = normalizeAccount(value);
+  return acc ? `@${acc}` : '-';
+}
+
+/** Nama grup yang enak dibaca; jangan tampilkan JID mentah ke user. */
+function displayGroup(entry) {
+  const name = String((entry && entry.gcName) || '').trim();
+  if (name && !/@g\.us$/i.test(name) && !/^\d{10,}$/.test(name)) return name;
+  return 'Grup WhatsApp';
+}
+
 /** Ambil JID WhatsApp peng-verif dari metadata pesan. */
 function senderLink(m) {
   const sender = bareJid(m.key.participant || m.key.remoteJid || '');
@@ -415,9 +436,9 @@ class VerifFeature {
   async handleListAccounts(m) {
     const list = this.accounts ? this.accounts.list() : [];
     const verified = new Map(
-      this.store.allAccounts().map((item) => [item.accName.toLowerCase(), item])
+      this.store.allAccounts().map((item) => [accountKey(item.accName), item])
     );
-    const seen = new Set(list.map((acc) => acc.toLowerCase()));
+    const seen = new Set(list.map((acc) => accountKey(acc)));
 
     const lines = [
       '📋 *Akun TikTok yang dipantau*',
@@ -432,15 +453,18 @@ class VerifFeature {
     }
 
     list.forEach((account, i) => {
-      const info = verified.get(account.toLowerCase());
+      const info = verified.get(accountKey(account));
       const status = info ? `terverif di ${info.groups} grup` : 'pantauan';
-      lines.push(`${i + 1}. ${account} — ${status}`);
+      lines.push(`${i + 1}. ${displayAccount(account)} — ${status}`);
     });
 
-    const extra = [...verified.values()].filter((item) => !seen.has(item.accName.toLowerCase()));
+    // Hanya tampilkan akun yang benar-benar belum ada di daftar pantauan.
+    const extra = [...verified.values()].filter((item) => !seen.has(accountKey(item.accName)));
     if (extra.length) {
-      lines.push('', 'Terverifikasi tapi belum masuk pantauan:');
-      for (const item of extra) lines.push(`• ${item.accName} — ${item.groups} grup`);
+      lines.push('', '⚠️ *Terverifikasi tapi belum masuk pantauan:*');
+      for (const item of extra) {
+        lines.push(`• ${displayAccount(item.accName)} — ${item.groups} grup`);
+      }
     }
 
     lines.push('');
@@ -477,10 +501,10 @@ class VerifFeature {
       return;
     }
 
-    const filter = normalizeAccount(rest).toLowerCase();
-    if (filter) entries = entries.filter((e) => e.accName.toLowerCase() === filter);
+    const filter = accountKey(rest);
+    if (filter) entries = entries.filter((e) => accountKey(e.accName) === filter);
     if (!entries.length) {
-      await this.reply(m, `❌ Akun *${normalizeAccount(rest)}* belum tertaut ke nomor kamu.`);
+      await this.reply(m, `❌ Akun *${displayAccount(rest)}* belum tertaut ke nomor kamu.`);
       return;
     }
 
@@ -488,46 +512,54 @@ class VerifFeature {
     const defaultCn = normalizeCn(this.cfg.tiktokCnKeyword || 'ECN');
     const today = this.store.todayVideos();
 
-    const lines = ['👤 *Profil TikTok kamu*', ''];
-    for (const entry of entries) {
+    const lines = ['👤 *PROFIL TIKTOK KAMU*', ''];
+    entries.forEach((entry, index) => {
       const acc = normalizeAccount(entry.accName);
       const hashtag = normalizeHashtag(entry.hashtag) || defaultHashtag;
       const cn = normalizeCn(entry.cnKeyword) || defaultCn;
-      const videos = today.filter(
-        (v) => normalizeAccount(v.username).toLowerCase() === acc.toLowerCase()
-      );
+      const videos = today.filter((v) => accountKey(v.username) === accountKey(acc));
       const latest = videos[0];
 
-      lines.push(`🎵 *@${acc}*`);
-      if (entry.userName) lines.push(`   Nama WA: ${entry.userName}`);
-      lines.push(`   Grup: ${entry.gcName || entry.gcId}`);
-      lines.push(`   Target: ${hashtag} • CN ${cn}`);
+      lines.push(`🎵 *${displayAccount(acc)}*`);
+      lines.push(`   👤 Nama WA : ${entry.userName || '-'}`);
+      lines.push(`   🏠 Grup    : ${displayGroup(entry)}`);
+      lines.push(`   🎯 Target  : ${hashtag} • CN ${cn}`);
+      if (entry.createdAt) {
+        lines.push(`   📅 Verif   : ${formatDate(entry.createdAt, this.timezone)}`);
+      }
 
       if (latest) {
         const hashtagOk = latest.hashtagStatus === 'Ada';
         const cnOk = latest.cnStatus === 'Cocok';
         lines.push(
-          `   UP hari ini: ${formatClock(latest.timestamp, this.timezone)} WIB • ${videos.length} video`
+          `   🕒 UP hari : ${formatClock(latest.timestamp, this.timezone)} WIB • ${videos.length} video`
         );
         lines.push(`   ${hashtagOk ? '✅' : '❎'} ${hashtag} ${hashtagOk ? 'ada' : 'belum ada'}`);
         lines.push(`   ${cnOk ? '✅' : '❎'} CN ${cn} ${cnOk ? 'cocok' : 'belum cocok'}`);
-        if (!hashtagOk) {
-          lines.push(`   ⚠️ Caption belum memakai ${hashtag}. Tambahkan supaya detector menandai ✅.`);
+
+        const notes = [];
+        if (!hashtagOk) notes.push(`caption belum memakai ${hashtag}`);
+        if (!cnOk) notes.push(`nama/bio belum memuat ${cn}`);
+        if (notes.length) lines.push(`   ⚠️ ${notes.join(' • ')}`);
+
+        const caption = String(latest.caption || '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (caption) {
+          lines.push(`   📝 ${caption.slice(0, 120)}${caption.length > 120 ? '…' : ''}`);
         }
-        if (!cnOk) {
-          lines.push(`   ⚠️ Nickname belum memuat ${cn}. Perbarui bio/nama supaya CN cocok.`);
-        }
-        lines.push(`   Caption: ${String(latest.caption || '-').slice(0, 140)}`);
-        lines.push(`   Link: ${latest.link || '-'}`);
+        if (latest.link) lines.push(`   🔗 ${latest.link}`);
       } else {
-        lines.push('   UP hari ini: belum ada');
+        lines.push('   🕒 UP hari : belum ada');
         lines.push(`   ${hashtag}: belum ada video untuk dicek`);
       }
-      lines.push('');
-    }
 
-    lines.push(`Total akun tertaut: ${entries.length}`);
-    lines.push('Hapus tautan: /unverif <nama_acc>');
+      if (index < entries.length - 1) lines.push('   ───────────────');
+      lines.push('');
+    });
+
+    lines.push(`📊 Total akun tertaut: ${entries.length}`);
+    lines.push('🗑️ Hapus tautan: /unverif <nama_acc>');
     await this.reply(m, lines.join('\n'));
   }
 
