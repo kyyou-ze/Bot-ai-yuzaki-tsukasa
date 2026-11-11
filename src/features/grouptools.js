@@ -522,6 +522,60 @@ class GroupTools {
     await this.reply(m, lines.join('\n'));
     return true;
   }
+
+  async handleTopActive(sock, m, rest, isOwner) {
+    const chat = m.key.remoteJid;
+    if (!isGroupJid(chat)) {
+      await this.reply(m, 'Top aktif hanya tersedia di grup.');
+      return true;
+    }
+
+    const parts = String(rest || '').trim().split(/\s+/).filter(Boolean);
+    const action = String(parts[0] || '').toLowerCase();
+    if (['reset', 'clear', 'hapus'].includes(action)) {
+      if (!isOwner) {
+        await this.reply(m, 'Reset top aktif hanya bisa dilakukan owner bot.');
+        return true;
+      }
+      await this.store.resetActivity(chat);
+      await this.reply(m, '🏆 Statistik top aktif grup ini sudah direset.');
+      return true;
+    }
+
+    let limit = parseInt(action, 10);
+    if (!Number.isFinite(limit) || limit <= 0) limit = 10;
+    limit = Math.max(3, Math.min(20, limit));
+
+    const top = this.store.getTopActivity(chat, limit);
+    if (!top.length) {
+      await this.reply(
+        m,
+        'Belum ada data top aktif. Statistik mulai tercatat setelah bot aktif dan anggota mengobrol.'
+      );
+      return true;
+    }
+
+    const total = this.store.totalActivity(chat);
+    const mentions = [];
+    const rows = top.map((row, index) => {
+      const name = row.name || memory.getUserName(row.jid) || jidUser(row.jid);
+      const mentionable = !/@lid$/i.test(row.jid);
+      if (mentionable) mentions.push(row.jid);
+      const label = mentionable ? `@${jidUser(row.jid)}` : `*${name}*`;
+      return `${index + 1}. ${label} — ${row.count} pesan`;
+    });
+
+    const text = [
+      `🏆 *Top ${top.length} Aktif*`,
+      `_Total ${total} pesan tercatat dari ${top.length} anggota teratas._`,
+      '',
+      ...rows,
+      '',
+      '_Statistik tersimpan dan tidak hilang saat bot restart._',
+    ].join('\n');
+    await wa.sendText(chat, text, m, mentions);
+    return true;
+  }
 }
 
 module.exports = {

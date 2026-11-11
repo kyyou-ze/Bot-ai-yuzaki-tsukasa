@@ -78,10 +78,14 @@ function isTransientWaError(tag, message) {
   if (/no session found to decrypt message/.test(text)) return true;
   if (
     /transaction failed, rolling back/.test(text) &&
-    /(decrypt|decryption|session|senderkey|sender key)/.test(text)
+    /(decrypt|decryption|session|senderkey|sender key|forbidden)/.test(text)
   ) {
     return true;
   }
+  // Media yang tidak membawa mediaKey (mis. pesan lama/sekali lihat yang sudah
+  // kedaluwarsa) tidak bisa diunduh. Ini bukan kegagalan bot, jadi cukup
+  // dicatat di log tanpa notifikasi ke owner.
+  if (/cannot derive from empty media key/.test(text)) return true;
 
   if (!/(timed out|timeout)/.test(text)) return false;
   return /unexpected error in '(init queries|presence update requests)'/.test(text);

@@ -13,6 +13,7 @@ const KNOWN_COMMANDS = new Set([
   'poll', 'voting',
   'rangkum', 'ringkas', 'summary',
   'statistik', 'stats', 'stat',
+  'topaktif', 'topactive', 'topchat',
   'anime', 'info', 'news', 'berita', 'cosplay',
   'animechannel', 'anime-channel',
   'peraturan', 'rules',

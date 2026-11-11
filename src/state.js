@@ -9,6 +9,10 @@ const WARN_LIMIT = 5;
 const WARN_RESET_MS = 7 * 24 * 60 * 60 * 1000;
 // Mode dewasa otomatis berakhir setelah 30 menit tanpa pemicu baru.
 const ADULT_TTL_MS = 30 * 60 * 1000;
+// Statistik top-aktif: simpan maksimal 90 hari dan 200 anggota per grup.
+const ACTIVITY_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+const ACTIVITY_MAX_PER_CHAT = 200;
+const ACTIVITY_SAVE_INTERVAL_MS = 30 * 1000;
 
 function normalizePersona(value) {
   const v = String(value || '').trim().toLowerCase();
@@ -39,6 +43,9 @@ class Store {
       // Waktu terakhir Tsukasa mengobrol per chat, dipakai untuk mendeteksi
       // user yang lama pergi (memicu ngambek manja).
       lastSeen: raw.lastSeen || {},
+      // Statistik anggota paling aktif per grup:
+      // { [chat]: { [sender]: { name, count, lastAt } } }.
+      activity: raw.activity || {},
       // Catatan waktu tidur Tsukasa: { bedtimeAt, debtMinutes, debtDate, updated }.
       sleep: raw.sleep || {},
       afk: raw.afk || {},
@@ -287,6 +294,71 @@ class Store {
       this._save().catch(() => {});
     }
     return prev;
+  }
+
+  // ---------- Statistik top-aktif ----------
+
+  recordActivity(chat, sender, name, now = Date.now()) {
+    const target = String(chat || '').trim();
+    const who = String(sender || '').trim();
+    if (!target || !who) return 0;
+    const at = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+    const bucket = this.data.activity[target] || {};
+    const row = bucket[who] || { name: '', count: 0, lastAt: 0 };
+    row.count = (Number(row.count) || 0) + 1;
+    row.lastAt = at;
+    const cleanName = String(name || '').trim().slice(0, 60);
+    if (cleanName) row.name = cleanName;
+    bucket[who] = row;
+    this.data.activity[target] = bucket;
+
+    // Hemat disk: tulis maksimal sekali per 30 detik, sekaligus rapikan data
+    // lama. Anggota yang tidak aktif 90 hari atau di luar top 200 dibuang.
+    if (!this._activitySaveAt || at - this._activitySaveAt >= ACTIVITY_SAVE_INTERVAL_MS) {
+      this._activitySaveAt = at;
+      const cutoff = at - ACTIVITY_RETENTION_MS;
+      for (const [gc, rows] of Object.entries(this.data.activity)) {
+        const entries = Object.entries(rows || {}).filter(
+          ([, value]) => Number(value && value.lastAt) >= cutoff
+        );
+        entries.sort((a, b) => (Number(b[1].count) || 0) - (Number(a[1].count) || 0));
+        this.data.activity[gc] = Object.fromEntries(entries.slice(0, ACTIVITY_MAX_PER_CHAT));
+      }
+      this._save().catch(() => {});
+    }
+    return row.count;
+  }
+
+  getTopActivity(chat, limit = 10) {
+    const target = String(chat || '').trim();
+    const rows = Object.entries(this.data.activity[target] || {});
+    const max = Math.max(1, Math.min(50, Number(limit) || 10));
+    return rows
+      .map(([jid, value]) => ({
+        jid,
+        name: String((value && value.name) || ''),
+        count: Number(value && value.count) || 0,
+        lastAt: Number(value && value.lastAt) || 0,
+      }))
+      .sort(
+        (a, b) =>
+          b.count - a.count ||
+          b.lastAt - a.lastAt ||
+          String(a.jid).localeCompare(String(b.jid))
+      )
+      .slice(0, max);
+  }
+
+  totalActivity(chat) {
+    const rows = Object.values(this.data.activity[String(chat || '').trim()] || {});
+    return rows.reduce((sum, row) => sum + (Number(row && row.count) || 0), 0);
+  }
+
+  resetActivity(chat) {
+    const target = String(chat || '').trim();
+    if (!target || !this.data.activity[target]) return Promise.resolve(false);
+    delete this.data.activity[target];
+    return this._save().then(() => true);
   }
 
   // ---------- Waktu tidur Tsukasa ----------

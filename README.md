@@ -690,10 +690,14 @@ Mengirim poll native WhatsApp (satu pilihan, maksimal 12 opsi). Jika poll gagal 
 !rangkum          # rangkum 40 pesan terakhir
 !rangkum 80       # rangkum 80 pesan terakhir (maks 100)
 !statistik        # jumlah pesan, anggota aktif, jam tersibuk, top 5
+!topaktif         # leaderboard anggota paling aktif (default top 10)
+!topaktif 20      # tampilkan top 20
+!topaktif reset   # reset statistik grup (khusus owner)
 ```
 
-- Bot menyimpan **metadata pesan di memori** (maksimal 150 pesan terakhir per chat) untuk fitur ini. Tidak ditulis ke disk dan hilang saat restart.
-- `!rangkum` mengirim transkrip ke Gemini; `!statistik` dihitung lokal tanpa AI.
+- Bot menyimpan **metadata pesan di memori** (maksimal 150 pesan terakhir per chat) untuk rangkuman & statistik sesi ini. Data ini hilang saat restart.
+- `!topaktif` memakai statistik **persisten** per grup (tanpa AI), tersimpan di state dan tidak hilang saat restart. Hanya obrolan biasa yang dihitung, bukan perintah.
+- `!rangkum` mengirim transkrip ke Gemini; `!statistik` dan `!topaktif` dihitung lokal tanpa AI.
 - Gunakan di grup yang memang memperbolehkan bot membaca percakapan.
 
 ### Moderasi & jadwal grup
@@ -854,5 +858,5 @@ Semua pengaturan di atas juga bisa diubah lewat chat:
 - **Sticker animasi gagal**: Pastikan `npm install` selesai (ffmpeg-static terpasang) atau set `FFMPEG_PATH`.
 - **Reconnecting terus**: Hapus isi folder sesi hanya jika benar-benar ingin pairing ulang (akan minta QR/kode baru).
 - **Pesan bot tertulis “Menunggu pesan ini…” di chat penerima**: Ini bukan teks bot, melainkan pesan WhatsApp yang gagal didekripsi. Bot memakai Baileys v7 (LID-native) dan tetap mengarahkan kiriman `@lid` ke nomor telepon asli bila pemetaannya tersedia (`data/lidmap.json`). Jika masih muncul, minta penerima mengirim pesan baru ke bot agar pemetaan LID→nomor terbentuk, lalu balas lagi. Setelah upgrade dari Baileys 6.7.x, jika sesi lama bermasalah, pairing ulang sekali (QR/kode) lalu kirim pesan baru.
-- **Log `No session found to decrypt message` / `transaction failed, rolling back`**: Ini race normal saat pesan grup tiba sebelum SenderKey dibagikan. WhatsApp otomatis mengirim ulang sesi/pesan, jadi tidak perlu tindakan. Sejak update ini error tersebut tidak lagi memicu notifikasi “Error Tsukasa” ke owner, tetapi tetap tercatat di log panel untuk diagnosis.
+- **Log `No session found to decrypt message` / `transaction failed, rolling back`**: Ini race normal saat pesan grup tiba sebelum SenderKey dibagikan, termasuk varian `forbidden`. WhatsApp otomatis mengirim ulang sesi/pesan, jadi tidak perlu tindakan. Error ini tidak lagi memicu notifikasi “Error Tsukasa” ke owner, tetapi tetap tercatat di log panel untuk diagnosis. Error unduh media seperti `Cannot derive from empty media key` (media sudah kedaluwarsa/tidak punya kunci) juga tidak lagi memicu notifikasi owner.
 - **HTTP API tidak bisa diakses**: Pastikan allocation/port benar, aplikasi listen `0.0.0.0`, dan firewall node mengizinkan port tersebut.

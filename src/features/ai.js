@@ -31,7 +31,7 @@ class VisionFeature {
         ? await wa.downloadQuoted(quoted, chat, sender)
         : await wa.downloadMedia({ key: m.key, message: content });
     } catch (err) {
-      log.error('[VISION] download error:', err.message);
+      log.warn('[VISION] download error:', err.message);
     }
     if (!blob) {
       await wa.sendText(chat, 'Maaf, gagal mengunduh gambar 😔', m).catch(() => {});
@@ -91,7 +91,7 @@ class VnFeature {
         ? await wa.downloadQuoted(quoted, chat, sender)
         : await wa.downloadMedia({ key: m.key, message: content });
     } catch (err) {
-      log.error('[VN] download error:', err.message);
+      log.warn('[VN] download error:', err.message);
     }
     if (!blob) {
       await wa.sendText(chat, 'Maaf, gagal mengambil voice note 😔', m).catch(() => {});
@@ -391,7 +391,7 @@ class HijabinFeature {
         ? await wa.downloadQuoted(quoted, chat, sender)
         : await wa.downloadMedia({ key: m.key, message: content });
     } catch (err) {
-      log.error('[HIJABIN] download error:', err.message);
+      log.warn('[HIJABIN] download error:', err.message);
     }
     if (!blob) {
       await wa.sendText(chat, 'Gagal mengunduh gambar 😔', m).catch(() => {});

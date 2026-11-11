@@ -426,6 +426,7 @@ class Router {
           '• .health / .ping / .status — status bot, uptime, RAM',
           '• .afk [alasan] — tandai AFK (.afk off untuk kembali)',
           '• .statistik — statistik aktivitas chat',
+          '• .topaktif [jumlah] — leaderboard anggota paling aktif di grup',
         ],
       },
       {
@@ -872,6 +873,15 @@ class Router {
     // Simpan metadata pesan di memori untuk fitur rangkuman & statistik.
     // Tidak ditulis ke disk dan tidak dipakai untuk membalas otomatis.
     this.groupTools.recordMessage(chat, sender, txt, { isCommand: Boolean(bang) });
+    // Statistik top-aktif persisten. Hitung obrolan biasa (bukan perintah)
+    // supaya leaderboard mencerminkan keaktifan chat, bukan spam command.
+    if (!bang && isGroupJid(chat)) {
+      this.store.recordActivity(
+        chat,
+        sender,
+        memory.getUserName(sender) || String(m.pushName || '').trim()
+      );
+    }
 
     if (bang) {
       if (AfkFeature.isCommand(bang.cmd)) {
@@ -1108,6 +1118,10 @@ class Router {
 
       if (bang.cmd === 'statistik' || bang.cmd === 'stats' || bang.cmd === 'stat') {
         if (await this.groupTools.handleStats(this.sock, m)) return;
+      }
+
+      if (bang.cmd === 'topaktif' || bang.cmd === 'topactive' || bang.cmd === 'topchat') {
+        if (await this.groupTools.handleTopActive(this.sock, m, bang.rest, isOwner)) return;
       }
 
       if (bang.cmd === 'anime') {

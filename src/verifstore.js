@@ -264,8 +264,13 @@ class VerifStore {
         targets.set(gcId, target);
       }
       // Untuk mention, nomor telepon lebih andal daripada JID @lid.
-      const jid = bareJid(e.userPn || e.userJid);
-      if (jid) target.users.set(jid, String(e.userName || '').trim());
+      // Penting: hanya tag peng-verif akun yang benar-benar cocok. Entri yang
+      // cocok lewat CN saja tetap menerima notifikasi, tetapi jangan ikut
+      // ditandai sebagai "UP oleh" karena bisa jadi akunnya berbeda.
+      if (byAccount) {
+        const jid = bareJid(e.userPn || e.userJid);
+        if (jid) target.users.set(jid, String(e.userName || '').trim());
+      }
     }
 
     return [...targets.values()].map((target) => ({
