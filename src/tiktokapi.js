@@ -2,6 +2,7 @@
 
 const log = require('./logger');
 const { fetchWithTimeout } = require('./util');
+const { fetchVideoInfoEmbed } = require('./tiktoklocal');
 
 // UA desktop dipakai semua request TikTok supaya tidak langsung dicurigai bot.
 const DESKTOP_UA =
@@ -446,6 +447,15 @@ async function fetchUserPostsApi(unique, cfg = {}) {
 }
 
 // ---------- provider info video (download) ----------
+async function infoLocal(cfg, link) {
+  if (cfg && cfg.tiktokLocalEnabled === false) return null;
+  return fetchVideoInfoEmbed(
+    link,
+    cfg,
+    (url, options, timeoutMs) => tiktokFetch(url, options, timeoutMs, cfg)
+  );
+}
+
 async function infoCustom(cfg, link) {
   const template = String((cfg && cfg.tiktokDlApiUrl) || '').trim();
   if (!template) return null;
@@ -533,6 +543,7 @@ async function fetchVideoInfoApi(link, cfg = {}) {
   // mati/TLS error; kalau ditaruh duluan, download jadi lambat 30 detik
   // sebelum akhirnya jatuh ke TikWM.
   const providers = [
+    ['local', infoLocal],
     ['custom', infoCustom],
     ['tikhub', infoTikHub],
     ['tiktok-api23', infoApi23],
@@ -543,6 +554,9 @@ async function fetchVideoInfoApi(link, cfg = {}) {
 
   const errors = [];
   let waf = false;
+  // Foto/carousel dari embed lokal hanya berisi cover pertama. Simpan sebagai
+  // cadangan terakhir supaya carousel lengkap dari provider lain tetap dicoba.
+  let partial = null;
 
   for (const [name, fn] of providers) {
     try {
@@ -551,12 +565,18 @@ async function fetchVideoInfoApi(link, cfg = {}) {
       if (!media.video && !media.images.length) {
         throw new Error(`${name}: tidak ada URL media di respons`);
       }
+      if (media.partial) {
+        if (!partial) partial = media;
+        continue;
+      }
       return media;
     } catch (err) {
       if (isWafError(err)) waf = true;
       errors.push(`${name}: ${err.message}`);
     }
   }
+
+  if (partial) return partial;
 
   const err = new Error(errors.join(' | ') || 'gagal mengambil media TikTok');
   err.waf = waf;

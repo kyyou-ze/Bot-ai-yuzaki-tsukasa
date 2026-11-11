@@ -263,6 +263,9 @@ class TikTokAdminFeature {
           '🎬 *Status Detector TikTok*',
           `Status: ${this.statusLine()} • ${list.length} akun`,
           `Interval: tiap ${Math.max(1, Number(this.cfg.tiktokCheckMin) || 3)} menit`,
+          `Scraper: ${health ? health.scraper : this.cfg.tiktokScraperMode || 'auto'} • lokal ${
+            (health ? health.localEnabled : this.cfg.tiktokLocalEnabled !== false) ? 'on' : 'off'
+          }`,
           `CN: ${this.cfg.tiktokCnKeyword || 'ECN'} • Hashtag: ${this.cfg.tiktokHashtag || '#margaecn'}`,
           `Grup notif: ${notifyJid ? `${notifyName || notifyJid}${isGroupJid(notifyJid) ? '' : ' (bukan grup)'}` : 'mengikuti grup verif'}`,
           `Sumber daftar: ${this.accounts && this.accounts.source() === 'file' ? this.accounts.file : '.env'}`,

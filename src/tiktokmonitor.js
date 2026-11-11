@@ -20,6 +20,7 @@ const {
   normalizeHashtag,
   formatClock,
 } = require('./verifstore');
+const { fetchProfileEmbed } = require('./tiktoklocal');
 
 const START_DELAY_MS = 15000;
 const ACCOUNT_DELAY_MIN_MS = 2000;
@@ -352,6 +353,25 @@ async function fetchUserVideos(account, cfg = {}) {
   const errors = [];
   let waf = false;
 
+  const localRequest = (url, options, timeoutMs) =>
+    tiktokFetch(url, options, timeoutMs, cfg);
+
+  // Jalur utama: scraper lokal di panel (embed creator, tanpa WAF/API key).
+  const tryLocal = async () => {
+    if (cfg.tiktokLocalEnabled === false) throw new Error('scraper lokal dimatikan');
+    const result = await fetchProfileEmbed(unique, cfg, localRequest);
+    const videos = normalizeList(result.items, unique);
+    // Profil valid tanpa video: kembalikan kosong, jangan lanjut ke sumber
+    // lain yang justru bisa memicu WAF.
+    if (!videos.length && !result.items.length) return [];
+    if (!videos.length) throw new Error('scraper lokal: 0 video');
+    log.debug(
+      `[TIKTOK] lokal @${unique}: ${videos.length} video` +
+        (result.profile.nickname ? ` (${result.profile.nickname})` : '')
+    );
+    return videos;
+  };
+
   const tryApi = async () => {
     const { items } = await fetchUserPostsApi(unique, cfg);
     const videos = normalizeList(items, unique);
@@ -363,12 +383,14 @@ async function fetchUserVideos(account, cfg = {}) {
   const tryJina = () => fetchProfileJina(unique, cfg);
   const tryHtml = () => fetchProfileHtml(unique, cfg);
 
-  // Kalau user punya API key/endpoint sendiri, coba itu dulu. Kalau tidak,
-  // Jina Reader lebih aman daripada menembak TikTok/TikWM yang kena WAF.
+  // Mode "auto" (default): lokal dulu, lalu cadangan yang dikonfigurasi.
+  // Mode "local": wajib lokal. Mode "api": langsung API/Jina seperti dulu.
+  const mode = String(cfg.tiktokScraperMode || 'auto').toLowerCase();
   const steps = [];
+  if (mode !== 'api') steps.push(['Local', tryLocal]);
   if (hasConfiguredPostsApi(cfg)) steps.push(['API', tryApi]);
-  steps.push(['Jina', tryJina]);
-  if (!hasConfiguredPostsApi(cfg)) steps.push(['API', tryApi]);
+  if (mode !== 'local') steps.push(['Jina', tryJina]);
+  if (mode !== 'local' && !hasConfiguredPostsApi(cfg)) steps.push(['API', tryApi]);
   steps.push(['HTML', tryHtml]);
 
   for (const [name, fn] of steps) {
@@ -478,6 +500,8 @@ class TikTokMonitor {
   health() {
     return {
       enabled: this.isEnabled(),
+      scraper: this.cfg.tiktokScraperMode || 'auto',
+      localEnabled: this.cfg.tiktokLocalEnabled !== false,
       lastCheckAt: this.lastCheckAt,
       lastOkAt: this.lastOkAt,
       lastError: this.lastError,
@@ -559,7 +583,8 @@ class TikTokMonitor {
     log.info(
       `[TIKTOK] Detector aktif | ${accounts.length} akun | interval ${Math.round(
         this.intervalMs / 60000
-      )} menit | ${accounts.join(', ')}`
+      )} menit | scraper ${this.cfg.tiktokScraperMode || 'auto'}` +
+        `${this.cfg.tiktokLocalEnabled === false ? ' (lokal off)' : ' (lokal on)'} | ${accounts.join(', ')}`
     );
     this.startTimer = setTimeout(() => {
       this.startTimer = null;

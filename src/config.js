@@ -130,6 +130,14 @@ function load() {
     // {count}, mis. https://api.example.com/tiktok/user/{username}?count={count}
     tiktokApiUrl: getenv('TIKTOK_API_URL', ''),
     tiktokApiKey: getenv('TIKTOK_API_KEY', ''),
+    // Scraper lokal (berjalan di panel, tanpa API key): membaca halaman
+    // embed TikTok yang tidak terkena WAF. Mode: auto | local | api.
+    tiktokScraperMode: String(getenv('TIKTOK_SCRAPER_MODE', 'auto') || 'auto')
+      .trim()
+      .toLowerCase(),
+    tiktokLocalEnabled: boolEnv(getenv('TIKTOK_LOCAL_ENABLED', 'true'), true),
+    tiktokLocalTimeoutMs:
+      Math.max(5, intEnv(getenv('TIKTOK_LOCAL_TIMEOUT_SEC', '30'), 30)) * 1000,
     // Endpoint download video/foto sendiri (placeholder {url}).
     tiktokDlApiUrl: getenv('TIKTOK_DL_API_URL', ''),
     tiktokDlApiKey: getenv('TIKTOK_DL_API_KEY', ''),

@@ -33,7 +33,7 @@ const llm = require('./llm');
 const emotion = require('./emotion');
 const memory = require('./memory');
 const wa = require('./wa');
-const { isGroupJid, jidUser, formatDateTime } = require('./util');
+const { isGroupJid, jidUser, formatDateTime, splitChatBubbles } = require('./util');
 const { shortError } = require('./logfmt');
 const { isHotCue, isStopCue } = require('./adultmode');
 const {
@@ -1651,12 +1651,22 @@ class Router {
     }
 
     const reply = String(aiParsed.text || '').trim();
+    // AI boleh memecah balasan menjadi beberapa bubble dengan tag [[next]],
+    // supaya terasa seperti orang chatting. Simpan riwayat sebagai satu turn.
+    const bubbles = splitChatBubbles(reply, 4);
     memory.saveTurn(chat, 'user', txt, senderName);
-    if (reply) memory.saveTurn(chat, 'assistant', reply);
+    if (bubbles.length) memory.saveTurn(chat, 'assistant', bubbles.join('\n'));
 
-    if (reply) {
-      const out = this.owner.decorate(isOwner, reply);
-      await wa.sendText(chat, out.text, m, out.mentions);
+    for (let i = 0; i < bubbles.length; i += 1) {
+      const first = i === 0;
+      const out = first
+        ? this.owner.decorate(isOwner, bubbles[i])
+        : { text: bubbles[i], mentions: [] };
+      await wa.sendText(chat, out.text, first ? m : undefined, out.mentions);
+      // Jeda kecil antarbubble agar terasa natural, bukan spam.
+      if (i < bubbles.length - 1) {
+        await new Promise((r) => setTimeout(r, 350 + Math.min(700, bubbles[i].length * 12)));
+      }
     }
     await this.aiTools.run(chat, m, aiParsed.actions, txt);
   }
@@ -1675,7 +1685,15 @@ class Router {
     const timeCtx = emotion.timeContext(now, timezone, sleep);
 
     const prev = this.store.getEmotion(chat);
-    const detected = emotion.detect(text, { isOwner: Boolean(isOwner) });
+    // Sentuhan waktu dipakai untuk mendeteksi user yang lama pergi.
+    const lastSeen = this.store.touchSeen(chat, now);
+    const awayMinutes = lastSeen ? (now - lastSeen) / 60000 : 0;
+    const detected = emotion.detect(text, {
+      isOwner: Boolean(isOwner),
+      previousMood: prev.mood,
+      previousIntensity: prev.intensity,
+      awayMinutes,
+    });
 
     // Kalau sedang kurang tidur dan tidak ada emosi kuat dari obrolan, rasa
     // ngantuk/lelah otomatis muncul di chat mana pun.

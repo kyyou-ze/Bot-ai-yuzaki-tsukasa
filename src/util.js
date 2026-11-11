@@ -320,6 +320,29 @@ function randomPick(arr) {
   return arr[crypto.randomInt(arr.length)];
 }
 
+/**
+ * Pecah balasan AI menjadi beberapa bubble chat. AI menandai jeda bubble
+ * dengan tag [[next]]. Kelebihan bubble digabung ke bubble terakhir supaya
+ * bot tidak membanjiri chat.
+ */
+function splitChatBubbles(text, maxBubbles = 4) {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+  const limit = Math.max(1, Math.min(6, Number(maxBubbles) || 4));
+  const parts = raw
+    .split(/\[\[\s*next\s*\]\]/gi)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (!parts.length) return [];
+
+  const bubbles = [];
+  for (const part of parts) {
+    if (bubbles.length < limit) bubbles.push(part);
+    else bubbles[bubbles.length - 1] += `\n${part}`;
+  }
+  return bubbles;
+}
+
 module.exports = {
   UA,
   sleep,
@@ -347,4 +370,5 @@ module.exports = {
   publicPath,
   fileExists,
   randomPick,
+  splitChatBubbles,
 };

@@ -638,6 +638,38 @@ const DEFS = [
     },
   },
   {
+    key: 'TIKTOK_SCRAPER_MODE',
+    group: 'tiktok',
+    label: 'Mode scraper TikTok (auto/local/api)',
+    type: 'string',
+    default: 'auto',
+    apply: (cfg, v) => {
+      cfg.tiktokScraperMode = String(v || 'auto').trim().toLowerCase();
+    },
+  },
+  {
+    key: 'TIKTOK_LOCAL_ENABLED',
+    group: 'tiktok',
+    label: 'Aktifkan scraper lokal (embed, tanpa WAF)',
+    type: 'bool',
+    default: true,
+    apply: (cfg, v) => {
+      cfg.tiktokLocalEnabled = v;
+    },
+  },
+  {
+    key: 'TIKTOK_LOCAL_TIMEOUT_SEC',
+    group: 'tiktok',
+    label: 'Timeout scraper lokal (detik)',
+    type: 'int',
+    min: 5,
+    max: 120,
+    default: 30,
+    apply: (cfg, v) => {
+      cfg.tiktokLocalTimeoutMs = v * 1000;
+    },
+  },
+  {
     key: 'TIKTOK_CN_KEYWORD',
     group: 'tiktok',
     label: 'Keyword CN pada bio',

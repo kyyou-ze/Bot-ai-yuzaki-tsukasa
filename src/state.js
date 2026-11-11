@@ -36,6 +36,9 @@ class Store {
       groupFeatures: raw.groupFeatures || {},
       // Suasana hati Tsukasa per chat: { [chat]: { mood, intensity, reason, updated } }.
       emotions: raw.emotions || {},
+      // Waktu terakhir Tsukasa mengobrol per chat, dipakai untuk mendeteksi
+      // user yang lama pergi (memicu ngambek manja).
+      lastSeen: raw.lastSeen || {},
       // Catatan waktu tidur Tsukasa: { bedtimeAt, debtMinutes, debtDate, updated }.
       sleep: raw.sleep || {},
       afk: raw.afk || {},
@@ -263,6 +266,27 @@ class Store {
     if (!target || !this.data.emotions[target]) return Promise.resolve(false);
     delete this.data.emotions[target];
     return this._save().then(() => true);
+  }
+
+  /**
+   * Catat waktu terakhir chat dan kembalikan waktu sebelumnya. Penulisan disk
+   * dibatasi sekali per menit supaya tidak menambah beban di setiap pesan.
+   */
+  touchSeen(chat, now = Date.now()) {
+    const target = String(chat || '').trim();
+    if (!target) return 0;
+    const at = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+    const prev = Number(this.data.lastSeen[target]) || 0;
+    this.data.lastSeen[target] = at;
+    if (!this._lastSeenSaveAt || at - this._lastSeenSaveAt >= 60 * 1000) {
+      this._lastSeenSaveAt = at;
+      const cutoff = at - 7 * 24 * 60 * 60 * 1000;
+      for (const [key, value] of Object.entries(this.data.lastSeen)) {
+        if (Number(value) < cutoff) delete this.data.lastSeen[key];
+      }
+      this._save().catch(() => {});
+    }
+    return prev;
   }
 
   // ---------- Waktu tidur Tsukasa ----------

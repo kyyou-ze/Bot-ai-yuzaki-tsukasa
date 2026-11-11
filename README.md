@@ -7,8 +7,10 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 ## Fitur Utama
 
 - **Chat AI berkarakter Tsukasa** — Mode `MANUAL` (butuh trigger `tsukasa`) atau `AUTO`. Persona `tsukasa1`/`tsukasa2` bisa diubah per chat (`!tsukasa persona ...`). Mode Pro bisa diaktifkan per chat. Tsukasa hanya bersikap istimewa (romantis/manja) kepada owner; user lain diperlakukan sebagai orang biasa dan dipanggil sesuai nama mereka (nama tersimpan atau pushName WhatsApp), bukan "Kyouu".
+- **Gaya chat manusiawi** — Balasan normal dibuat pendek (idealnya di bawah 10 kata per bubble). AI bisa memecah balasannya menjadi beberapa bubble seperti orang chatting dengan menandai jeda memakai `[[next]]` (maksimal 4 bubble), lalu bot mengirimnya berurutan dengan jeda natural. Jawaban panjang hanya muncul saat user meminta detail.
+- **Kepribadian lengkap** — Hangat, kalem, perhatian, polos, playful, setia, penyayang, tegas menjaga batas, dan punya sisi manja khusus owner. Tsukasa juga bisa ngambek, cemburu halus, malu, bangga, sedih, kesal, kaget, takut, bingung, prihatin, ngantuk, lelah, dan kangen. Emosinya punya sisa rasa dan tidak selalu langsung pulih.
 - **Mode Dewasa (owner-only)** — Di chat pribadi, jika owner memulai obrolan hot/flirty, bot otomatis mengikuti (18+, sugestif) selama 30 menit. Kirim `stop` untuk kembali normal.
-- **Emosi otomatis** — Tsukasa punya suasana hati yang berubah dari obrolan: senang, sedih, marah, kesal, malu, kaget, takut, cemburu, bangga, bingung, prihatin, ngantuk, lelah, dan manja (khusus owner). Emosi memudar setelah ±20 menit dan **tidak mengirim pemberitahuan apa pun** ke chat.
+- **Emosi otomatis** — Suasana hati berubah dari obrolan dan memudar setelah ±20 menit. Ngambek bisa muncul saat user lama pergi (`≥45 menit`), terkesan cuek, atau membandingkan Tsukasa dengan orang lain. Ngambek yang masih kuat kadang belum reda walau sudah dimaafkan singkat; butuh bujukan yang tulus, tapi tidak pernah kasar atau berlarut-larut. Tidak ada pemberitahuan fitur ke chat.
 - **Sadar waktu (publik)** — Tsukasa menyesuaikan diri dengan jam lokal di semua chat: pagi lebih segar, siang/sore lebih santai, malam lebih akrab, dan larut malam mengantuk. Jika diajak begadang sampai malam, keesokan harinya ia bisa mengeluh kurang tidur dan terlihat lelah. Tidak ada notifikasi fitur; ini murni bagian dari perilakunya.
 - **Vision** — Kirim/reply gambar + sebut `tsukasa` untuk dianalisis Gemini.
 - **VN → Teks → Auto-reply** — VN langsung akan ditranskrip & dibalas. VN hasil _quote_ hanya diproses jika menyebut `tsukasa`.
@@ -21,8 +23,8 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Sticker Transform & Emoji Mix** — `.emojimix 😀 😍` (gabung dua emoji ala Emoji Kitchen), `.flip`/`.flipv`/`.rotate <derajat>`, `.grayscale`/`.invert`/`.blur`, `.crop`, dan `.resize <px>`. Bisa dipakai pada sticker langsung maupun sticker/gambar yang di-reply.
 - **AI Tool Calling** — Saat mengobrol, AI bisa memilih aksi sendiri: mengirim sticker sesuai mood, memberi reaksi emoji, membuat gambar, membuat pengingat, atau mencari info terbaru di web. Contoh: AI membalas "wkwk" lalu mengirim sticker `lucu`.
 - **Blue Archive & Pap** — `ba` / `!ba` atau kata kunci terkait, `!pap` / `pap`.
-- **TikTok (multi-API + fallback)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Sumber TikWM otomatis dialihkan ke TikHub/tiktok-api23/Ensig bila kena WAF. Batas ukuran bisa dikonfigurasi.
-- **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 3 menit, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Akun hasil `/verif` otomatis masuk pantauan; kelola lewat `/addakun`, `/delakun`, `/listakun`, `/detector`. Command verif: `/verif`, `/listverif`, `/unverif`, `/me`, `/siapaup`, `/cekup`, `/history` (tanpa argumen menampilkan semua akun; juga bisa `Tsukasa ...` atau `.verif`).
+- **TikTok (scraper lokal + multi-API)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Scraper lokal membaca halaman embed TikTok langsung dari panel (tanpa WAF/API key); TikWM/TikHub/tiktok-api23/Ensig dipakai sebagai cadangan bila perlu. Batas ukuran bisa dikonfigurasi.
+- **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 3 menit, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Sumber utama scraper lokal (embed) sehingga tidak mudah kena WAF. Akun hasil `/verif` otomatis masuk pantauan; kelola lewat `/addakun`, `/delakun`, `/listakun`, `/detector`. Command verif: `/verif`, `/listverif`, `/unverif`, `/me`, `/siapaup`, `/cekup`, `/history` (tanpa argumen menampilkan semua akun; juga bisa `Tsukasa ...` atau `.verif`).
 - **CN TikTok** — `.cn <nama>` menampilkan tiga contoh CN siap pakai dengan nama memakai huruf bold Unicode (tanpa tanda bintang saat disalin): `` `𝙀𝘾𝙉᭄ ``, `ft 𝙀𝘾𝙉`, dan `〆𝙀𝘾𝙉`. Keyword mengikuti `TIKTOK_CN_KEYWORD`.
 - **Reply & Tag Status** — Di chat pribadi bot tetap membalas walaupun pesanmu adalah reply/quote. Di grup, reply ke pesan bot juga diproses tanpa trigger. Tag status WhatsApp yang menyebut bot terdeteksi dan dibalas di chat terkait.
 - **AnimeKita** — `!anime ...` (new/movie/schedule/list/genre/search/detail/episode/roulette). Episode dengan link Pixeldrain bisa diunduh otomatis.
@@ -111,6 +113,9 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `TIKTOK_NOTIFY_JID` | - | JID grup tujuan notifikasi tambahan (bisa diubah dari WhatsApp lewat `/detector setgc`) |
 | `TIKTOK_API_URL` | - | Endpoint scraper sendiri dengan placeholder `{username}` & `{count}` (opsional) |
 | `TIKTOK_API_KEY` | - | API key untuk `TIKTOK_API_URL` (opsional) |
+| `TIKTOK_SCRAPER_MODE` | `auto` | `auto` = scraper lokal dulu lalu fallback; `local` = hanya lokal; `api` = hanya API/Jina |
+| `TIKTOK_LOCAL_ENABLED` | `true` | Aktifkan scraper TikTok lokal (embed creator, tanpa WAF/API key) |
+| `TIKTOK_LOCAL_TIMEOUT_SEC` | `30` | Timeout request scraper lokal (detik) |
 | `TIKTOK_DL_API_URL` / `TIKTOK_DL_API_KEY` | - | Endpoint download media sendiri, placeholder `{url}` (opsional) |
 | `TIKHUB_API_KEY` | - | Key TikHub sebagai sumber cadangan anti-WAF (opsional) |
 | `TIKTOK_API23_KEY` / `TIKTOK_API23_HOST` | - | Key & host RapidAPI tiktok-api23 (opsional, fallback `RAPIDAPI_KEY`) |
@@ -578,7 +583,15 @@ AI_TOOLS_SEARCH=true
 
 ## Detector TikTok & Verif ACC
 
-Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTOK_CHECK_MIN` menit. Akun dicek satu per satu dengan jeda acak 2-5 detik. Sumber data memakai rantai fallback anti-WAF: endpoint custom/TikHub/tiktok-api23/Ensig (kalau diisi) → Jina Reader (membaca halaman profil dari server Jina, jadi IP bot tidak langsung diblokir) → TikWM → scraping profil langsung. Kalau semua sumber kena 403/WAF, bot berhenti selama `TIKTOK_WAF_COOLDOWN_MIN` menit dan hanya menulis satu log `[TIKTOK] WAF block, retry 10 menit`. Untuk tiap video baru, bot mengecek:
+Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTOK_CHECK_MIN` menit. Akun dicek satu per satu dengan jeda acak 2-5 detik.
+
+**Scraper lokal (utama).** Bot membaca `https://www.tiktok.com/embed/@username` langsung dari server panel. Halaman embed ini di-render oleh TikTok dan berisi JSON lengkap (nickname, bio, caption, cover, URL video), jadi **tidak terkena WAF**, tidak butuh API key, dan tidak butuh signature. Ini membuat detector tetap jalan walau halaman profil biasa diblokir. Atur lewat `TIKTOK_SCRAPER_MODE`:
+
+- `auto` (default): scraper lokal dulu; kalau gagal, lanjut ke API/Jina yang dikonfigurasi.
+- `local`: hanya scraper lokal (paling hemat kuota, tanpa request ke layanan luar).
+- `api`: lewati scraper lokal dan pakai rantai API/Jina seperti konfigurasi lama.
+
+Cadangan bila scraper lokal gagal: endpoint custom/TikHub/tiktok-api23/Ensig (kalau diisi) → Jina Reader → TikWM → scraping profil langsung. Kalau semua sumber kena 403/WAF, bot berhenti selama `TIKTOK_WAF_COOLDOWN_MIN` menit dan hanya menulis satu log `[TIKTOK] WAF block, retry 10 menit`. Untuk tiap video baru, bot mengecek:
 
 - Caption mengandung hashtag `TIKTOK_HASHTAG` (default `#margaecn`, case-insensitive).
 - Nickname/display name akun mengandung `TIKTOK_CN_KEYWORD` (default `ECN`). Huruf Unicode seperti `𝙀𝘾𝙉`, `〆𝙀𝘾𝙉`, dan `ft 𝙀𝘾𝙉` otomatis dinormalisasi jadi `ECN` sebelum dicocokkan.

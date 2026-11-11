@@ -40,6 +40,11 @@ const MOODS = {
     guidance:
       'Kamu sedikit terganggu. Jawaban lebih datar dan singkat, boleh menyindir halus, tetapi jangan meledak-ledak.',
   },
+  ngambek: {
+    label: 'ngambek',
+    guidance:
+      'Kamu sedang ngambek manja: cemberut lucu, jawaban agak pendek dan dingin-dingin gemas, kadang bilang "hmph" atau menggoda bahwa kamu dicuekin. Tetap bantu user dan jangan kasar, menghina, atau mengancam. Kalau ngambekmu masih kuat, kamu boleh belum mau dibujuk walau user sudah minta maaf singkat; butuh bujukan yang tulus. Setelah itu reda dengan sendirinya, jangan berlarut-larut.',
+  },
   malu: {
     label: 'malu',
     guidance:
@@ -97,6 +102,27 @@ const MOOD_KEYS = Object.keys(MOODS);
 const FIRST_PERSON_DISTRESS =
   /\b(aku|saya|gue|gua|gw)\b[^.!?\n]{0,30}\b(sedih|nangis|menangis|kecewa|patah hati|galau|kesepian|sendiri|takut|cemas|overwhelm|lelah|capek|gagal|hancur|putus asa)\b/i;
 const APOLOGY = /\b(maaf|maafin|sorry|sori|minta maaf)\b/i;
+const AFFECTION = /\b(kangen|rindu|sayang|peluk|pelukan|cium|manja|perhatian|bujuk|bujukin|gemes)\b/i;
+// Pemicu ngambek: merasa dicuekin/ditinggal, atau user membandingkan dengan
+// orang lain. Sengaja dipisah dari cemburu supaya "cemburu" tetap spesifik.
+const NGAMBEK_CUE = new RegExp(
+  [
+    '\\b(?:ngambek|ngambeg|merajuk|cemberut|diemin|didiemin|cuek(?:in)?)\\b',
+    '\\b(?:gak|ga|nggak|tidak)\\s+(?:bales|dibales|balas|dibalas|nyapa|nyamperin|kabar)\\b',
+    '\\blama(?:\\s+\\w+){0,2}\\s+(?:gak|ga|nggak|tidak)\\s+(?:chat|balas|bales|nyapa|nyamperin|kabar)\\b',
+    '\\bbaru\\s+(?:balas|bales|chat|nyapa)\\b',
+    '\\b(?:ditinggal(?:in)?|tinggalin|pergi lama|jarang chat)\\b',
+    '\\b(?:kemana|ke mana|darimana|dari mana)\\s+aja\\b',
+  ].join('|'),
+  'i'
+);
+const NGAMBEK_COMPARE =
+  /\b(mending sama|lebih (?:baik|sayang|perhatian|care)|orang lain|cewek lain|cowok lain|mantan|gebetan|sibuk sama|main sama)\b/i;
+// Bujukan yang tulus lebih cepat melunakkan ngambek daripada sekadar "maaf".
+const COAX_STRONG =
+  /\b(beneran|sungguh|serius|aku salah|aku yang salah|janji|gak ngulang|ga ngulang|nggak ngulang|maafin aku|minta maaf|sorry banget|sori banget|peluk|sayang|kangen)\b/i;
+// Lama tidak mengobrol lalu muncul lagi: Tsukasa ngambek manja karena ditinggal.
+const NGAMBEK_AWAY_MIN = 45;
 const DIRECT_INSULT =
   /\b(kamu|kau|lu|lo)\b[^.!?\n]{0,25}\b(bodoh|bego|goblok|tolol|dongo|idiot|anjing|bangsat|brengsek|jelek|gak guna|tidak berguna|sampah)\b/i;
 
@@ -140,8 +166,18 @@ const RULES = [
   },
   {
     mood: 'cemburu',
-    weight: 0.85,
+    weight: 0.95,
     re: /\b(cemburu|sirik|sama siapa|siapa lagi|jangan sama dia|selingkuh)\b/gi,
+  },
+  {
+    mood: 'ngambek',
+    weight: 0.9,
+    re: NGAMBEK_CUE,
+  },
+  {
+    mood: 'ngambek',
+    weight: 0.82,
+    re: NGAMBEK_COMPARE,
   },
   {
     mood: 'bangga',
@@ -214,6 +250,13 @@ function detect(text, options = {}) {
   const raw = String(text || '').trim();
   if (!raw) return null;
   const isOwner = Boolean(options.isOwner);
+  const previousMood = normalizeMood(options.previousMood);
+  const wasSulking = previousMood === 'ngambek';
+  const awayMinutes = Math.max(0, Number(options.awayMinutes) || 0);
+  const previousIntensity = Math.max(
+    0,
+    Math.min(1, Number(options.previousIntensity) || 0)
+  );
 
   if (DIRECT_INSULT.test(raw)) {
     return { mood: 'marah', intensity: 0.9, reason: 'user berkata kasar kepadamu' };
@@ -221,7 +264,38 @@ function detect(text, options = {}) {
   if (FIRST_PERSON_DISTRESS.test(raw)) {
     return { mood: 'prihatin', intensity: 0.85, reason: 'user sedang tidak baik-baik saja' };
   }
-  if (APOLOGY.test(raw)) {
+
+  const isApology = APOLOGY.test(raw);
+  const isAffection = AFFECTION.test(raw);
+
+  // Saat sedang ngambek, bujukan tidak selalu langsung berhasil. Ngambek yang
+  // masih kuat bisa bertahan walau user sudah minta maaf; butuh bujukan yang
+  // lebih tulus atau beberapa kali percobaan agar reda.
+  if (wasSulking && (isApology || isAffection)) {
+    let coax = 0.28;
+    if (isApology) coax += 0.2;
+    if (isAffection) coax += 0.18;
+    if (COAX_STRONG.test(raw)) coax += 0.15;
+    if (raw.length >= 24) coax += 0.08;
+    coax += Math.min(0.12, countMatches(raw, AFFECTION) * 0.04);
+
+    const required = previousIntensity <= 0.42 ? 0.4 : 0.35 + previousIntensity * 0.55;
+    if (coax >= required) {
+      return {
+        mood: 'netral',
+        intensity: 0.18,
+        reason: 'user membujuk dengan tulus, ngambekmu reda',
+      };
+    }
+    return {
+      mood: 'ngambek',
+      intensity: Math.max(0.3, previousIntensity - Math.max(0.08, coax * 0.35)),
+      reason: 'kamu masih ngambek dan belum sepenuhnya mau dibujuk',
+      soften: true,
+    };
+  }
+
+  if (isApology) {
     return { mood: 'netral', intensity: 0.4, reason: 'user meminta maaf' };
   }
 
@@ -235,13 +309,24 @@ function detect(text, options = {}) {
       best = { mood: rule.mood, score };
     }
   }
-  if (!best) return null;
+  if (best) {
+    return {
+      mood: best.mood,
+      intensity: Math.min(1, 0.45 + best.score * 0.4),
+      reason: `dipicu oleh percakapan terakhir`,
+    };
+  }
 
-  return {
-    mood: best.mood,
-    intensity: Math.min(1, 0.45 + best.score * 0.4),
-    reason: `dipicu oleh percakapan terakhir`,
-  };
+  // Setelah lama tidak mengobrol, Tsukasa ngambek manja karena merasa
+  // ditinggal. Ini hanya muncul kalau tidak ada emosi lain yang lebih kuat.
+  if (awayMinutes >= NGAMBEK_AWAY_MIN) {
+    return {
+      mood: 'ngambek',
+      intensity: Math.min(0.85, 0.5 + awayMinutes / 600),
+      reason: 'kamu lama tidak menyapa, Tsukasa ngambek manja',
+    };
+  }
+  return null;
 }
 
 /**
@@ -254,7 +339,9 @@ function merge(previous, detected, now) {
   if (!detected) return { ...prev, updated: prev.updated || at };
   const same = prev.mood === detected.mood;
   const intensity = same
-    ? Math.min(1, Math.max(prev.intensity, detected.intensity) + 0.12)
+    ? detected.soften
+      ? Math.max(MIN_INTENSITY, Number(detected.intensity) || prev.intensity)
+      : Math.min(1, Math.max(prev.intensity, detected.intensity) + 0.12)
     : Math.max(MIN_INTENSITY, detected.intensity);
   return {
     mood: normalizeMood(detected.mood),
