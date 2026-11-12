@@ -50,6 +50,7 @@ const {
   normalizeCommand,
   stripLeadingTrigger,
 } = require('./commandparser');
+const kaguya = require('./kaguya');
 
 const RE_REPLY_CUE = /\b(balas(in|lah)?|reply|jawab(in|lah)?)(\s+ini)?\b/i;
 
@@ -233,6 +234,7 @@ class Router {
     this.guard = groupGuard || new GroupGuard(cfg, store);
     this.heavyLimiter = new RateLimiter({ maxEntries: 2000 });
     this.statusMentionSeen = new Set();
+    kaguya.configure(cfg);
   }
 
   botJids() {
@@ -407,7 +409,7 @@ class Router {
 
     const sections = [
       {
-        title: '🤖 *AI — Fitur Utama*',
+        title: '*AI — Fitur Utama*',
         feature: 'ai',
         lines: [
           '• tsukasa <tanya> — ngobrol natural; AI bisa kirim sticker, reaksi, gambar, pengingat, cari web',
@@ -419,7 +421,7 @@ class Router {
         ],
       },
       {
-        title: '💬 *Umum*',
+        title: '*Umum*',
         lines: [
           '• .help / .menu — menu ini',
           '• .whoami — lihat JID kamu',
@@ -432,7 +434,7 @@ class Router {
         ],
       },
       {
-        title: '🎨 *Sticker & Quote*',
+        title: '*Sticker & Quote*',
         lines: [
           '• .stiker / .s — gambar/video/URL jadi sticker',
           '• .sgif — sticker animasi (GIF/video)',
@@ -453,7 +455,7 @@ class Router {
         ],
       },
       {
-        title: '🖼️ *Media & Anime*',
+        title: '*Media & Anime*',
         lines: [
           '• .rvo — buka media sekali lihat (reply)',
           '• .ba — gambar Blue Archive',
@@ -466,7 +468,7 @@ class Router {
         ],
       },
       {
-        title: '✅ *Verif TikTok & CN*',
+        title: '*Verif TikTok & CN*',
         lines: [
           '• .cn <nama> — contoh CN TikTok (3 gaya)',
           '• .verif <acc> — verif ACC TikTok dan tautkan nomor WA kamu',
@@ -485,7 +487,7 @@ class Router {
         ],
       },
       {
-        title: '🛠️ *Admin Grup*',
+        title: '*Admin Grup*',
         lines: [
           '• .fitur on|off <nama> — aktif/nonaktifkan fitur di grup ini',
           '• .fitur status — daftar fitur aktif/nonaktif',
@@ -505,7 +507,7 @@ class Router {
 
     if (isOwner) {
       sections.push({
-        title: '🔧 *Owner*',
+        title: '*Owner*',
         lines: [
           '• .config / .set <KEY> <nilai> — ubah pengaturan lewat chat',
           '• .update status|check|now|auto on|off — auto-update & restart',
@@ -521,7 +523,7 @@ class Router {
     }
 
     sections.push({
-      title: '💡 *Tips*',
+      title: '*Tips*',
       lines: [
         '• Chat pribadi: reply pesan apa pun, aku tetap jawab.',
         '• Grup: default hanya merespons saat dipanggil "tsukasa". Admin bisa ubah lewat .modegrup.',
@@ -838,7 +840,7 @@ class Router {
     // Moderasi ringan (antilink/antispam) untuk pesan biasa di grup.
     // Perintah yang dikenal dikecualikan supaya admin tetap bisa memakai bot,
     // tetapi teks berawalan "!" yang bukan perintah tetap ikut dimoderasi.
-    if (!knownCmd && !isOwner && isGroupJid(chat)) {
+    if (!knownCmd && !isOwner && isGroupJid(chat) && !kaguya.hasCommand(cmdName)) {
       if (await this.guard.handleMessage(this.sock, m, content, origTxt)) return;
     }
 
@@ -1066,7 +1068,40 @@ class Router {
       }
 
       if (bang.cmd === 'help' || bang.cmd === 'menu') {
-        await wa.sendText(chat, this.buildMenu(chat, sender, isOwner), m);
+        const usedPrefix = /^[.!/]/.test(origTxt) ? origTxt[0] : '.';
+        const builtinCategories = featureList()
+          .filter((f) => !isGroupJid(chat) || this.store.isFeatureEnabled(chat, f.key))
+          .map((f) => ({
+            key: f.key,
+            label: f.label,
+            description: f.description,
+            commands: f.commands.filter(
+              (cmd) => !isGroupJid(chat) || this.store.isCommandEnabled(chat, cmd)
+            ),
+          }))
+          .filter((f) => f.commands.length);
+
+        if (bang.cmd === 'menu') {
+          const menu = kaguya.formatMenu({
+            category: bang.rest,
+            isOwner,
+            prefix: usedPrefix,
+            builtinCategories,
+          });
+          await wa.sendText(
+            chat,
+            menu ||
+              `Kategori *${String(bang.rest || '').trim()}* tidak ditemukan.\nCoba ${usedPrefix}menu atau ${usedPrefix}menu all.`,
+            m
+          );
+          return;
+        }
+
+        await wa.sendText(
+          chat,
+          kaguya.formatHelp({ query: bang.rest, prefix: usedPrefix, builtinCategories }),
+          m
+        );
         return;
       }
 
@@ -1436,6 +1471,28 @@ class Router {
           m
         );
         return;
+      }
+
+      if (kaguya.hasCommand(bang.cmd)) {
+        const usedPrefix = /^[.!/]/.test(origTxt) ? origTxt[0] : '.';
+        const isAdmin =
+          isOwner ||
+          (isGroupJid(chat) && (await this.peraturan.isAdmin(this.sock, chat, sender)));
+        const handled = await kaguya.dispatch({
+          sock: this.sock,
+          raw: m,
+          cfg: this.cfg,
+          command: bang.cmd,
+          rest: bang.rest,
+          prefix: usedPrefix,
+          chat,
+          sender,
+          isOwner,
+          isAdmin,
+          isPremium: false,
+          reply: (text) => wa.sendText(chat, text, m),
+        });
+        if (handled) return;
       }
     }
 

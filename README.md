@@ -1,6 +1,14 @@
-# wa-tsukasa-bot (Tsukasa — WhatsApp Assistant) — Node.js / Baileys
+# Tsukasa — WhatsApp Assistant
 
-Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gambar (Vision), transkrip **voice note (VN)** → auto-reply, **downloader TikTok (multi-API anti-WAF)**, **Blue Archive**, **Pap**, **Brat/Sticker**, **TTS VN**, **Image Generation**, **Hijabin**, **AnimeKita**, **Peraturan/Moderation**, **Welcome**, **TagAll**, **RVO**, dan **HTTP API**. Dirancang agar mudah dijalankan di **Pterodactyl** (Node.js egg).
+<p align="center">
+  <img alt="Node.js" src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white">
+  <img alt="Baileys" src="https://img.shields.io/badge/Baileys-7.0.0--rc14-25D366?logo=whatsapp&logoColor=white">
+  <img alt="Gemini" src="https://img.shields.io/badge/AI-Gemini-4285F4?logo=google&logoColor=white">
+  <img alt="Kaguya" src="https://img.shields.io/badge/Plugins-Kaguya%20Bridge-8A2BE2">
+  <img alt="Status" src="https://img.shields.io/badge/status-active-brightgreen">
+</p>
+
+Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gambar (Vision), transkrip **voice note (VN)** → auto-reply, **downloader TikTok (multi-API anti-WAF)**, **Blue Archive**, **Pap**, **Brat/Sticker**, **TTS VN**, **Image Generation**, **Hijabin**, **AnimeKita**, **Peraturan/Moderation**, **Welcome**, **TagAll**, **RVO**, dan **HTTP API**. Dirancang agar mudah dijalankan di **Pterodactyl** (Node.js egg), dengan **bridge plugin Kaguya** untuk ratusan fitur tambahan (RPG, game, anime, tools, sticker, dan lainnya).
 
 
 ## Fitur Utama
@@ -40,19 +48,62 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **TagAll**, **RVO**, **Welcome**, **Owner features**.
 - **HTTP API** — `GET /`, `GET /healthz`, `GET /help`, `POST/GET /send` dengan `X-API-Key` + rate limit.
 
+## Integrasi Plugin Kaguya
+
+Bot ini memakai **arsitektur bridge**: inti bot tetap milik Tsukasa, sedangkan plugin Kaguya dimuat secara *lazy* hanya saat command-nya dipanggil. Semua file sudah dipindah ke dalam repository (tidak membaca folder eksternal), sehingga repo tetap rapi dan mandiri.
+
+- **Lokasi file**: `plugins/<kategori>/<plugin>.js` dan `lib/`.
+- **Bridge**: `src/kaguya/index.js` — scanner katalog, lazy import, dispatch, serta formatter menu/help.
+- **Katalog dibaca statis** dari source plugin, jadi startup tidak meng-import ribuan file sekaligus.
+- **Kategori yang tersedia** antara lain: RPG, game (ceme, poker, ludo, monopoli, ular tangga, UNO, undercover), anime, tools, sticker, canvas, downloader, primbon, quotes, relationship, search, stalker, store, tycoon, dan banyak lagi.
+- **Tidak disertakan**: `ai`, `github`, `panel`, `reseller-panel`, `reseller-premku`, `vercel`, `vps`, `pushkontak`, `gacha-nokos`, dan `premium`.
+
+### `.menu` dan `.help`
+
+| Command | Fungsi |
+| --- | --- |
+| `.menu` | Katalog menu bergaya box Kaguya: daftar fitur Tsukasa + kategori plugin Kaguya. |
+| `.menu <kategori>` | Lihat semua command dalam satu kategori, mis. `.menu rpg`, `.menu tools`, `.menu sticker`. |
+| `.menu all` | Tampilkan seluruh command dari semua kategori. |
+| `.help` | Panduan singkat penggunaan menu dan command. |
+| `.help <command>` | Cara pakai command tertentu, mis. `.help sticker`, `.help animedl`. |
+| `.help <kategori>` | Daftar command + deskripsi dalam kategori tersebut. |
+
+Catatan:
+- Command plugin bisa dipakai dengan prefix `.`, `!`, `/`, atau trigger `tsukasa`.
+- Fitur grup yang dimatikan lewat `.fitur off` otomatis hilang dari katalog `.menu` dan `.help`.
+- Database plugin memakai JSON (`global.dbEngine = 'json'`) agar tidak wajib compile SQLite native.
+- Registrasi Kaguya dimatikan; plugin langsung bisa dipakai tanpa `.daftar`.
+
+## Struktur Proyek
+
+```
+.
+├── index.js              # entry point bot Tsukasa
+├── src/                  # inti bot (router, AI, fitur, bridge Kaguya)
+│   └── kaguya/index.js   # bridge plugin Kaguya (lazy load + menu/help)
+├── lib/                  # library & engine plugin Kaguya (ESM)
+├── plugins/              # plugin Kaguya per kategori (ESM)
+├── database/             # database runtime (JSON)
+└── README.md
+```
+
+`plugins/package.json` dan `lib/package.json` menandai folder tersebut sebagai ESM (`"type": "module"`), sementara root repo tetap CommonJS.
+
 ## Persyaratan
 
-- Node.js >= 20 (disarankan Node 22)
-- npm
-- Akun Google Gemini (API key) — **wajib**
+- Node.js **>= 22** (disarankan Node 22 LTS)
+- npm **>= 11**
+- Akun Google Gemini (API key) — **wajib** untuk fitur AI
 - Akun WhatsApp untuk pairing (QR atau pairing code)
 - `ffmpeg` **tidak wajib**: bot memakai `ffmpeg-static` dari npm. Jika ingin ffmpeg sistem, set `FFMPEG_PATH`.
+- Beberapa plugin Kaguya memakai dependency berat seperti `@napi-rs/canvas`, `sharp`, `puppeteer`, dan `jsdom`. Pastikan RAM panel cukup (disarankan minimal 1 GB).
 
 ## Instalasi Lokal
 
 ```bash
 git clone <repo>
-cd wa-tsukasa-bot-main
+cd Bot-ai-yuzaki-tsukasa
 cp .env.example .env
 # Edit .env sesuai kebutuhan
 npm install
@@ -60,6 +111,8 @@ npm start
 ```
 
 Scan QR / masukkan pairing code yang muncul untuk menghubungkan WhatsApp.
+
+> `npm install` akan memasang dependency inti Tsukasa sekaligus dependency plugin Kaguya. Jika panel tidak membutuhkan fitur berat (canvas/puppeteer), dependency tersebut tetap aman tidak dipakai sampai command terkait dijalankan.
 
 ## Konfigurasi (.env)
 
@@ -882,3 +935,7 @@ Semua pengaturan di atas juga bisa diubah lewat chat:
 - **Pesan bot tertulis “Menunggu pesan ini…” di chat penerima**: Ini bukan teks bot, melainkan pesan WhatsApp yang gagal didekripsi. Bot memakai Baileys v7 (LID-native) dan tetap mengarahkan kiriman `@lid` ke nomor telepon asli bila pemetaannya tersedia (`data/lidmap.json`). Jika masih muncul, minta penerima mengirim pesan baru ke bot agar pemetaan LID→nomor terbentuk, lalu balas lagi. Setelah upgrade dari Baileys 6.7.x, jika sesi lama bermasalah, pairing ulang sekali (QR/kode) lalu kirim pesan baru.
 - **Log `No session found to decrypt message` / `transaction failed, rolling back`**: Ini race normal saat pesan grup tiba sebelum SenderKey dibagikan, termasuk varian `forbidden`. WhatsApp otomatis mengirim ulang sesi/pesan, jadi tidak perlu tindakan. Error ini tidak lagi memicu notifikasi “Error Tsukasa” ke owner, tetapi tetap tercatat di log panel untuk diagnosis. Error unduh media seperti `Cannot derive from empty media key` (media sudah kedaluwarsa/tidak punya kunci) juga tidak lagi memicu notifikasi owner.
 - **HTTP API tidak bisa diakses**: Pastikan allocation/port benar, aplikasi listen `0.0.0.0`, dan firewall node mengizinkan port tersebut.
+- **Command plugin Kaguya membalas “Plugin gagal dijalankan”**: Biasanya dependency plugin belum terpasang. Jalankan `npm install` ulang, lalu cek log `[KAGUYA]` di panel untuk nama modul yang hilang.
+- **`.menu` kosong / kategori tidak muncul**: Pastikan folder `plugins/` ikut ter-commit dan `plugins/package.json` berisi `{"type":"module"}`. Katalog dibaca dari source plugin saat pertama kali dipanggil.
+- **Plugin butuh admin grup**: Beberapa plugin memeriksa status admin bot. Jadikan bot admin grup, lalu ulangi command.
+- **Database plugin bentrok dengan SQLite**: Bridge memaksa `global.dbEngine = 'json'`, jadi tidak perlu `better-sqlite3`. Jika muncul error SQLite, hapus `database/kaguya.db` lalu restart.
