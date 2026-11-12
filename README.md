@@ -2,7 +2,6 @@
 
 Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gambar (Vision), transkrip **voice note (VN)** → auto-reply, **downloader TikTok (multi-API anti-WAF)**, **Blue Archive**, **Pap**, **Brat/Sticker**, **TTS VN**, **Image Generation**, **Hijabin**, **AnimeKita**, **Peraturan/Moderation**, **Welcome**, **TagAll**, **RVO**, dan **HTTP API**. Dirancang agar mudah dijalankan di **Pterodactyl** (Node.js egg).
 
-> Bot ini sebelumnya bernama **Elaina**. Semua default nama, trigger, persona, command, state, dan watermark sudah diganti menjadi **Tsukasa**.
 
 ## Fitur Utama
 
