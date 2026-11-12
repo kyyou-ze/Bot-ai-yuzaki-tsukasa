@@ -29,7 +29,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Reply & Tag Status** — Di chat pribadi bot tetap membalas walaupun pesanmu adalah reply/quote. Di grup, reply ke pesan bot juga diproses tanpa trigger. Tag status WhatsApp yang menyebut bot terdeteksi dan dibalas di chat terkait.
 - **AnimeKita** — `!anime ...` (new/movie/schedule/list/genre/search/detail/episode/roulette). Episode dengan link Pixeldrain bisa diunduh otomatis.
 - **Anime Roulette** — `!anime roulette [genre]` memilih anime acak dari AniList lengkap dengan sinopsis (diterjemahkan ke Indonesia bila Gemini tersedia), skor, episode, tahun, dan link.
-- **Grup Toolkit** — `!ingatkan` (pengingat persisten dengan waktu natural), `!poll` (polling native WhatsApp), `!rangkum` (ringkasan percakapan terakhir via AI), dan `!statistik` (anggota paling aktif, jam tersibuk, jumlah pesan).
+- **Grup Toolkit** — `!ingatkan` (pengingat persisten dengan waktu natural), `!poll` (polling native WhatsApp), `!rangkum` (ringkasan percakapan terakhir via AI), `!statistik`, `!topaktif` (leaderboard persisten), serta `.welcome`/`.goodbye` (pesan sambutan & perpisahan per grup, mendukung multi-baris).
 - **Auto-post Anime, Berita, Cosplay & Info Jejepangan ke Channel** — Bot otomatis mencari info anime terbaru dari **AniList, Kitsu, AnimeKita, dan MyAnimeList (Jikan)**, berita bergambar dari RSS otaku, serta cosplay Instagram dari `COSPLAY_POSTS`/`COSPLAY_RSS`, lalu memposting ke channel WhatsApp (default `NimaCoRe - Latest Info`) lengkap dengan cover, genre, skor, dan link. Riwayat dedupe disimpan permanen, info budaya/fakta Jejepangan diselipkan tiap beberapa post, dan berita gacha diprioritaskan. Cek/tes manual: `!animechannel status`, `!animechannel test`, `!animechannel news`, `!animechannel cosplay`, `!animechannel info`, `!animechannel check <judul>` (owner/admin grup).
 - **Peraturan/Moderasi** — `!peraturan on|off|sync|status|rules|clear @user`. Bot menilai pesan grup dengan Gemini moderation, memberi warn (max 5), bisa mengeluarkan otomatis. Moderasi bawaan juga punya antilink + allowlist domain, antispam, mute sebelum kick, reset warn, log moderasi, dan jadwal buka/tutup (termasuk mode akhir pekan).
 - **Health & Rate Limit** — `!health` menampilkan status WhatsApp, uptime, RAM, cache berita, dan antrean unduhan. Command berat (`!news`, `!cosplay`, unduh episode, post channel) dibatasi agar tidak dispam.
@@ -116,6 +116,7 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `TIKTOK_SCRAPER_MODE` | `auto` | `auto` = scraper lokal dulu lalu fallback; `local` = hanya lokal; `api` = hanya API/Jina |
 | `TIKTOK_LOCAL_ENABLED` | `true` | Aktifkan scraper TikTok lokal (embed creator, tanpa WAF/API key) |
 | `TIKTOK_LOCAL_TIMEOUT_SEC` | `30` | Timeout request scraper lokal (detik) |
+| `TIKTOK_EMBED_HOSTS` | `https://www.tiktok.com,https://m.tiktok.com` | Host embed yang dicoba bergantian saat salah satu kena WAF/DNS |
 | `TIKTOK_DL_API_URL` / `TIKTOK_DL_API_KEY` | - | Endpoint download media sendiri, placeholder `{url}` (opsional) |
 | `TIKHUB_API_KEY` | - | Key TikHub sebagai sumber cadangan anti-WAF (opsional) |
 | `TIKTOK_API23_KEY` / `TIKTOK_API23_HOST` | - | Key & host RapidAPI tiktok-api23 (opsional, fallback `RAPIDAPI_KEY`) |
@@ -180,7 +181,8 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `TSUKASA_ADULT_PROMPT` | - | Override overlay mode dewasa owner-only (18+, sugestif) |
 | `HIJABIN_API_URL` / `HIJABIN_API_KEY` | - | Opsional untuk hijabin via API eksternal |
 | `OWNER_*` | - | Konfigurasi owner |
-| `WELCOME_ENABLED` / `WELCOME_TEXT` | - | Pesan selamat datang grup |
+| `WELCOME_ENABLED` / `WELCOME_TEXT` / `GOODBYE_ENABLED` / `GOODBYE_TEXT` / `GREETING_ENABLED` | - | Pesan sambutan & perpisahan grup (bisa dioverride per grup lewat `.welcome`/`.goodbye`) |
+| `IG_COOKIE` / `IG_SESSIONID` / `IG_PROXY` / `IG_MAX_IMAGES` | - | Scraper Instagram hybrid: cookie akun bot, proxy residensial opsional, batas foto carousel |
 
 ## Pterodactyl (Node.js Egg)
 
@@ -585,10 +587,10 @@ AI_TOOLS_SEARCH=true
 
 Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTOK_CHECK_MIN` menit. Akun dicek satu per satu dengan jeda acak 2-5 detik.
 
-**Scraper lokal (utama).** Bot membaca `https://www.tiktok.com/embed/@username` langsung dari server panel. Halaman embed ini di-render oleh TikTok dan berisi JSON lengkap (nickname, bio, caption, cover, URL video), jadi **tidak terkena WAF**, tidak butuh API key, dan tidak butuh signature. Ini membuat detector tetap jalan walau halaman profil biasa diblokir. Atur lewat `TIKTOK_SCRAPER_MODE`:
+**Scraper lokal (utama).** Bot membaca `https://www.tiktok.com/embed/@username` langsung dari server panel. Halaman embed ini di-render oleh TikTok dan berisi JSON lengkap (nickname, bio, caption, cover, URL video), jadi **tidak terkena WAF**, tidak butuh API key, dan tidak butuh signature. Ini membuat detector tetap jalan walau halaman profil biasa diblokir. Kalau `www.tiktok.com` sedang kena WAF/DNS dari IP panel, bot otomatis mencoba host cadangan `m.tiktok.com` (atur urutannya lewat `TIKTOK_EMBED_HOSTS`) sebelum pindah ke sumber lain. Atur lewat `TIKTOK_SCRAPER_MODE`:
 
 - `auto` (default): scraper lokal dulu; kalau gagal, lanjut ke API/Jina yang dikonfigurasi.
-- `local`: hanya scraper lokal (paling hemat kuota, tanpa request ke layanan luar).
+- `local`: hanya scraper lokal (paling hemat kuota). Kalau embed benar-benar diblokir WAF, bot tetap memakai Jina sebagai cadangan darurat agar detector tidak mati.
 - `api`: lewati scraper lokal dan pakai rantai API/Jina seperti konfigurasi lama.
 
 Cadangan bila scraper lokal gagal: endpoint custom/TikHub/tiktok-api23/Ensig (kalau diisi) → Jina Reader → TikWM → scraping profil langsung. Kalau semua sumber kena 403/WAF, bot berhenti selama `TIKTOK_WAF_COOLDOWN_MIN` menit dan hanya menulis satu log `[TIKTOK] WAF block, retry 10 menit`. Untuk tiap video baru, bot mengecek:
@@ -741,6 +743,27 @@ Admin grup (dan owner bot) bisa mengatur kapan Tsukasa membalas di grup masing-m
 - Semua perintah (`.help`, `.stiker`, `.tagall`, dll.) dan fitur tetap berfungsi di mode mana pun.
 - Di mode `reply`, pesan harus berupa balasan/quote ke pesan lain, lalu menyebut `tsukasa` **atau** membalas pesan bot. Quote video/dokumen/sticker/caption juga dihitung sebagai balasan.
 - Di mode `all`, bot membalas semua pesan grup tanpa perlu trigger.
+
+### Pesan sambutan & perpisahan per grup
+
+Admin grup (dan owner) bisa mengubah pesan sambutan saat anggota baru masuk dan pesan perpisahan saat anggota keluar. Pengaturan disimpan per grup.
+
+```text
+.welcome status              # lihat status + template aktif
+.welcome set Halo {mentions}! Selamat datang di {group}.
+.welcome on|off              # aktifkan/nonaktifkan sambutan
+.welcome reset               # kembali ke template default bot
+.welcome preview             # kirim contoh sambutan
+
+.goodbye status              # sama, untuk pesan perpisahan
+.goodbye set Selamat jalan {mentions} 👋
+.goodbye on|off|reset|preview
+```
+
+- Template boleh **multi-baris**: kirim pesan dengan Enter/Shift+Enter setelah `.welcome set`, atau tulis `\n` di tengah teks.
+- Placeholder: `{mentions}` (tag semua peserta), `{user}`/`{name}` (nama), `{group}` (nama grup), `{count}` (jumlah peserta).
+- Template default bisa diatur lewat env `WELCOME_TEXT` / `GOODBYE_TEXT`; override per grup menang atas default.
+- Perubahan langsung berlaku tanpa restart karena disimpan di `tsukasa_state.json`.
 
 ### Aktif/nonaktifkan fitur per grup
 

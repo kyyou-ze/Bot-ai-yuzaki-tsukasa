@@ -202,7 +202,7 @@ class Router {
 
     this.reTrig = normalizeTrigger(cfg);
     this.owner = new OwnerDetector();
-    this.welcome = new WelcomeHandler();
+    this.welcome = new WelcomeHandler(store, cfg);
     this.tagall = new TagAllHandler();
     this.rvo = new RvoHandler();
     this.sticker = new StickerFeature();
@@ -427,6 +427,8 @@ class Router {
           '• .afk [alasan] — tandai AFK (.afk off untuk kembali)',
           '• .statistik — statistik aktivitas chat',
           '• .topaktif [jumlah] — leaderboard anggota paling aktif di grup',
+          '• .welcome on|off|set|reset|preview — pesan sambutan grup',
+          '• .goodbye on|off|set|reset|preview — pesan perpisahan grup',
         ],
       },
       {
@@ -869,7 +871,7 @@ class Router {
     // PRIORITAS TERTINGGI: image generation
     if (await this.imggen.handle(this.sock, m, content, origTxt)) return;
 
-    const bang = isCmd ? { cmd: cmdName, rest: cmdRest } : null;
+    const bang = isCmd ? { cmd: cmdName, rest: cmdRest, rawRest: parsed.rawRest } : null;
     // Simpan metadata pesan di memori untuk fitur rangkuman & statistik.
     // Tidak ditulis ke disk dan tidak dipakai untuk membalas otomatis.
     this.groupTools.recordMessage(chat, sender, txt, { isCommand: Boolean(bang) });
@@ -962,6 +964,27 @@ class Router {
           chat,
           `✅ Mode balasan grup disetel ke *${saved}* (${labels[saved]}).`,
           m
+        );
+        return;
+      }
+
+      if (
+        bang.cmd === 'welcome' ||
+        bang.cmd === 'sambutan' ||
+        bang.cmd === 'goodbye' ||
+        bang.cmd === 'selamattinggal' ||
+        bang.cmd === 'pamit' ||
+        bang.cmd === 'bye'
+      ) {
+        const allowed = isOwner || (await this.peraturan.isAdmin(this.sock, chat, sender));
+        await this.welcome.handleCommand(
+          this.sock,
+          m,
+          bang.cmd,
+          bang.rest,
+          bang.rawRest,
+          allowed,
+          isOwner
         );
         return;
       }

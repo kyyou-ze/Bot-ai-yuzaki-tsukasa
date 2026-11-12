@@ -1,6 +1,7 @@
 'use strict';
 
 const log = require('../logger');
+const memory = require('../memory');
 const { onlyDigits, jidUser, isGroupJid, destJid, firstNonEmpty } = require('../util');
 const wa = require('../wa');
 
@@ -93,42 +94,259 @@ class OwnerDetector {
   }
 }
 
-// ---------------- Welcome ----------------
+// ---------------- Welcome & Goodbye ----------------
+const DEFAULT_WELCOME_TEXT =
+  'Halo {mentions}! Selamat datang di {group}. 🙂\nBaca deskripsi & patuhi aturan ya.';
+const DEFAULT_GOODBYE_TEXT = 'Selamat jalan {mentions} 👋\nSemoga sukses di luar sana!';
+const MAX_GREETING_TEXT = 2000;
+
+function envEnabled(name, fallback = true) {
+  const raw = String(process.env[name] || '').trim().toLowerCase();
+  if (!raw) return fallback;
+  if (['1', 'true', 'yes', 'y', 'on', 'aktif', 'nyala', 'hidup'].includes(raw)) return true;
+  if (['0', 'false', 'no', 'n', 'off', 'mati', 'nonaktif'].includes(raw)) return false;
+  return fallback;
+}
+
+/**
+ * Template dari env biasanya ditulis satu baris (`\n` literal). Ubah escape
+ * itu menjadi baris baru sungguhan supaya pesan tidak menampilkan "\n".
+ */
+function unescapeTemplate(value) {
+  return String(value || '')
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\t/g, '\t');
+}
+
 class WelcomeHandler {
-  constructor() {
-    let enabled = true;
-    const v = String(process.env.WELCOME_ENABLED || '').trim().toLowerCase();
-    if (v) enabled = v === '1' || v === 'true' || v === 'yes';
-    this.enabled = enabled;
-    this.template =
-      String(process.env.WELCOME_TEXT || '').trim() ||
-      'Halo {mentions}! Selamat datang di {group}. 🙂\nBaca deskripsi & patuhi aturan ya.';
+  constructor(store, cfg) {
+    this.store = store || null;
+    this.cfg = cfg || {};
+    this.masterEnabled = envEnabled('GREETING_ENABLED', true);
+    this.defaultWelcome = {
+      enabled: envEnabled('WELCOME_ENABLED', true),
+      text:
+        unescapeTemplate(process.env.WELCOME_TEXT).trim() || DEFAULT_WELCOME_TEXT,
+    };
+    this.defaultGoodbye = {
+      enabled: envEnabled('GOODBYE_ENABLED', true),
+      text:
+        unescapeTemplate(process.env.GOODBYE_TEXT).trim() || DEFAULT_GOODBYE_TEXT,
+    };
+  }
+
+  /** Gabungkan konfigurasi default env dengan override per grup. */
+  resolve(chat, kind) {
+    const type = kind === 'goodbye' ? 'goodbye' : 'welcome';
+    const def = type === 'goodbye' ? this.defaultGoodbye : this.defaultWelcome;
+    let saved = { enabled: null, text: '' };
+    try {
+      if (this.store && typeof this.store.getGreeting === 'function') {
+        saved = this.store.getGreeting(chat)[type] || saved;
+      }
+    } catch {
+      /* pakai default */
+    }
+    return {
+      enabled: saved.enabled === null ? def.enabled : Boolean(saved.enabled),
+      text: String(saved.text || def.text || '').trim() || def.text,
+      custom: Boolean(saved.text),
+    };
+  }
+
+  participantsOf(list) {
+    const out = [];
+    const seen = new Set();
+    for (const item of Array.isArray(list) ? list : []) {
+      let jid = '';
+      if (typeof item === 'string') jid = item;
+      else if (item && typeof item === 'object') {
+        jid = item.id || item.jid || item.lid || item.phoneNumber || '';
+      }
+      jid = bareJid(String(jid || '').trim());
+      if (!jid) continue;
+      if (!/@(s\.whatsapp\.net|lid|g\.us)$/i.test(jid)) {
+        const digits = onlyDigits(jid);
+        if (!digits) continue;
+        jid = `${digits}@s.whatsapp.net`;
+      }
+      if (seen.has(jid)) continue;
+      seen.add(jid);
+      out.push(jid);
+    }
+    return out;
+  }
+
+  render(template, ctx = {}) {
+    const mentions = Array.isArray(ctx.mentions) ? ctx.mentions : [];
+    const mentionText = mentions.map((j) => `@${jidUser(j)}`).join(' ');
+    const names = mentions
+      .map((j) => memory.getUserName(j) || jidUser(j))
+      .filter(Boolean)
+      .join(', ');
+    return unescapeTemplate(template)
+      .replace(/\{mentions\}/gi, mentionText)
+      .replace(/\{user\}|\{name\}|\{nama\}/gi, names || mentionText)
+      .replace(/\{group\}|\{grup\}/gi, String(ctx.group || ''))
+      .replace(/\{count\}|\{jumlah\}/gi, String(mentions.length))
+      .trim();
+  }
+
+  async groupName(sock, chat) {
+    try {
+      if (!sock || typeof sock.groupMetadata !== 'function') return chat;
+      const meta = await Promise.race([
+        sock.groupMetadata(chat),
+        new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(null), 5000);
+          if (typeof timer.unref === 'function') timer.unref();
+        }),
+      ]);
+      return (meta && meta.subject) || chat;
+    } catch {
+      return chat;
+    }
   }
 
   async handle(sock, ev) {
-    if (!this.enabled || !ev || ev.action !== 'add') return false;
-    const participants = Array.isArray(ev.participants) ? ev.participants : [];
-    if (participants.length === 0) return false;
+    if (!this.masterEnabled || !ev) return false;
+    const action = String(ev.action || '').toLowerCase();
+    const kind = action === 'add' ? 'welcome' : action === 'remove' ? 'goodbye' : '';
+    if (!kind) return false;
 
-    let groupName = ev.id;
+    const chat = String(ev.id || '').trim();
+    if (!isGroupJid(chat)) return false;
+
+    const conf = this.resolve(chat, kind);
+    if (!conf.enabled) return false;
+
+    const mentions = this.participantsOf(ev.participants);
+    if (!mentions.length) return false;
+
+    const group = await this.groupName(sock, chat);
+    const text = this.render(conf.text, { mentions, group });
+    if (!text) return false;
+
     try {
-      const meta = await sock.groupMetadata(ev.id);
-      if (meta && meta.subject) groupName = meta.subject;
-    } catch {
-      /* ignore */
-    }
-
-    const mentions = participants.map((j) => bareJid(j));
-    const mentionText = participants.map((j) => `@${jidUser(j)}`).join(' ');
-    const text = this.template
-      .replace(/\{mentions\}/g, mentionText)
-      .replace(/\{group\}/g, groupName);
-
-    try {
-      await sock.sendMessage(ev.id, { text, mentions });
+      await sock.sendMessage(chat, { text, mentions });
+      log.info(
+        `[GREETING] ${kind} ${mentions.length} peserta di ${chat} (${conf.custom ? 'custom' : 'default'})`
+      );
+      return true;
     } catch (err) {
-      log.error('[WELCOME] gagal kirim sambutan:', err.message);
+      log.error(`[GREETING] gagal kirim ${kind}:`, err.message);
+      return false;
     }
+  }
+
+  async handleCommand(sock, m, cmd, rest, rawRest, allowed, isOwner) {
+    const chat = m.key.remoteJid;
+    if (!isGroupJid(chat)) {
+      await wa.sendText(chat, 'Perintah ini hanya berlaku di grup.', m);
+      return true;
+    }
+    if (!allowed) {
+      await wa.sendText(chat, 'Perintah ini khusus admin grup atau owner bot.', m);
+      return true;
+    }
+
+    const kind =
+      cmd === 'goodbye' || cmd === 'selamattinggal' || cmd === 'pamit' || cmd === 'bye'
+        ? 'goodbye'
+        : 'welcome';
+    const label = kind === 'goodbye' ? 'Perpisahan' : 'Sambutan';
+    const conf = this.resolve(chat, kind);
+
+    const full = String(rest || '').trim();
+    const first = (full.split(/\s+/)[0] || '').toLowerCase();
+    // rawRest mempertahankan newline asli; rest sudah dinormalisasi parser.
+    const rawBody = String(rawRest == null ? full : rawRest);
+    const body = rawBody
+      .replace(/^\s*\S+[^\S\r\n]*/, '')
+      .replace(/^\r?\n/, '')
+      .trim();
+
+    const help = [
+      `⚙️ *Pesan ${label} Grup*`,
+      `• .${cmd} on/off — aktifkan atau matikan`,
+      `• .${cmd} set <teks> — ganti template (boleh multi-baris)`,
+      `• .${cmd} reset — kembali ke template default`,
+      `• .${cmd} preview — kirim contoh pesan`,
+      `• .${cmd} status — lihat template aktif`,
+      '',
+      'Placeholder: {mentions} {user} {group} {count}',
+      'Tulis \\n di dalam teks (atau kirim pesan multi-baris) untuk baris baru.',
+    ].join('\n');
+
+    if (['on', 'aktif', 'nyala', 'hidup', 'enable'].includes(first)) {
+      await this.store.setGreeting(chat, kind, { enabled: true });
+      await wa.sendText(chat, `✅ Pesan ${label.toLowerCase()} diaktifkan.`, m);
+      return true;
+    }
+
+    if (['off', 'mati', 'nonaktif', 'disable'].includes(first)) {
+      await this.store.setGreeting(chat, kind, { enabled: false });
+      await wa.sendText(chat, `❎ Pesan ${label.toLowerCase()} dimatikan.`, m);
+      return true;
+    }
+
+    if (['reset', 'hapus', 'default', 'bawaan'].includes(first)) {
+      await this.store.resetGreeting(chat, kind);
+      const def = this.resolve(chat, kind);
+      await wa.sendText(
+        chat,
+        `♻️ Template ${label.toLowerCase()} kembali ke default (${def.enabled ? 'aktif' : 'nonaktif'}).`,
+        m
+      );
+      return true;
+    }
+
+    if (['set', 'isi', 'text', 'teks', 'ubah', 'ganti'].includes(first)) {
+      if (!body) {
+        await wa.sendText(chat, `Tulis teksnya setelah perintah.\nContoh: .${cmd} set Halo {mentions}, selamat datang di {group}!`, m);
+        return true;
+      }
+      if (body.length > MAX_GREETING_TEXT) {
+        await wa.sendText(chat, `❌ Teks terlalu panjang (maks ${MAX_GREETING_TEXT} karakter).`, m);
+        return true;
+      }
+      await this.store.setGreeting(chat, kind, { text: body, enabled: true });
+      await wa.sendText(
+        chat,
+        `✅ Template ${label.toLowerCase()} disimpan.\n\n*Preview:*\n${this.render(body, { mentions: [m.key.participant || chat], group: await this.groupName(sock, chat) })}`,
+        m
+      );
+      return true;
+    }
+
+    if (['preview', 'tes', 'test', 'contoh'].includes(first)) {
+      const actor = bareJid(m.key.participant || chat);
+      const group = await this.groupName(sock, chat);
+      const text = this.render(conf.text, { mentions: [actor], group });
+      await sock.sendMessage(chat, { text, mentions: [actor] });
+      return true;
+    }
+
+    if (!first || ['status', 'info', 'lihat'].includes(first)) {
+      await wa.sendText(
+        chat,
+        [
+          `⚙️ *Pesan ${label} Grup*`,
+          `• Status  : ${conf.enabled ? 'aktif' : 'nonaktif'}`,
+          `• Sumber  : ${conf.custom ? 'custom grup ini' : 'default bot'}`,
+          '',
+          '*Template:*',
+          conf.text,
+          '',
+          `Gunakan .${cmd} help untuk cara mengubah.`,
+        ].join('\n'),
+        m
+      );
+      return true;
+    }
+
+    await wa.sendText(chat, help, m);
     return true;
   }
 }

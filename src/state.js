@@ -46,6 +46,10 @@ class Store {
       // Statistik anggota paling aktif per grup:
       // { [chat]: { [sender]: { name, count, lastAt } } }.
       activity: raw.activity || {},
+      // Pesan sambutan & perpisahan per grup:
+      // { [chat]: { welcome: { enabled, text }, goodbye: { enabled, text } } }.
+      // Hanya nilai yang diubah yang disimpan; sisanya ikut default env.
+      greetings: raw.greetings || {},
       // Catatan waktu tidur Tsukasa: { bedtimeAt, debtMinutes, debtDate, updated }.
       sleep: raw.sleep || {},
       afk: raw.afk || {},
@@ -166,6 +170,53 @@ class Store {
       [chat]: m,
     };
     return this._save().then(() => m);
+  }
+
+  // ---------- Pesan sambutan & perpisahan per grup ----------
+
+  /**
+   * Konfigurasi greeting untuk satu grup. Nilai yang tidak pernah diubah
+   * dibiarkan kosong supaya pemanggil bisa memakai default dari env.
+   */
+  getGreeting(chat) {
+    const g = this.data.greetings[chat] || {};
+    const pick = (kind) => {
+      const row = g[kind];
+      return {
+        enabled: row && typeof row.enabled === 'boolean' ? row.enabled : null,
+        text: row && typeof row.text === 'string' ? row.text : '',
+        updated: (row && Number(row.updated)) || 0,
+      };
+    };
+    return { welcome: pick('welcome'), goodbye: pick('goodbye') };
+  }
+
+  setGreeting(chat, kind, patch = {}) {
+    const target = String(chat || '').trim();
+    const type = kind === 'goodbye' ? 'goodbye' : 'welcome';
+    if (!target) return Promise.reject(new Error('invalid chat for greeting'));
+    const all = this.data.greetings[target] || {};
+    const cur = all[type] || {};
+    const next = {
+      enabled:
+        typeof patch.enabled === 'boolean' ? patch.enabled : Boolean(cur.enabled),
+      text: typeof patch.text === 'string' ? patch.text : String(cur.text || ''),
+      updated: Date.now(),
+    };
+    all[type] = next;
+    this.data.greetings[target] = all;
+    return this._save().then(() => next);
+  }
+
+  resetGreeting(chat, kind) {
+    const target = String(chat || '').trim();
+    const type = kind === 'goodbye' ? 'goodbye' : 'welcome';
+    const all = this.data.greetings[target];
+    if (!target || !all || !all[type]) return Promise.resolve(false);
+    delete all[type];
+    if (!Object.keys(all).length) delete this.data.greetings[target];
+    else this.data.greetings[target] = all;
+    return this._save().then(() => true);
   }
 
   // ---------- Fitur per grup ----------

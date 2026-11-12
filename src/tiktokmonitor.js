@@ -390,10 +390,17 @@ async function fetchUserVideos(account, cfg = {}) {
   if (mode !== 'api') steps.push(['Local', tryLocal]);
   if (hasConfiguredPostsApi(cfg)) steps.push(['API', tryApi]);
   if (mode !== 'local') steps.push(['Jina', tryJina]);
+  // Mode local tetap boleh memakai Jina saat embed benar-benar diblokir WAF,
+  // supaya detector tidak mati total hanya karena IP panel sedang diblokir.
+  else steps.push(['Jina (cadangan WAF)', tryJina, 'onWaf']);
   if (mode !== 'local' && !hasConfiguredPostsApi(cfg)) steps.push(['API', tryApi]);
   steps.push(['HTML', tryHtml]);
 
-  for (const [name, fn] of steps) {
+  for (const [name, fn, when] of steps) {
+    if (when === 'onWaf' && !waf) continue;
+    if (when === 'onWaf') {
+      log.warn('[TIKTOK] embed lokal kena WAF, memakai Jina sebagai cadangan.');
+    }
     try {
       return await fn();
     } catch (err) {

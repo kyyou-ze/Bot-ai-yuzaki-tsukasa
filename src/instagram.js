@@ -15,8 +15,63 @@ const JINA_KEY = String(
   process.env.JINA_API_KEY || process.env.TIKTOK_JINA_KEY || ''
 ).trim();
 
-const MAX_IMAGES = 12;
+// --- Hybrid Instagram ---
+// Scraper lokal memakai cookie/session (opsional) + proxy. Kalau cookie belum
+// diisi, bot otomatis jatuh ke Jina/vxinstagram. Semua hasil digabung supaya
+// carousel tidak terpotong hanya karena satu provider gagal.
+const IG_COOKIE = String(process.env.IG_COOKIE || process.env.INSTAGRAM_COOKIE || '').trim();
+const IG_SESSIONID =
+  String(process.env.IG_SESSIONID || '').trim() ||
+  (IG_COOKIE.match(/(?:^|;\s*)sessionid=([^;]+)/i) || [])[1] ||
+  '';
+const IG_APP_ID = String(process.env.IG_APP_ID || '936619743392459').trim();
+const IG_PROXY = String(process.env.IG_PROXY || process.env.INSTAGRAM_PROXY || '').trim();
+const IG_UA =
+  'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) ' +
+  'Chrome/124.0.0.0 Mobile Safari/537.36';
+
+const MAX_IMAGES = Math.max(
+  1,
+  Math.min(30, parseInt(process.env.IG_MAX_IMAGES || '12', 10) || 12)
+);
 const MAX_CAPTION = 1200;
+
+let igProxyDispatcher = null;
+function igDispatcher() {
+  if (!IG_PROXY) return null;
+  if (igProxyDispatcher) return igProxyDispatcher;
+  try {
+    // undici adalah dependensi Baileys; dipakai agar proxy residensial bisa
+    // dipakai tanpa mengubah global fetch.
+    const { ProxyAgent } = require('undici');
+    igProxyDispatcher = new ProxyAgent(IG_PROXY);
+    log.info('[COSPLAY] Proxy Instagram aktif');
+  } catch (err) {
+    log.warn('[COSPLAY] IG_PROXY gagal dimuat:', err.message);
+    igProxyDispatcher = null;
+  }
+  return igProxyDispatcher;
+}
+
+async function igFetch(url, options = {}, timeoutMs = 45000) {
+  const dispatcher = igDispatcher();
+  return fetchWithTimeout(
+    url,
+    dispatcher ? { ...options, dispatcher } : options,
+    timeoutMs
+  );
+}
+
+const IG_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+function shortcodeToMediaId(code) {
+  let id = 0n;
+  for (const ch of String(code || '')) {
+    const v = IG_ALPHABET.indexOf(ch);
+    if (v < 0) return '';
+    id = id * 64n + BigInt(v);
+  }
+  return id > 0n ? id.toString() : '';
+}
 
 const GENERIC_TAGS = new Set([
   'cosplay', 'cosplayer', 'cosu', 'cosplayindonesia', 'indonesia',
@@ -203,6 +258,43 @@ function imageId(url) {
   return m ? m[1] : String(url || '');
 }
 
+/**
+ * Skor kualitas URL foto Instagram. URL tanpa suffix ukuran biasanya versi
+ * asli; thumbnail `_s150x150`/`_s640x640` dan avatar `-19` diberi skor rendah
+ * supaya saat provider berbeda memberi URL yang sama, versi terbaik menang.
+ */
+function imageScore(url) {
+  const u = String(url || '');
+  if (!u) return -Infinity;
+  let score = 0;
+  if (/\/t51\.\d+-15\//i.test(u)) score += 80;
+  if (/\/t51\.\d+-19\//i.test(u)) score -= 200;
+  if (/_s150x150/i.test(u)) score -= 200;
+  const sized = u.match(/dst-jpg[^?]*_s(\d+)x(\d+)/i);
+  if (sized) score += Math.min(50, (Number(sized[1]) || 0) / 40);
+  else score += 60;
+  return score;
+}
+
+/**
+ * Tambahkan foto ke daftar tanpa duplikat. Jika id yang sama sudah ada,
+ * simpan URL dengan kualitas terbaik (bukan sekadar yang pertama datang).
+ */
+function addImage(images, index, url) {
+  const clean = String(url || '').replace(/\)+$/, '');
+  if (isUnwantedImage(clean)) return false;
+  const id = imageId(clean);
+  if (!id) return false;
+  const at = index.get(id);
+  if (at === undefined) {
+    index.set(id, images.length);
+    images.push(clean);
+    return true;
+  }
+  if (imageScore(clean) > imageScore(images[at])) images[at] = clean;
+  return false;
+}
+
 function parseImages(markdown) {
   const md = String(markdown || '');
   // Jangan ikut mengambil foto dari komentar/related posts/rekomendasi akun.
@@ -211,15 +303,12 @@ function parseImages(markdown) {
   );
   const main = cutoff >= 0 ? md.slice(0, cutoff) : md;
   const out = [];
-  const seen = new Set();
+  const index = new Map();
 
   const add = (alt, url) => {
     const cleanUrl = decodeEntities(String(url || '').replace(/\)+$/, ''));
-    if (isUnwantedImage(cleanUrl) || isProfilePicture(alt, cleanUrl)) return;
-    const id = imageId(cleanUrl);
-    if (!id || seen.has(id)) return;
-    seen.add(id);
-    out.push(cleanUrl);
+    if (!cleanUrl || isProfilePicture(alt, cleanUrl)) return;
+    addImage(out, index, cleanUrl);
   };
 
   // Carousel Instagram tampil sebagai bullet list di markdown Jina.
@@ -530,24 +619,20 @@ function parseVxinstagram(html, url) {
   if (!username && creator) username = cleanCaption(creator).replace(/^@/, '').toLowerCase();
 
   const images = [];
-  const seen = new Set();
+  const index = new Map();
   const anchors = source.match(/<a\b[^>]*\bdownload\b[^>]*>/gi) || [];
   for (const tag of anchors) {
     const href = (tag.match(/href\s*=\s*["']([^"']+)["']/i) || [])[1];
     if (!href) continue;
     const cleanUrl = decodeEntities(href).replace(/\)+$/, '');
     if (!/^https?:\/\//i.test(cleanUrl)) continue;
-    if (isUnwantedImage(cleanUrl)) continue;
-    const id = imageId(cleanUrl);
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    images.push(cleanUrl);
+    addImage(images, index, cleanUrl);
     if (images.length >= MAX_IMAGES) break;
   }
 
   if (!images.length) {
     const ogImage = metaContent(source, 'og:image');
-    if (ogImage && /^https?:\/\//i.test(ogImage)) images.push(ogImage);
+    if (ogImage && /^https?:\/\//i.test(ogImage)) addImage(images, index, ogImage);
   }
 
   const caption = cleanCaption(description);
@@ -595,10 +680,122 @@ async function fetchViaVxinstagram(url, timeoutMs) {
   return post;
 }
 
-async function fetchPost(input, options = {}) {
-  const url = normalizePostUrl(input);
-  if (!url) throw new Error('Link Instagram tidak valid. Contoh: !cosplay https://www.instagram.com/p/xxxx/');
+function bestCandidateUrl(candidates) {
+  const list = (Array.isArray(candidates) ? candidates : [])
+    .filter((c) => c && typeof c.url === 'string' && /^https?:\/\//i.test(c.url))
+    .sort(
+      (a, b) =>
+        (Number(b.width) || 0) * (Number(b.height) || 0) -
+        (Number(a.width) || 0) * (Number(a.height) || 0)
+    );
+  return list.length ? list[0].url : '';
+}
 
+function postFromApiItem(item, url) {
+  const code = extractShortcode(url);
+  const images = [];
+  const index = new Map();
+  const collect = (media) => {
+    const node = media && (media.image_versions2 || media.imageVersions2);
+    const candidates = node && (node.candidates || node);
+    const best = bestCandidateUrl(candidates);
+    if (best) addImage(images, index, best);
+  };
+  const carousel = Array.isArray(item && item.carousel_media) ? item.carousel_media : [];
+  if (carousel.length) for (const media of carousel) collect(media);
+  else collect(item);
+
+  const username = String((item && item.user && item.user.username) || '').toLowerCase();
+  const caption = cleanCaption(item && item.caption && item.caption.text);
+  const tags = extractTags('', caption);
+  const meta = inferMeta(tags, caption);
+  return {
+    shortcode: code,
+    url: code ? `https://www.instagram.com/p/${code}/` : normalizePostUrl(url),
+    author: username,
+    username,
+    caption,
+    tags,
+    images: images.slice(0, MAX_IMAGES),
+    character: meta.character,
+    anime: meta.anime,
+    carouselCount: Math.max(
+      images.length,
+      Number((item && item.carousel_media_count) || 0) || 0
+    ),
+  };
+}
+
+/**
+ * Provider lokal (scraper sendiri): butuh IG_SESSIONID/IG_COOKIE. Tidak
+ * memakai API berbayar, hanya endpoint web Instagram + cookie akun bot.
+ */
+async function fetchViaInstagramApi(url, timeoutMs) {
+  if (!IG_SESSIONID) throw new Error('IG_SESSIONID/IG_COOKIE belum diset');
+  const code = extractShortcode(url);
+  const mediaId = shortcodeToMediaId(code);
+  if (!mediaId) throw new Error('shortcode Instagram tidak valid');
+
+  const headers = {
+    'x-ig-app-id': IG_APP_ID,
+    'User-Agent': IG_UA,
+    Accept: '*/*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    Referer: `https://www.instagram.com/p/${code}/`,
+    Cookie: IG_COOKIE || `sessionid=${IG_SESSIONID}`,
+  };
+  const endpoints = [
+    `https://i.instagram.com/api/v1/media/${mediaId}/info/`,
+    `https://www.instagram.com/api/v1/media/${mediaId}/info/`,
+  ];
+  let lastError = '';
+  for (const endpoint of endpoints) {
+    try {
+      const res = await igFetch(endpoint, { headers, redirect: 'follow' }, timeoutMs);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const item = data && Array.isArray(data.items) ? data.items[0] : null;
+      if (!item) throw new Error('API tidak mengembalikan media');
+      const post = postFromApiItem(item, url);
+      if (!post.images.length) throw new Error('media tidak punya foto');
+      return post;
+    } catch (err) {
+      lastError = err && err.message ? err.message : String(err);
+    }
+  }
+  throw new Error(`Instagram API gagal (${lastError})`);
+}
+
+/**
+ * Gabungkan hasil beberapa provider ke satu post. Foto dideduplikasi per id,
+ * dan versi beresolusi terbaik dipertahankan.
+ */
+function absorbPost(base, extra) {
+  if (!base) return { post: extra, added: extra ? extra.images.length : 0 };
+  if (!extra) return { post: base, added: 0 };
+  const index = new Map(base.images.map((u, i) => [imageId(u), i]));
+  let added = 0;
+  for (const image of extra.images) {
+    if (addImage(base.images, index, image)) added += 1;
+  }
+  if (!base.caption) base.caption = extra.caption;
+  if (!base.tags || !base.tags.length) base.tags = extra.tags || [];
+  if (!base.author) base.author = extra.author;
+  if (!base.username) base.username = extra.username;
+  if (!base.character && extra.character) base.character = extra.character;
+  if (!base.anime && extra.anime) base.anime = extra.anime;
+  base.carouselCount = Math.max(
+    Number(base.carouselCount) || 0,
+    Number(extra.carouselCount) || 0
+  );
+  return { post: base, added };
+}
+
+/**
+ * Provider Jina (tanpa login). Instagram hanya merender satu slide per URL,
+ * jadi halaman di-probe per `?img_index=N` sampai tidak ada foto baru.
+ */
+async function fetchViaJina(url, timeoutMs, options = {}) {
   const headers = {
     Accept: 'text/plain, text/markdown, */*',
     'X-Return-Format': 'markdown',
@@ -609,90 +806,123 @@ async function fetchPost(input, options = {}) {
   };
   if (JINA_KEY) headers.Authorization = `Bearer ${JINA_KEY}`;
 
+  const knownCount = Math.max(0, Number(options.knownCount) || 0);
+  const maxProbes = Math.max(MAX_IMAGES + 2, knownCount + 2);
+  let best = null;
+  let lastError = '';
+  let prevSignature = '';
+  let emptyStreak = 0;
+  let repeatStreak = 0;
+
+  for (let index = 1; index <= maxProbes; index++) {
+    try {
+      // Cache-busting: parameter tambahan hanya untuk Jina, bukan Instagram.
+      const probeUrl = `${JINA_BASE}${url}?img_index=${index}&_cb=${Date.now()}-${index}`;
+      const res = await fetchWithTimeout(probeUrl, { headers, redirect: 'follow' }, timeoutMs);
+      if (!res.ok) throw new Error(`Jina Reader gagal (HTTP ${res.status})`);
+      const markdown = await res.text();
+      if (!markdown || markdown.length < 80) {
+        throw new Error('Instagram tidak mengembalikan konten');
+      }
+
+      const post = parsePost(markdown, url);
+      if (!post.images.length) {
+        lastError = 'Tidak ada foto carousel yang bisa diambil.';
+        emptyStreak += 1;
+        if (emptyStreak >= 2) break;
+        continue;
+      }
+      emptyStreak = 0;
+
+      const merged = absorbPost(best, post);
+      best = merged.post;
+      const added = merged.added;
+
+      // Halaman index biasanya berisi slide saat ini + slide berikutnya.
+      // Jangan langsung berhenti saat signature sama: cache Jina bisa
+      // mengembalikan halaman lama, padahal slide berikutnya masih ada.
+      const signature = post.images.map(imageId).join('|');
+      if (knownCount && best.images.length >= knownCount) break;
+      if (best.images.length >= MAX_IMAGES) break;
+      if (added > 0) {
+        repeatStreak = 0;
+      } else if (signature && signature === prevSignature) {
+        repeatStreak += 1;
+        if (repeatStreak >= 3) break;
+      } else {
+        repeatStreak = 0;
+      }
+      prevSignature = signature;
+    } catch (err) {
+      lastError = err && err.message ? err.message : String(err);
+      emptyStreak += 1;
+      if (emptyStreak >= 2) break;
+    }
+  }
+
+  if (!best || !best.images.length) {
+    throw new Error(lastError || 'Jina tidak menemukan foto pada post ini');
+  }
+  return best;
+}
+
+async function fetchPost(input, options = {}) {
+  const url = normalizePostUrl(input);
+  if (!url) throw new Error('Link Instagram tidak valid. Contoh: !cosplay https://www.instagram.com/p/xxxx/');
+
   const timeoutMs = Math.max(15000, Number(options.timeoutMs) || 45000);
   let best = null;
   let lastError = '';
+  let knownCount = 0;
 
-  // vxinstagram adalah jalur utama karena satu request sudah berisi seluruh
-  // carousel (termasuk caption). Jina harus di-probe per slide, lambat, dan
-  // sering berhenti sebelum slide terakhir sehingga foto tampak terpotong.
-  try {
-    best = await fetchViaVxinstagram(url, timeoutMs);
-    log.info(`[COSPLAY] vxinstagram: ${best.images.length} foto`);
-  } catch (err) {
-    lastError = err && err.message ? err.message : String(err);
-    log.warn('[COSPLAY] vxinstagram gagal, coba Jina:', lastError);
+  const merge = (post) => {
+    if (!post) return;
+    const res = absorbPost(best, post);
+    best = res.post;
+    knownCount = Math.max(
+      knownCount,
+      Number(post.carouselCount) || 0,
+      Number(best.carouselCount) || 0
+    );
+  };
+  const needMore = () =>
+    !best || !best.images.length || (knownCount > 0 && best.images.length < knownCount);
+
+  // 1) Scraper lokal dengan cookie/session + proxy (kalau dikonfigurasi).
+  if (IG_SESSIONID) {
+    try {
+      const post = await fetchViaInstagramApi(url, timeoutMs);
+      merge(post);
+      log.info(`[COSPLAY] API IG: ${post.images.length} foto`);
+    } catch (err) {
+      lastError = err && err.message ? err.message : String(err);
+      log.warn('[COSPLAY] API IG gagal, pakai fallback:', lastError);
+    }
   }
 
-  // Fallback: Instagram hanya merender satu slide per URL. Jina membuka slide
-  // sesuai ?img_index=N, jadi probe semuanya sampai tidak ada foto baru.
-  if (!best || !best.images.length) {
-    let prevSignature = '';
-    let emptyStreak = 0;
-    let repeatStreak = 0;
-    const maxProbes = MAX_IMAGES + 2;
+  // 2) Provider publik tanpa login (Jina). Jadi jalur utama kalau cookie kosong.
+  if (needMore()) {
+    try {
+      const post = await fetchViaJina(url, timeoutMs, { knownCount });
+      merge(post);
+      log.info(`[COSPLAY] Jina: ${post.images.length} foto (total ${best.images.length})`);
+    } catch (err) {
+      lastError = err && err.message ? err.message : String(err);
+      log.warn('[COSPLAY] Jina gagal:', lastError);
+    }
+  }
 
-    for (let index = 1; index <= maxProbes; index++) {
-      try {
-        // Cache-busting: parameter tambahan hanya untuk Jina, bukan Instagram.
-        const probeUrl = `${JINA_BASE}${url}?img_index=${index}&_cb=${Date.now()}-${index}`;
-        const res = await fetchWithTimeout(
-          probeUrl,
-          { headers, redirect: 'follow' },
-          timeoutMs
-        );
-        if (!res.ok) throw new Error(`Jina Reader gagal (HTTP ${res.status})`);
-        const markdown = await res.text();
-        if (!markdown || markdown.length < 80) {
-          throw new Error('Instagram tidak mengembalikan konten');
-        }
-
-        const post = parsePost(markdown, url);
-        if (!post.images.length) {
-          lastError = 'Tidak ada foto carousel yang bisa diambil.';
-          emptyStreak += 1;
-          if (emptyStreak >= 2) break;
-          continue;
-        }
-        emptyStreak = 0;
-
-        let added = 0;
-        if (!best) {
-          best = post;
-          added = post.images.length;
-        } else {
-          const seen = new Set(best.images.map(imageId));
-          for (const image of post.images) {
-            if (seen.has(imageId(image))) continue;
-            seen.add(imageId(image));
-            best.images.push(image);
-            added += 1;
-          }
-          if (!best.caption) best.caption = post.caption;
-          if (!best.tags.length) best.tags = post.tags;
-          if (!best.author) best.author = post.author;
-          if (!best.username) best.username = post.username;
-        }
-
-        // Halaman index biasanya berisi slide saat ini + slide berikutnya.
-        // Jangan langsung berhenti saat signature sama: cache Jina bisa
-        // mengembalikan halaman lama, padahal slide berikutnya masih ada.
-        const signature = post.images.map(imageId).join('|');
-        if (best.images.length >= MAX_IMAGES) break;
-        if (added > 0) {
-          repeatStreak = 0;
-        } else if (signature && signature === prevSignature) {
-          repeatStreak += 1;
-          if (repeatStreak >= 3) break;
-        } else {
-          repeatStreak = 0;
-        }
-        prevSignature = signature;
-      } catch (err) {
-        lastError = err && err.message ? err.message : String(err);
-        emptyStreak += 1;
-        if (emptyStreak >= 2) break;
-      }
+  // 3) Provider ketiga sebagai cadangan terakhir.
+  if (needMore()) {
+    try {
+      const post = await fetchViaVxinstagram(url, timeoutMs);
+      merge(post);
+      log.info(
+        `[COSPLAY] vxinstagram: ${post.images.length} foto (total ${best.images.length})`
+      );
+    } catch (err) {
+      lastError = err && err.message ? err.message : String(err);
+      log.warn('[COSPLAY] vxinstagram gagal:', lastError);
     }
   }
 

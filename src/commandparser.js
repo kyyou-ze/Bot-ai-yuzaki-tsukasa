@@ -14,6 +14,7 @@ const KNOWN_COMMANDS = new Set([
   'rangkum', 'ringkas', 'summary',
   'statistik', 'stats', 'stat',
   'topaktif', 'topactive', 'topchat',
+  'welcome', 'sambutan', 'goodbye', 'selamattinggal', 'pamit',
   'anime', 'info', 'news', 'berita', 'cosplay',
   'animechannel', 'anime-channel',
   'peraturan', 'rules',
@@ -70,11 +71,15 @@ function parseCommand(text, trigger) {
 
   const parts = rest.split(/\s+/).filter(Boolean);
   if (parts.length === 0) {
-    return { cmd: '', rest: '', explicit, natural: true };
+    return { cmd: '', rest: '', rawRest: '', explicit, natural: true };
   }
+  // rawRest mempertahankan newline/spasi asli setelah nama perintah. Dipakai
+  // fitur yang menerima teks bebas multi-baris (mis. .welcome set).
+  const tail = rest.match(/^\S+([\s\S]*)$/);
   return {
     cmd: parts[0].toLowerCase(),
     rest: parts.slice(1).join(' '),
+    rawRest: tail ? tail[1].replace(/^[^\S\r\n]+/, '') : '',
     explicit,
     natural: false,
   };

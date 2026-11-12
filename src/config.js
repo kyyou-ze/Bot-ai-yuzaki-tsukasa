@@ -138,6 +138,11 @@ function load() {
     tiktokLocalEnabled: boolEnv(getenv('TIKTOK_LOCAL_ENABLED', 'true'), true),
     tiktokLocalTimeoutMs:
       Math.max(5, intEnv(getenv('TIKTOK_LOCAL_TIMEOUT_SEC', '30'), 30)) * 1000,
+    // Host embed yang dicoba bergantian (pisahkan koma). m.tiktok.com sering
+    // lolos saat www.tiktok.com kena WAF/DNS dari IP panel.
+    tiktokEmbedHosts: splitKeys(
+      getenv('TIKTOK_EMBED_HOSTS', 'https://www.tiktok.com,https://m.tiktok.com')
+    ),
     // Endpoint download video/foto sendiri (placeholder {url}).
     tiktokDlApiUrl: getenv('TIKTOK_DL_API_URL', ''),
     tiktokDlApiKey: getenv('TIKTOK_DL_API_KEY', ''),
