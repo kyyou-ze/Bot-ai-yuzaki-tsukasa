@@ -860,6 +860,12 @@ Admin grup (dan owner bot) bisa mengatur kapan Tsukasa membalas di grup masing-m
 - Semua perintah (`.help`, `.stiker`, `.tagall`, dll.) dan fitur tetap berfungsi di mode mana pun.
 - Di mode `reply`, pesan harus berupa balasan/quote ke pesan lain, lalu menyebut `tsukasa` **atau** membalas pesan bot. Quote video/dokumen/sticker/caption juga dihitung sebagai balasan.
 - Di mode `all`, bot membalas semua pesan grup tanpa perlu trigger.
+- Di semua mode, pesan grup yang datang berdekatan (default 2 detik) digabung dulu sebelum AI membalas. Jadi AI menjawab satu alur percakapan, bukan tiap pesan satu balasan, dan balasan tidak saling mendahului.
+- Balasan AI di grup dibatasi maksimal 2 bubble (chat pribadi tetap 4), dan tidak menempelkan `@mention` owner di setiap balasan.
+- Jarak minimal antar balasan bot di grup 10 detik. Pesan yang jelas ditujukan ke bot (dipanggil `tsukasa` atau reply ke pesan bot) tetap dijawab cepat.
+- Prompt grup memberi tahu AI bahwa ada beberapa pembicara, jadi ia tidak menganggap percakapan hanya dengan satu orang atau menebak nama.
+
+Atur lewat env bila perlu: `GROUP_AI_WINDOW_MS` (jeda penggabungan pesan, default `2000`), `GROUP_AI_COOLDOWN_MS` (jeda antar balasan, default `10000`), dan `GROUP_AI_MAX_BUBBLES` (default `2`).
 
 ### Pesan sambutan & perpisahan per grup
 

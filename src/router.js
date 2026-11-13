@@ -65,6 +65,28 @@ function bannerImageCandidates() {
   )];
 }
 
+// Di grup, pesan yang datang berdekatan digabung dalam satu jendela waktu.
+// Tujuannya: AI menjawab satu alur percakapan, bukan tiap pesan satu balasan.
+const GROUP_AI_WINDOW_MS = Math.max(
+  500,
+  Math.min(10000, parseInt(process.env.GROUP_AI_WINDOW_MS || '2000', 10) || 2000)
+);
+// Pesan yang jelas ditujukan ke bot (dipanggil/di-reply) tidak perlu menunggu
+// lama, cukup jeda pendek supaya pesan lain yang menyusul ikut tergabung.
+const GROUP_AI_DIRECT_MS = 400;
+// Jeda minimal antar balasan bot di grup supaya tidak mendominasi obrolan.
+// 0 = tanpa jeda tambahan (tetap menunggu GROUP_AI_WINDOW_MS).
+const GROUP_AI_COOLDOWN_MS = (() => {
+  const n = parseInt(String(process.env.GROUP_AI_COOLDOWN_MS ?? ''), 10);
+  if (!Number.isFinite(n)) return 10000;
+  return Math.max(0, Math.min(120000, n));
+})();
+// Di grup cukup 2 bubble; di chat pribadi tetap 4.
+const GROUP_AI_MAX_BUBBLES = Math.max(
+  1,
+  Math.min(4, parseInt(process.env.GROUP_AI_MAX_BUBBLES || '2', 10) || 2)
+);
+
 function activeRentalOf(jid) {
   const rentals = global.db && global.db.sewa && global.db.sewa.rentals;
   const rental = rentals && rentals[jid];
@@ -289,6 +311,8 @@ class Router {
     this.guard = groupGuard || new GroupGuard(cfg, store);
     this.heavyLimiter = new RateLimiter({ maxEntries: 2000 });
     this.statusMentionSeen = new Set();
+    // Antrean balasan AI per grup: { items, timer, running }.
+    this.groupAiQueues = new Map();
     kaguya.configure(cfg);
   }
 
@@ -1881,8 +1905,6 @@ class Router {
     }
 
     // AI chat
-    const state = this.store.get(chat);
-
     // Fallback nama tampilan: pakai pushName WhatsApp jika user belum pernah
     // memperkenalkan diri. Supaya bot memanggil nama user yang sedang chat,
     // bukan menebak nama owner.
@@ -1898,27 +1920,133 @@ class Router {
     const senderName =
       memory.getUserName(sender) || String(m.pushName || '').trim() || jidUser(sender);
 
+    if (isGroup) {
+      // Di grup, pesan yang datang berdekatan digabung dulu. AI lalu menjawab
+      // satu alur percakapan, bukan tiap pesan satu balasan.
+      this.queueGroupAi(chat, {
+        m,
+        isOwner,
+        txt,
+        sender,
+        senderName,
+        direct: Boolean(hasTrig || quotedFromBot),
+      });
+      return;
+    }
+
+    await this.generateAiReply({
+      chat,
+      m,
+      isOwner,
+      txt,
+      sender,
+      senderName,
+      ownerCandidates,
+    });
+  }
+
+  /** Jeda sebelum batch grup berikutnya diproses. */
+  groupAiDelay(q) {
+    const since = Date.now() - Number(q.lastReplyAt || 0);
+    return Math.max(GROUP_AI_WINDOW_MS, GROUP_AI_COOLDOWN_MS - since);
+  }
+
+  /** Jadwalkan flush batch grup berikutnya. */
+  scheduleGroupAi(chat, q) {
+    if (!q || q.running || q.timer || !q.items.length) return;
+    const direct = q.items.some((it) => it.direct);
+    const delay = direct ? GROUP_AI_DIRECT_MS : this.groupAiDelay(q);
+    q.timer = setTimeout(() => {
+      q.timer = null;
+      this.flushGroupAi(chat).catch((err) => {
+        log.error(`[AI-GROUP] gagal membalas ${chat}: ${shortError(err)}`);
+      });
+    }, delay);
+    if (typeof q.timer.unref === 'function') q.timer.unref();
+  }
+
+  /** Kumpulkan pesan grup dalam satu jendela waktu, lalu balas sekali. */
+  queueGroupAi(chat, item) {
+    let q = this.groupAiQueues.get(chat);
+    if (!q) {
+      q = { items: [], timer: null, running: false, lastReplyAt: 0 };
+      this.groupAiQueues.set(chat, q);
+    }
+    q.items.push(item);
+    if (q.running) return;
+    // Pesan yang ditujukan langsung ke bot boleh memotong jeda tunggu.
+    if (q.timer && item.direct) {
+      clearTimeout(q.timer);
+      q.timer = null;
+    }
+    this.scheduleGroupAi(chat, q);
+  }
+
+  /** Proses satu batch pesan grup dengan satu panggilan AI. */
+  async flushGroupAi(chat) {
+    const q = this.groupAiQueues.get(chat);
+    if (!q || q.running || !q.items.length) return;
+    q.running = true;
+    const batch = q.items.splice(0, q.items.length);
+
+    try {
+      const last = batch[batch.length - 1];
+      const lines = batch
+        .map((it) => `[${it.senderName || 'User'}]: ${it.txt}`)
+        .join('\n');
+      const combined = [
+        'Ini percakapan grup WhatsApp. Beberapa pesan terakhir:',
+        lines,
+        '',
+        'Balas sebagai Tsukasa untuk keseluruhan percakapan di atas.',
+        'Tanggapi alur dan pesan terakhir yang paling relevan. Jangan membalas tiap baris satu per satu.',
+      ].join('\n');
+
+      await this.generateAiReply({
+        chat,
+        m: last.m,
+        isOwner: last.isOwner,
+        txt: combined,
+        sender: last.sender,
+        senderName: last.senderName,
+        group: true,
+      });
+    } finally {
+      q.running = false;
+      q.lastReplyAt = Date.now();
+      if (q.items.length) this.scheduleGroupAi(chat, q);
+      else this.groupAiQueues.delete(chat);
+    }
+  }
+
+  /** Satu panggilan AI + pengiriman bubble, dipakai chat pribadi dan batch grup. */
+  async generateAiReply({ chat, m, isOwner, txt, sender, senderName, group = false, ownerCandidates = [] }) {
+    const state = this.store.get(chat);
+
     // Mode dewasa otomatis: hanya di chat pribadi owner. Jika owner memulai
     // percakapan hot, bot mengikuti selama 30 menit; "stop" mengembalikan normal.
-    const ownerDm = isOwner && !isGroupJid(chat);
-    let adult = ownerDm && state.adult;
-    if (ownerDm && isStopCue(txt)) {
-      if (state.adult) await this.store.setAdult(chat, false);
-      adult = false;
-      log.info(`[ADULT] nonaktif untuk chat=${chat}`);
-    } else if (ownerDm && isHotCue(txt)) {
-      // Aktif otomatis tanpa pemberitahuan di chat.
-      adult = true;
-      await this.store.setAdult(chat, true);
-      log.info(`[ADULT] aktif untuk chat=${chat} sender=${sender}`);
-    } else if (adult) {
-      // Perpanjang selama owner masih mengobrol (sliding 30 menit).
-      await this.store.refreshAdult(chat).catch(() => {});
-    } else if (!isGroupJid(chat) && isHotCue(txt)) {
-      log.info(
-        `[ADULT] cue terdeteksi tapi bukan owner. chat=${chat} sender=${sender} ` +
-          `kandidat=${ownerCandidates.join(',')}`
-      );
+    let adult = false;
+    if (!group) {
+      const ownerDm = isOwner && !isGroupJid(chat);
+      adult = ownerDm && state.adult;
+      if (ownerDm && isStopCue(txt)) {
+        if (state.adult) await this.store.setAdult(chat, false);
+        adult = false;
+        log.info(`[ADULT] nonaktif untuk chat=${chat}`);
+      } else if (ownerDm && isHotCue(txt)) {
+        // Aktif otomatis tanpa pemberitahuan di chat.
+        adult = true;
+        await this.store.setAdult(chat, true);
+        log.info(`[ADULT] aktif untuk chat=${chat} sender=${sender}`);
+      } else if (adult) {
+        // Perpanjang selama owner masih mengobrol (sliding 30 menit).
+        await this.store.refreshAdult(chat).catch(() => {});
+      } else if (isHotCue(txt)) {
+        log.info(
+          `[ADULT] cue terdeteksi tapi bukan owner. chat=${chat} sender=${sender} ` +
+            `kandidat=${ownerCandidates.join(',')}`
+        );
+      }
     }
 
     // Suasana hati & kondisi waktu Tsukasa diperbarui otomatis dari obrolan.
@@ -1929,6 +2057,17 @@ class Router {
       isOwner && !isGroupJid(chat)
     );
     const emotionPrompt = emotion.prompt(mood, timeCtx);
+
+    // Panduan tambahan saat menjawab di grup: fokus ke alur, bukan satu orang.
+    const groupPrompt = group
+      ? [
+          '## KONTEKS GRUP',
+          '- Ini grup, bukan chat pribadi. Banyak orang ikut bicara.',
+          '- Ikuti alur percakapan; jangan hanya menanggapi satu orang seolah berduaan.',
+          '- Jangan menandai/@mention siapa pun dan jangan menebak nama.',
+          '- Balas singkat, maksimal 2 bubble, dan jangan mengulang yang sudah dijawab orang lain.',
+        ].join('\n')
+      : '';
 
     const hist = memory.load(chat);
     const ctxTxt = memory.buildContext(hist, txt, sender);
@@ -1942,10 +2081,11 @@ class Router {
       ctxTxt,
       sender,
       adult,
-      [emotionPrompt, this.aiTools.systemPrompt({ allowSearch: true })]
+      [emotionPrompt, groupPrompt, this.aiTools.systemPrompt({ allowSearch: true })]
         .filter(Boolean)
         .join('\n\n'),
-      isOwner
+      isOwner,
+      group
     );
 
     let aiParsed = this.aiTools.parse(rawReply);
@@ -1970,10 +2110,11 @@ class Router {
         searchCtx,
         sender,
         adult,
-        [emotionPrompt, this.aiTools.systemPrompt({ allowSearch: false })]
+        [emotionPrompt, groupPrompt, this.aiTools.systemPrompt({ allowSearch: false })]
           .filter(Boolean)
           .join('\n\n'),
-        isOwner
+        isOwner,
+        group
       );
       aiParsed = this.aiTools.parse(rawReply);
     }
@@ -1981,15 +2122,17 @@ class Router {
     const reply = String(aiParsed.text || '').trim();
     // AI boleh memecah balasan menjadi beberapa bubble dengan tag [[next]],
     // supaya terasa seperti orang chatting. Simpan riwayat sebagai satu turn.
-    const bubbles = splitChatBubbles(reply, 4);
+    const bubbles = splitChatBubbles(reply, group ? GROUP_AI_MAX_BUBBLES : 4);
     memory.saveTurn(chat, 'user', txt, senderName);
     if (bubbles.length) memory.saveTurn(chat, 'assistant', bubbles.join('\n'));
 
     for (let i = 0; i < bubbles.length; i += 1) {
       const first = i === 0;
-      const out = first
-        ? this.owner.decorate(isOwner, bubbles[i])
-        : { text: bubbles[i], mentions: [] };
+      // Di grup jangan tempel @mention owner di setiap balasan.
+      const out =
+        first && isOwner && !group
+          ? this.owner.decorate(isOwner, bubbles[i])
+          : { text: bubbles[i], mentions: [] };
       await wa.sendText(chat, out.text, first ? m : undefined, out.mentions);
       // Jeda kecil antarbubble agar terasa natural, bukan spam.
       if (i < bubbles.length - 1) {

@@ -209,7 +209,7 @@ function containsMinorCue(text) {
   return MINOR_CUE.test(String(text || ''));
 }
 
-async function askAsPersona(cfg, persona, pro, userText, senderJID, adult, extraSystem, isOwner) {
+async function askAsPersona(cfg, persona, pro, userText, senderJID, adult, extraSystem, isOwner, group = false) {
   const actualUserInput = memory.extractActualUserInput(userText);
 
   const name = memory.detectNameRequest(actualUserInput);
@@ -244,19 +244,26 @@ async function askAsPersona(cfg, persona, pro, userText, senderJID, adult, extra
     sys += `\n\n${adultPrompt}`;
   }
 
-  const userName = memory.getUserName(senderJID);
-  if (userName) {
-    sys += `\n\nINFO TAMBAHAN: Nama pengguna yang sedang berbicara denganmu adalah ${userName}. Gunakan nama ini secara natural dalam percakapan, terutama saat menyapa atau merespons.`;
+  // Di grup, jangan mengunci percakapan ke satu nama. Transkrip batch sudah
+  // memuat nama tiap pembicara, jadi model harus menanggapi alurnya.
+  if (group) {
+    sys += `\n\nINFO TAMBAHAN: Ini percakapan grup. Ada beberapa orang dengan nama masing-masing di transkrip. Jangan menganggap hanya satu orang yang sedang berbicara, jangan menandai/@mention siapa pun, dan jangan menebak nama.`;
+    sys += `\n\nHUBUNGAN: Semua peserta grup adalah teman/orang biasa. Jangan bersikap manja atau romantis kepada siapa pun di grup, termasuk owner.`;
   } else {
-    sys += `\n\nINFO TAMBAHAN: Nama pengguna ini belum diketahui. Panggil dia "kamu" dan jangan menebak atau mengarang nama.`;
-  }
+    const userName = memory.getUserName(senderJID);
+    if (userName) {
+      sys += `\n\nINFO TAMBAHAN: Nama pengguna yang sedang berbicara denganmu adalah ${userName}. Gunakan nama ini secara natural dalam percakapan, terutama saat menyapa atau merespons.`;
+    } else {
+      sys += `\n\nINFO TAMBAHAN: Nama pengguna ini belum diketahui. Panggil dia "kamu" dan jangan menebak atau mengarang nama.`;
+    }
 
-  // Hubungan dengan lawan bicara: hanya owner yang istimewa. Ini mencegah
-  // model menganggap semua orang sebagai Kyouu/pasangannya.
-  if (isOwner) {
-    sys += `\n\nHUBUNGAN: Pengguna ini adalah Kyouu, owner bot sekaligus pasanganmu. Hanya dia yang boleh kau perlakukan istimewa (manja/romantis).`;
-  } else {
-    sys += `\n\nHUBUNGAN: Pengguna ini BUKAN owner dan bukan pasanganmu. Perlakukan sebagai orang biasa/teman dengan sopan dan ramah, tanpa nada manja atau romantis. Jangan memanggilnya Kyouu.`;
+    // Hubungan dengan lawan bicara: hanya owner yang istimewa. Ini mencegah
+    // model menganggap semua orang sebagai Kyouu/pasangannya.
+    if (isOwner) {
+      sys += `\n\nHUBUNGAN: Pengguna ini adalah Kyouu, owner bot sekaligus pasanganmu. Hanya dia yang boleh kau perlakukan istimewa (manja/romantis).`;
+    } else {
+      sys += `\n\nHUBUNGAN: Pengguna ini BUKAN owner dan bukan pasanganmu. Perlakukan sebagai orang biasa/teman dengan sopan dan ramah, tanpa nada manja atau romantis. Jangan memanggilnya Kyouu.`;
+    }
   }
 
   // Instruksi tambahan dari fitur (mis. daftar tool AI). Ditaruh paling akhir
