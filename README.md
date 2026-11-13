@@ -150,6 +150,7 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `HOST` | `0.0.0.0` | Host bind HTTP API |
 | `SEND_API_KEY` | - | API key untuk `/send` |
 | `SEND_RATE_PER_MIN` | `10` | Rate limit `/send` per IP |
+| `HTTP_CORS_ORIGIN` | `*` | Origin yang diizinkan membaca HTTP API. Isi domain landing page untuk membatasi |
 | `GEMINI_API_KEYS` / `GEMINI_API_KEY` | - | API key Gemini (bisa koma) — wajib |
 | `GEMINI_TEXT_MODEL` | `gemini-3.5-flash-lite` | Model chat |
 | `ELEVENLABS_API_KEY` / `ELEVENLABS_VOICE_ID` | - | Untuk fitur VN TTS |
@@ -924,9 +925,12 @@ Semua pengaturan di atas juga bisa diubah lewat chat:
 ## HTTP API
 
 - `GET /` atau `GET /healthz` → `ok`
+- `GET /status` → status publik bot dalam JSON (uptime, kesiapan WhatsApp, jumlah kategori/command/fitur, counter pesan & command). Tanpa API key, dipakai landing page `tsukasa-web`.
 - `GET /help` → daftar endpoint
 - `GET /metrics` → metrik runtime dalam JSON (uptime, counter, error terakhir, antrean unduhan). Jika `SEND_API_KEY` diisi, sertakan header `X-API-Key`.
 - `POST/GET /send?to=628xxx&text=...` dengan header `X-API-Key: <SEND_API_KEY>` (jika dikonfigurasi). Mendukung JSON body juga.
+
+Semua respons menyertakan header CORS. Batasi origin lewat `HTTP_CORS_ORIGIN` (default `*`); isi domain landing page, mis. `https://tsukasa.vercel.app`, agar hanya situs itu yang bisa membaca `/status`.
 
 ## Catatan Teknis
 

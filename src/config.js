@@ -90,6 +90,9 @@ function load() {
     host: getenv('HOST', '0.0.0.0'),
     sendApiKey: process.env.SEND_API_KEY || '',
     sendRatePerMin: mustAtoi(getenv('SEND_RATE_PER_MIN', '10'), 10),
+    // Origin yang diizinkan mengakses HTTP API (dipakai landing page).
+    // `*` membuka endpoint status publik; isi domain web untuk membatasi.
+    corsOrigin: getenv('HTTP_CORS_ORIGIN', '*'),
     geminiKeys: [],
     elevenApiKey: process.env.ELEVENLABS_API_KEY || '',
     elevenVoice: getenv('ELEVENLABS_VOICE_ID', 'iWydkXKoiVtvdn4vLKp9'),

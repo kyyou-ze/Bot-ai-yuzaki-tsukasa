@@ -6,6 +6,9 @@ const { destJid, onlyDigits } = require('./util');
 const wa = require('./wa');
 const metrics = require('./metrics');
 const { downloadQueue } = require('./downloadqueue');
+const kaguya = require('./kaguya');
+const { featureList } = require('./featurescatalog');
+const { version: VERSION } = require('../package.json');
 
 function clientIP(req) {
   const xff = String(req.headers['x-forwarded-for'] || '');
@@ -59,6 +62,61 @@ class HttpApi {
     this.rateCap = Math.max(1, Number(cfg.sendRatePerMin) || 10);
     this.buckets = new Map();
     this.server = null;
+    // Origin yang diizinkan untuk landing page. `*` aman untuk endpoint
+    // status publik; batasi bila ingin hanya domain tertentu.
+    this.corsOrigin = String(cfg.corsOrigin || '*').trim() || '*';
+    this.catalogCounts = null;
+  }
+
+  corsHeaders() {
+    return {
+      'Access-Control-Allow-Origin': this.corsOrigin,
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
+      'Access-Control-Max-Age': '86400',
+      Vary: 'Origin',
+    };
+  }
+
+  catalogStats() {
+    if (this.catalogCounts) return this.catalogCounts;
+    let categories = 0;
+    let commands = 0;
+    try {
+      const catalog = kaguya.getCatalog();
+      categories = catalog && Array.isArray(catalog.categories) ? catalog.categories.length : 0;
+      commands = catalog && catalog.byCommand ? catalog.byCommand.size : 0;
+    } catch {
+      /* katalog belum siap; biarkan 0 */
+    }
+    let features = 0;
+    try {
+      features = featureList().length;
+    } catch {
+      /* abaikan */
+    }
+    this.catalogCounts = { categories, commands, features };
+    return this.catalogCounts;
+  }
+
+  publicStatus() {
+    const snap = metrics.snapshot();
+    const counts = this.catalogStats();
+    return {
+      ok: true,
+      bot: (this.cfg && this.cfg.botName) || 'Tsukasa',
+      version: VERSION,
+      uptimeSec: Math.floor(process.uptime()),
+      waReady: Boolean(this.isReady()),
+      categories: counts.categories,
+      commands: counts.commands,
+      features: counts.features,
+      counters: {
+        messages: snap.counters.messages,
+        commands: snap.counters.commands,
+      },
+      time: new Date().toISOString(),
+    };
   }
 
   allow(key) {
@@ -88,11 +146,20 @@ class HttpApi {
   }
 
   send(res, status, body, type) {
-    res.writeHead(status, { 'Content-Type': type || 'text/plain; charset=utf-8' });
+    res.writeHead(status, {
+      'Content-Type': type || 'text/plain; charset=utf-8',
+      ...this.corsHeaders(),
+    });
     res.end(body);
   }
 
   async handleRequest(req, res) {
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, this.corsHeaders());
+      res.end();
+      return;
+    }
+
     let url;
     try {
       url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
@@ -106,12 +173,25 @@ class HttpApi {
       return;
     }
 
+    if (url.pathname === '/status') {
+      // Endpoint publik untuk landing page. Tidak memuat data sensitif dan
+      // tidak memerlukan API key; CORS diatur lewat HTTP_CORS_ORIGIN.
+      this.send(
+        res,
+        200,
+        JSON.stringify(this.publicStatus()),
+        'application/json; charset=utf-8'
+      );
+      return;
+    }
+
     if (url.pathname === '/help') {
       this.send(
         res,
         200,
         'Endpoints:\n' +
           'GET /healthz -> ok\n' +
+          'GET /status -> status publik bot (JSON)\n' +
           'GET /metrics -> metrik runtime (JSON)\n' +
           'GET /help -> bantuan ini\n' +
           'POST/GET /send?to=62xxxx&text=... (Header: X-API-Key)\n'
