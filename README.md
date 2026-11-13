@@ -1036,7 +1036,8 @@ Semua output panel memakai format yang sama:
 Bot menjaga sesi dan koneksi WhatsApp tetap sehat tanpa intervensi manual.
 
 - **Backup sesi otomatis** — folder `SESSION_DIR` disalin ke `SESSION_BACKUP_DIR` setiap `SESSION_BACKUP_INTERVAL_H` jam. Hanya `SESSION_BACKUP_KEEP` backup terakhir yang disimpan. Backup pertama langsung dijalankan saat bot start. Status/backup manual: `.backup` dan `.backup run` (owner).
-- **Reconnect backoff** — saat koneksi putus, jeda reconnect naik eksponensial (2s, 4s, 8s, ...) dengan jitter ±10%, dibatasi `RECONNECT_MAX_DELAY_SEC`. Sesi logout tetap menghentikan bot agar QR baru bisa dipindai.
+- **Reconnect backoff** — saat koneksi putus, jeda reconnect naik eksponensial (2s, 4s, 8s, ...) dengan jitter ±10%, dibatasi `RECONNECT_MAX_DELAY_SEC`.
+- **Pemulihan sesi logout** — saat WhatsApp mencabut sesi (401), folder sesi lama dipindahkan ke `session.loggedout-<waktu>` lalu bot masuk alur pairing baru (QR atau `PAIRING_NUMBER`) tanpa restart manual. Dibatasi 5 pemulihan per 10 menit; setelah itu bot berhenti agar tidak menjadi loop. Matikan dengan `SESSION_RESET_ON_LOGOUT=false`.
 - **Antrean unduhan** — unduhan HTTP (`downloadBytes`) dan media WhatsApp (`downloadMedia`) melewati antrean global dengan batas `DOWNLOAD_QUEUE_CONCURRENCY`. Ini mencegah RAM/bandwidth habis saat banyak permintaan berat bersamaan.
 - **Metrik & health** — `.health`, `.status`, dan `GET /metrics` menampilkan jumlah pesan, command, error, reconnect, antrean unduhan, serta status backup. `GET /metrics` mengembalikan JSON.
 - **Notifikasi error owner** — setiap log level `error` dicatat ke metrik dan dikirim ke owner lewat WhatsApp, dibatasi `HEALTH_ALERT_COOLDOWN_SEC` agar tidak spam. Matikan dengan `HEALTH_ALERT_ENABLED=false`.
@@ -1088,7 +1089,8 @@ Binary cloudflared diunduh otomatis sekali ke `data/bin/`. Bila hosting membloki
 
 ## Troubleshooting
 
-- **Tidak ada QR/pairing code**: Periksa log, pastikan folder sesi bisa ditulis dan `PAIRING_NUMBER` benar (kode negara, tanpa `+`).
+- **Tidak ada QR/pairing code**: Periksa log, pastikan folder sesi bisa ditulis dan `PAIRING_NUMBER` benar (kode negara, tanpa `+`). Kalau sebelumnya pairing sempat gagal, `creds.json` bisa menyimpan `me` setengah jadi; bot sekarang memindahkannya otomatis ke `session.loggedout-<waktu>` saat menerima 401.
+- **Kode pairing kedaluwarsa**: kode hanya berlaku singkat. Bot meminta kode baru tiap ±60 detik selama belum terhubung, jadi lihat console lagi bila kode lama ditolak.
 - **`GEMINI_API_KEYS` fatal**: Tambahkan minimal satu API key Gemini.
 - **Fitur hijabin/TTS gagal**: Cek kredensial di environment.
 - **Sticker animasi gagal**: Pastikan `npm install` selesai (ffmpeg-static terpasang) atau set `FFMPEG_PATH`.

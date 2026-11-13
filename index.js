@@ -1,5 +1,7 @@
 'use strict';
 
+const path = require('path');
+
 // Sinkronkan .env dengan .env.example SEBELUM dotenv memuatnya, supaya
 // variabel baru dari update langsung tersedia pada start/restart ini juga.
 const { syncEnvFile } = require('./src/envsync');
@@ -45,6 +47,7 @@ const { SessionBackup } = require('./src/backup');
 const { AuditLog } = require('./src/audit');
 const { Promo } = require('./src/promo');
 const { hardenAuthState } = require('./src/waauth');
+const { resetLoggedOutSession } = require('./src/sessionreset');
 
 // Logger Baileys sudah diarahkan ke logger aplikasi (lihat src/wa.js).
 const logger = wa.logger;
@@ -92,6 +95,18 @@ function isTransientWaError(tag, message) {
   if (!/(timed out|timeout)/.test(text)) return false;
   return /unexpected error in '(init queries|presence update requests)'/.test(text);
 }
+
+// ---------------- Pemulihan sesi WhatsApp ----------------
+
+// Saat WhatsApp mencabut sesi (401), kredensial lama tidak bisa dipakai lagi.
+// Baileys akan terus mencoba "login" dengan device yang tidak terdaftar dan
+// gagal berulang, sehingga QR/pairing code tidak pernah muncul. Folder sesi
+// dipindahkan (bukan dihapus) agar bot masuk alur pairing baru tanpa perlu
+// restart manual dari panel.
+const SESSION_RESET_ON_LOGOUT =
+  String(process.env.SESSION_RESET_ON_LOGOUT || 'true')
+    .trim()
+    .toLowerCase() !== 'false';
 
 async function main() {
   const cfg = load();
@@ -256,6 +271,7 @@ async function main() {
     const { state, saveCreds } = await useMultiFileAuthState(cfg.sessionDir);
     hardenAuthState(baileys, state, cfg.sessionDir);
     let pairingRequested = false;
+    let pairingRequestedAt = 0;
 
     let version;
     try {
@@ -269,7 +285,9 @@ async function main() {
       auth: state,
       logger,
       printQRInTerminal: false,
-      browser: ['Tsukasa', 'Chrome', '1.0.0'],
+      // Format Baileys: [platform, browser, versi]. Platform harus dikenal
+      // WhatsApp; nilai kustom seperti "Tsukasa" bisa ditolak saat pairing.
+      browser: ['Ubuntu', 'Chrome', '22.04.4'],
       syncFullHistory: false,
       generateHighQualityLinkPreview: false,
       markOnlineOnConnect: true,
@@ -335,8 +353,13 @@ async function main() {
 
       if (qr) {
         if (cfg.pairingNumber) {
-          if (!pairingRequested) {
+          // Kode pairing hanya berlaku singkat. Minta ulang saat QR berganti
+          // supaya user tidak terkunci pada kode yang sudah kedaluwarsa.
+          const now = Date.now();
+          const shouldRefresh = pairingRequestedAt > 0 && now - pairingRequestedAt >= 60000;
+          if (!pairingRequested || shouldRefresh) {
             pairingRequested = true;
+            pairingRequestedAt = now;
             sock
               .requestPairingCode(cfg.pairingNumber)
               .then((code) => {
@@ -344,6 +367,8 @@ async function main() {
                 log.info('[WA] Buka WhatsApp > Perangkat Tertaut > Tautkan dengan nomor telepon.');
               })
               .catch((err) => {
+                // Biarkan QR berikutnya mencoba minta kode baru.
+                pairingRequested = false;
                 log.error('[WA] Gagal minta pairing code:', err.message);
                 log.info('[WA] Fallback ke QR:');
                 qrcode.generate(qr, { small: true });
@@ -410,8 +435,38 @@ async function main() {
           lastDisconnect.error.output.statusCode;
 
         if (statusCode === DisconnectReason.loggedOut) {
-          log.error('[WA] Sesi logout. Hapus folder sesi lalu jalankan ulang untuk scan QR.');
-          process.exit(1);
+          log.error('[WA] Sesi logout: perangkat tidak lagi tertaut.');
+          if (!SESSION_RESET_ON_LOGOUT) {
+            log.error(
+              '[WA] SESSION_RESET_ON_LOGOUT=off. Hapus folder sesi lalu restart untuk pairing ulang.'
+            );
+            process.exit(1);
+          }
+          const reset = resetLoggedOutSession(cfg.sessionDir);
+          if (!reset.ok) {
+            log.error(
+              `[WA] Tidak bisa menyiapkan sesi baru (${reset.reason}). Restart manual diperlukan.`
+            );
+            process.exit(1);
+          }
+          if (reset.moved) {
+            log.warn(
+              `[WA] Sesi lama dipindahkan ke ${path.basename(reset.moved)}. Lanjut pairing baru (QR/kode).`
+            );
+          } else {
+            log.warn('[WA] Folder sesi belum ada. Lanjut pairing baru (QR/kode).');
+          }
+          reconnectAttempts = 0;
+          metrics.setGauge('reconnectAttempts', 0);
+          if (reconnectTimer) return;
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            startSocket().catch((err) => {
+              log.error('[WA] gagal memulai pairing baru:', err.message);
+              setTimeout(() => startSocket().catch(() => {}), 5000);
+            });
+          }, 1500);
+          return;
         }
 
         reconnectAttempts += 1;
