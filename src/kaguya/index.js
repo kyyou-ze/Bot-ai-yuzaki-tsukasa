@@ -291,7 +291,19 @@ function setGlobals(cfg) {
   g.replyCardOn = false;
   g.multiplier = 38;
   g.fitur = g.fitur || {};
-  g.thumb = g.thumb || {};
+  // Jangan bawa banner/aset bot lama (Kaguya). Isi hanya kalau memang
+  // diinginkan lewat THUMB_MENU_URL / THUMB_STORE_URL.
+  g.audioMenu = String(process.env.AUDIO_MENU_URL || '').trim();
+  g.thumb = {};
+  const thumbMenu = String(process.env.THUMB_MENU_URL || '').trim();
+  const thumbStore = String(process.env.THUMB_STORE_URL || '').trim();
+  if (thumbMenu) {
+    g.thumb.utama = thumbMenu;
+    g.thumb.menu = thumbMenu;
+  }
+  if (thumbStore) g.thumb.store = thumbStore;
+  // Sticker ikut identitas Tsukasa, bukan bot lama.
+  g.stickerPack = { packname: g.namebot, author: g.namebot };
   g.prefix = Array.isArray(g.prefix) ? g.prefix : ['.'];
   g.isPublic = () => true;
   applySewaGlobals(g, cfg || {});

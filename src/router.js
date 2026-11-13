@@ -55,6 +55,16 @@ const sewaNoticeAt = new Map();
 const DEFAULT_BANNER_IMAGE =
   'https://raw.githubusercontent.com/kyyou-ze/tsukasa-img/refs/heads/main/Profil%20Anime%20Pastel%20Ungu%20Yuzaki%20Tsukasa.png';
 
+// Kandidat gambar banner, dicoba berurutan sampai ada yang berhasil diunduh.
+// Ini mencegah banner hilang hanya karena satu URL env sudah mati.
+function bannerImageCandidates() {
+  return [...new Set(
+    [process.env.MENU_IMAGE_URL, process.env.PROMO_IMAGE_URL, DEFAULT_BANNER_IMAGE]
+      .map((v) => String(v || '').trim())
+      .filter(Boolean)
+  )];
+}
+
 function activeRentalOf(jid) {
   const rentals = global.db && global.db.sewa && global.db.sewa.rentals;
   const rental = rentals && rentals[jid];
@@ -1191,20 +1201,21 @@ class Router {
         if (bang.cmd === 'menu') {
           // Diagnostik banner: `.menu banner` (khusus owner).
           if (isOwner && /^banner$/i.test(String(bang.rest || '').trim())) {
-            const report = await menuBanner.testMenuBanner({
-              imageUrl:
-                process.env.MENU_IMAGE_URL ||
-                process.env.PROMO_IMAGE_URL ||
-                DEFAULT_BANNER_IMAGE,
-              linkUrl:
-                process.env.MENU_LINK_URL ||
-                process.env.PROMO_URL ||
-                (this.cfg && this.cfg.promo && this.cfg.promo.url) ||
-                process.env.MENU_IMAGE_URL,
-              title: (this.cfg && this.cfg.botName) || 'Tsukasa',
-              description: 'Sticker, unduhan, game grup, dan moderasi.',
-            });
-            const i = report.info || {};
+            let report = null;
+            for (const imageUrl of bannerImageCandidates()) {
+              report = await menuBanner.testMenuBanner({
+                imageUrl,
+                linkUrl:
+                  process.env.MENU_LINK_URL ||
+                  process.env.PROMO_URL ||
+                  (this.cfg && this.cfg.promo && this.cfg.promo.url) ||
+                  imageUrl,
+                title: (this.cfg && this.cfg.botName) || 'Tsukasa',
+                description: 'Sticker, unduhan, game grup, dan moderasi.',
+              });
+              if (report.ok) break;
+            }
+            const i = (report && report.info) || {};
             const kb = (n) => `${(Number(n) / 1024).toFixed(1)} KB`;
             const short = (v, n) => {
               const s = String(v || '');
@@ -1261,9 +1272,8 @@ class Router {
             }
           }
 
-          // Banner dikirim sebagai pesan pendek terpisah tepat di atas menu.
-          // Kalau URL ditempel di akhir menu, ia tenggelam di bagian "Baca
-          // selengkapnya" sehingga kartu gambarnya tidak terlihat.
+          // Banner hanya untuk menu utama. Link ditaruh paling atas supaya
+          // tidak ikut terlipat di bagian "Baca selengkapnya".
           let linkPreview = null;
           let linkTarget = '';
           if (!String(bang.rest || '').trim()) {
@@ -1272,31 +1282,21 @@ class Router {
               process.env.PROMO_URL ||
               (this.cfg && this.cfg.promo && this.cfg.promo.url) ||
               '';
-            linkPreview = await menuBanner.buildMenuPreview({
-              imageUrl:
-                process.env.MENU_IMAGE_URL ||
-                process.env.PROMO_IMAGE_URL ||
-                DEFAULT_BANNER_IMAGE,
-              linkUrl: linkTarget || process.env.MENU_IMAGE_URL,
-              title: (this.cfg && this.cfg.botName) || 'Tsukasa',
-              description: 'Sticker, unduhan, game grup, dan moderasi.',
-            });
-            if (linkPreview && linkTarget) {
-              const botName = (this.cfg && this.cfg.botName) || 'Tsukasa';
-              await wa.sendText(
-                chat,
-                `${botName} — bot WhatsApp untuk grup\n${linkTarget}`,
-                null,
-                undefined,
-                linkPreview
-              );
-            } else if (linkTarget) {
-              // Tanpa kartu, tetap taruh link di atas supaya tidak terlipat.
+            for (const imageUrl of bannerImageCandidates()) {
+              linkPreview = await menuBanner.buildMenuPreview({
+                imageUrl,
+                linkUrl: linkTarget || imageUrl,
+                title: (this.cfg && this.cfg.botName) || 'Tsukasa',
+                description: 'Sticker, unduhan, game grup, dan moderasi.',
+              });
+              if (linkPreview) break;
+            }
+            if (linkTarget) {
               menuText = `Info & fitur: ${linkTarget}\n\n${menuText}`;
             }
           }
 
-          await wa.sendText(chat, menuText, m);
+          await wa.sendText(chat, menuText, m, undefined, linkPreview);
           return;
         }
 

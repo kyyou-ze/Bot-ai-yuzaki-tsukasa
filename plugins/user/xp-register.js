@@ -22,7 +22,7 @@ const randomAge = () => Math.floor(Math.random() * (AGE_MAX - AGE_MIN + 1)) + AG
 
 const quick = (text, id) => ({ type: 'reply', text, id })
 
-const FALLBACK_PFP = 'https://cdn.zass.in/qiudOfDPf9.jpg'
+const FALLBACK_PFP = 'https://raw.githubusercontent.com/kyyou-ze/tsukasa-img/refs/heads/main/Profil%20Anime%20Pastel%20Ungu%20Yuzaki%20Tsukasa.png'
 
 // foto profil WA pengirim; kalau tidak ada/privasi ditutup, pakai foto bawaan
 const getProfilePic = async (conn, jid) => {

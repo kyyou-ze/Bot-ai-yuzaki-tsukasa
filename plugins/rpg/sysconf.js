@@ -10,7 +10,7 @@
 import sharp from 'sharp'
 import { buttonsToText } from '../../lib/platform/wa.js'
 
-const THUMB_URL = 'https://cdn.zass.in/NREOIOnmis.jpg'
+const THUMB_URL = 'https://raw.githubusercontent.com/kyyou-ze/tsukasa-img/refs/heads/main/Profil%20Anime%20Pastel%20Ungu%20Yuzaki%20Tsukasa.png'
 const CHANNEL_URL = 'https://whatsapp.com/channel/0029VabymHd4CrfnqPLPzk3n'
 
 // Teks ditaruh dalam bentuk hex supaya tidak gampang di find-and-replace

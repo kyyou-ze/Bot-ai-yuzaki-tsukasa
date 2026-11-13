@@ -20,7 +20,7 @@
 import sharp from 'sharp'
 import { prepareWAMessageMedia } from '@whiskeysockets/baileys'
 
-const THUMB_URL = 'https://cdn.zass.in/NREOIOnmis.jpg'
+const THUMB_URL = 'https://raw.githubusercontent.com/kyyou-ze/tsukasa-img/refs/heads/main/Profil%20Anime%20Pastel%20Ungu%20Yuzaki%20Tsukasa.png'
 const URL = 'https://devcukurukuk.biz.id'
 
 // Teks kredit disimpan dalam bentuk hex supaya tidak gampang di find-and-replace

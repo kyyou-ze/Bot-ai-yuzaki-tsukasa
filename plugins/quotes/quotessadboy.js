@@ -20,7 +20,7 @@ import sharp from 'sharp'
 import { prepareWAMessageMedia } from '@whiskeysockets/baileys'
 
 const URL = 'https://devcukurukuk.biz.id'
-const THUMB_URL = global.thumb?.utama || 'https://cdn.zass.in/tlQJc8Qp8I.jpg'
+const THUMB_URL = global.thumb?.utama || 'https://raw.githubusercontent.com/kyyou-ze/tsukasa-img/refs/heads/main/Profil%20Anime%20Pastel%20Ungu%20Yuzaki%20Tsukasa.png'
 const URL_SADBOY = 'https://raw.githubusercontent.com/zxrow/Asupan/refs/heads/main/gabut/sadboy1.json'
 
 let cache = []

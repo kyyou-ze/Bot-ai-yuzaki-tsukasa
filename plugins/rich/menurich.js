@@ -34,7 +34,7 @@ const LOCAL_FILE = path.join(__dirname, 'menu.html')
 const TTL_MS = 900000 // cache template 15 menit
 // Foto hero. Bisa diganti lewat global.menuRichPhoto di config.js.
 // Foto diunduh bot lalu ditanam ke HTML (sandbox WhatsApp memblokir gambar dari internet).
-const PHOTO_URL = 'https://cdn.zass.in/fzKQWzR6Tp.jpg'
+const PHOTO_URL = 'https://raw.githubusercontent.com/kyyou-ze/tsukasa-img/refs/heads/main/Profil%20Anime%20Pastel%20Ungu%20Yuzaki%20Tsukasa.png'
 const PHOTO_TTL_MS = 6 * 3600000
 const PHOTO_MAX_BYTES = 120 * 1024 // batas ukuran foto yang ditanam
 const DEFAULT_BOT_JID = '867051314767696@bot'
