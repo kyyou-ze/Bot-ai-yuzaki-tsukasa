@@ -33,6 +33,7 @@ const llm = require('./llm');
 const emotion = require('./emotion');
 const memory = require('./memory');
 const wa = require('./wa');
+const menuBanner = require('./menubanner');
 const { isGroupJid, jidUser, formatDateTime, splitChatBubbles } = require('./util');
 const { shortError } = require('./logfmt');
 const { isHotCue, isStopCue } = require('./adultmode');
@@ -1092,35 +1093,26 @@ class Router {
             uptime: this.formatUptime(process.uptime()),
           });
 
-          // Banner hanya untuk menu utama. Caption WhatsApp terbatas, jadi
-          // gambar dikirim dulu lalu katalog teks menyusul.
+          let menuText =
+            menu ||
+            `Kategori *${String(bang.rest || '').trim()}* tidak ditemukan.\nCoba ${usedPrefix}menu atau ${usedPrefix}menu all.`;
+
+          // Banner hanya untuk menu utama: dikirim sebagai link preview
+          // (kartu gambar), bukan foto terpisah.
+          let linkPreview = null;
           if (!String(bang.rest || '').trim()) {
-            const imageUrl = String(process.env.MENU_IMAGE_URL || '').trim();
-            if (imageUrl) {
-              try {
-                const res = await fetch(imageUrl, {
-                  signal: AbortSignal.timeout(15000),
-                });
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const type = String(res.headers.get('content-type') || '');
-                if (!/^image\//i.test(type)) {
-                  throw new Error(`bukan gambar (${type || 'tanpa content-type'})`);
-                }
-                const buf = Buffer.from(await res.arrayBuffer());
-                if (buf.length > 8 * 1024 * 1024) throw new Error('gambar terlalu besar');
-                await wa.sendImage(chat, buf, '', m, type);
-              } catch (err) {
-                log.warn('[MENU] banner gagal dimuat:', err && err.message ? err.message : err);
-              }
+            linkPreview = await menuBanner.buildMenuPreview({
+              imageUrl: process.env.MENU_IMAGE_URL,
+              linkUrl: process.env.MENU_LINK_URL || process.env.MENU_IMAGE_URL,
+              title: (this.cfg && this.cfg.botName) || 'Tsukasa',
+              description: 'Katalog fitur Tsukasa',
+            });
+            if (linkPreview && linkPreview['matched-text']) {
+              menuText += `\n\n${linkPreview['matched-text']}`;
             }
           }
 
-          await wa.sendText(
-            chat,
-            menu ||
-              `Kategori *${String(bang.rest || '').trim()}* tidak ditemukan.\nCoba ${usedPrefix}menu atau ${usedPrefix}menu all.`,
-            m
-          );
+          await wa.sendText(chat, menuText, m, undefined, linkPreview);
           return;
         }
 

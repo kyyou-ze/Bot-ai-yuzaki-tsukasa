@@ -1058,13 +1058,25 @@ const DEFS = [
   {
     key: 'MENU_IMAGE_URL',
     group: 'tampilan',
-    label: 'URL gambar banner menu utama (kosong = teks saja)',
+    label: 'URL gambar banner menu utama (link preview, kosong = tanpa banner)',
     type: 'string',
     default: '',
     allowEmpty: true,
     maxLength: 1000,
     apply: (cfg, v) => {
       cfg.menuImageUrl = v;
+    },
+  },
+  {
+    key: 'MENU_LINK_URL',
+    group: 'tampilan',
+    label: 'Link yang dibuka saat banner menu diklik (kosong = pakai MENU_IMAGE_URL)',
+    type: 'string',
+    default: '',
+    allowEmpty: true,
+    maxLength: 1000,
+    apply: (cfg, v) => {
+      cfg.menuLinkUrl = v;
     },
   },
 ];

@@ -282,7 +282,7 @@ function retargetQuoted(quoted, target) {
   return { ...quoted, key: { ...quoted.key, remoteJid: target } };
 }
 
-async function sendText(jid, text, quoted, mentions) {
+async function sendText(jid, text, quoted, mentions, linkPreview) {
   const base = destJid(jid);
   // Presence ke JID LID sering diabaikan; pakai nomor asli bila sudah diketahui.
   const to = lidMap.getPn(base) || base;
@@ -300,6 +300,9 @@ async function sendText(jid, text, quoted, mentions) {
   }
   const content = { text: str };
   if (mentions && mentions.length) content.mentions = mentions;
+  // Preview link eksplisit (kartu banner) supaya WhatsApp tidak perlu
+  // menebak metadata dari URL di dalam teks.
+  if (linkPreview) content.linkPreview = linkPreview;
   const res = await sendMessage(jid, content, quoted);
   try {
     await sock.sendPresenceUpdate('paused', to);

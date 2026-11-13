@@ -94,6 +94,7 @@ function helpMessage() {
     '',
     '*Tampilan*',
     '!config set MENU_IMAGE_URL https://contoh.com/banner.jpg',
+    '!config set MENU_LINK_URL https://github.com/kyyou-ze/Bot-ai-yuzaki-tsukasa',
     '!config reset MENU_IMAGE_URL',
     '',
     '*Auto-update GitHub → Pterodactyl*',

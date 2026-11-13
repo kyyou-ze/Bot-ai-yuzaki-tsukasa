@@ -76,7 +76,7 @@ Catatan:
 - Semua fitur tampil sebagai fitur Tsukasa. Tidak ada pemisahan “fitur Tsukasa” dan “fitur Kaguya”.
 - Nama kategori yang sama (`anime`, `sticker`, `tools`) otomatis digabung menjadi satu kategori.
 - `.menu` menampilkan bentuk katalog; `.help` menampilkan panduan dan cara pakai.
-- Banner menu bisa diatur lewat `.config set MENU_IMAGE_URL <direct link gambar>` (owner) atau `MENU_IMAGE_URL` di `.env`. Kalau kosong, menu dikirim sebagai teks. Caption WhatsApp terbatas, jadi banner dikirim lebih dulu lalu katalog menyusul.
+- Banner menu berbentuk **link preview** (kartu gambar), bukan foto yang dikirim terpisah. Atur thumbnail lewat `.config set MENU_IMAGE_URL <direct link gambar>` dan link tujuan lewat `.config set MENU_LINK_URL <url>` (owner), atau lewat `MENU_IMAGE_URL` / `MENU_LINK_URL` di `.env`. Kalau kosong, menu dikirim sebagai teks saja.
 - Command plugin bisa dipakai dengan prefix `.`, `!`, `/`, atau trigger `tsukasa`.
 - Fitur grup yang dimatikan lewat `.fitur off` otomatis hilang dari katalog `.menu` dan `.help`.
 - Database plugin memakai JSON (`global.dbEngine = 'json'`) agar tidak wajib compile SQLite native.
