@@ -677,9 +677,9 @@ async function dispatchPassive({
 }
 
 function box(title, lines, footer) {
-  const out = [`╭─「 ${smallCaps(title)} 」`];
+  const out = [`╭─〔 ${title} 〕`];
   for (const line of lines) out.push(`│ ${line}`);
-  out.push('╰─' + '─'.repeat(Math.max(6, Math.min(28, String(title).length + 8))));
+  out.push('╰──────────');
   if (footer) out.push('', footer);
   return out.join('\n');
 }
@@ -698,8 +698,10 @@ function normalizeBuiltins(builtinCategories) {
 // Kategori populer ditampilkan lebih dulu supaya menu terasa dikurasi,
 // bukan sekadar daftar folder alfabetis.
 const CATEGORY_ORDER = [
-  'rpg', 'game', 'anime', 'tools', 'sticker', 'download', 'fun', 'search',
-  'canvas', 'economy', 'group', 'owner', 'user', 'store', 'quotes',
+  'ai', 'anime', 'news', 'cosplay', 'animechannel', 'tools', 'sticker', 'brat',
+  'qc', 'cn', 'download', 'fun', 'search', 'canvas', 'economy', 'group',
+  'owner', 'user', 'store', 'quotes', 'verif', 'detector', 'moderation', 'media',
+  'rpg', 'game',
 ];
 
 // Pengelompokan tema agar menu utama tidak terasa seperti folder plugin
@@ -716,15 +718,16 @@ const CATEGORY_GROUPS = [
   {
     label: 'Anime & Fandom',
     keys: [
-      'anime', 'genshin', 'honkai-starrail', 'mobilelegends', 'valorant',
-      'wuwa-wiki', 'zenless', 'freefire', 'esport',
+      'anime', 'news', 'cosplay', 'animechannel', 'genshin', 'honkai-starrail',
+      'mobilelegends', 'valorant', 'wuwa-wiki', 'zenless', 'freefire', 'esport',
     ],
   },
   {
     label: 'Tools & Download',
     keys: [
-      'tools', 'download', 'convert', 'audio', 'canvas', 'ephoto', 'search',
-      'stalker', 'cek', 'crypto', 'primbon', 'quotes', 'sticker', 'asisten',
+      'ai', 'tools', 'download', 'convert', 'audio', 'canvas', 'ephoto', 'search',
+      'stalker', 'cek', 'crypto', 'primbon', 'quotes', 'sticker', 'brat', 'qc',
+      'cn', 'asisten',
     ],
   },
   {
@@ -732,11 +735,19 @@ const CATEGORY_GROUPS = [
     keys: [
       'group', 'menfess', 'relationship', 'jpm', 'channel', 'clan', 'kampus',
       'sewa-bot', 'store', 'economy', 'tycoon', 'rich', 'user', 'owner',
+      'verif', 'detector', 'moderation', 'media',
     ],
   },
 ];
 
-const MENU_PAGE_SIZE = 40;
+const MENU_PAGE_SIZE = 60;
+// Batas aman satu pesan menu. Kalau katalog lebih panjang, menu dipecah
+// menjadi beberapa halaman agar tetap nyaman dibaca di WhatsApp.
+const MENU_MESSAGE_LIMIT = 55000;
+
+function upper(value) {
+  return String(value || '').toUpperCase();
+}
 
 function orderedCategories(categories) {
   return [...categories].sort((a, b) => {
@@ -774,10 +785,56 @@ function oneLine(value, max = 78) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-function totalCommands(categories, builtins) {
-  const kaguya = categories.reduce((sum, cat) => sum + cat.count, 0);
-  const builtin = builtins.reduce((sum, item) => sum + item.commands.length, 0);
-  return kaguya + builtin;
+/**
+ * Gabungkan fitur bawaan Tsukasa dan kategori plugin jadi satu daftar.
+ * Di menu semuanya tampil sebagai fitur Tsukasa, tanpa label "Kaguya".
+ * Kalau ada nama yang sama (anime, sticker, tools), command-nya digabung.
+ */
+function unifyFeatures(builtins, categories) {
+  const map = new Map();
+
+  for (const cat of categories) {
+    map.set(cat.key, {
+      key: cat.key,
+      label: cat.label,
+      description: '',
+      commands: [...cat.commands],
+      count: cat.commands.length,
+    });
+  }
+
+  for (const item of builtins) {
+    const existing = map.get(item.key);
+    if (!existing) {
+      map.set(item.key, {
+        key: item.key,
+        label: item.label,
+        description: item.description,
+        commands: [...item.commands],
+        count: item.commands.length,
+      });
+      continue;
+    }
+    const merged = [...new Set([...item.commands, ...existing.commands])].sort((a, b) =>
+      a.localeCompare(b, 'id')
+    );
+    map.set(item.key, {
+      ...existing,
+      description: item.description || existing.description,
+      commands: merged,
+      count: merged.length,
+    });
+  }
+
+  return [...map.values()];
+}
+
+function totalCommands(features) {
+  const set = new Set();
+  for (const feature of features) {
+    for (const cmd of feature.commands) set.add(cmd);
+  }
+  return set.size;
 }
 
 function sampleCommands(commands, prefix, limit = 4) {
@@ -786,11 +843,11 @@ function sampleCommands(commands, prefix, limit = 4) {
   return shown.join('  ');
 }
 
-function pageOf(list, page) {
-  const pages = Math.max(1, Math.ceil(list.length / MENU_PAGE_SIZE));
+function pageOf(list, page, size = MENU_PAGE_SIZE) {
+  const pages = Math.max(1, Math.ceil(list.length / size));
   const current = Math.min(pages, Math.max(1, Number(page) || 1));
-  const start = (current - 1) * MENU_PAGE_SIZE;
-  return { pages, current, items: list.slice(start, start + MENU_PAGE_SIZE) };
+  const start = (current - 1) * size;
+  return { pages, current, items: list.slice(start, start + size) };
 }
 
 function pageFooter(prefix, key, page, pages, total) {
@@ -801,79 +858,96 @@ function pageFooter(prefix, key, page, pages, total) {
   return `${total} command • halaman ${page}/${pages}${nav.length ? ` • ${nav.join(' • ')}` : ''}`;
 }
 
-function formatCategory(cat, prefix, page) {
-  const catalog = getCatalog();
+function categoryBox(cat, prefix, page = 1) {
   const sliced = pageOf(cat.commands, page);
-  const lines = sliced.items.map((cmd) => {
-    const entry = (catalog.byCommand.get(cmd) || [])[0];
-    const desc = entry && entry.description ? ` — ${oneLine(entry.description, 68)}` : '';
-    return `• ${prefix}${cmd}${desc}`;
+  const head = `╭─〔 ${upper(cat.label)} 〕`;
+  const body = sliced.items.length
+    ? sliced.items.map((cmd) => `│ ${prefix}${cmd}`).join('\n')
+    : '│ (kosong)';
+  return `${head}\n${body}\n╰──────────`;
+}
+
+function formatCategory(cat, prefix, page) {
+  const sliced = pageOf(cat.commands, page);
+  const footer = pageFooter(prefix, cat.key, sliced.current, sliced.pages, cat.count);
+  return `${categoryBox(cat, prefix, page)}\n\n${footer}`;
+}
+
+function menuHeader({ userName, uptime, prefix, total }) {
+  const botName = (configured && configured.botName) || 'Tsukasa';
+  return [
+    `╭─〔 ${botName} 〕`,
+    `│ User: ${userName || '-'}`,
+    `│ Runtime: ${uptime || '-'}`,
+    `│ Prefix: ${prefix || '.'}`,
+    `│ Total Cmd: ${total}`,
+    '╰──────────',
+  ].join('\n');
+}
+
+function buildMenuPages(features, prefix, header) {
+  const blocks = orderedCategories(features).map((cat) => categoryBox(cat, prefix));
+  const pages = [];
+  let current = [header, ''];
+  let size = header.length;
+
+  for (const block of blocks) {
+    if (size + block.length + 2 > MENU_MESSAGE_LIMIT && current.length > 2) {
+      pages.push(current.join('\n'));
+      current = [header, ''];
+      size = header.length;
+    }
+    current.push(block, '');
+    size += block.length + 2;
+  }
+  pages.push(current.join('\n'));
+  return pages;
+}
+
+function formatMainMenu(features, { prefix, userName, uptime, page }) {
+  const p = prefix || '.';
+  const header = menuHeader({
+    userName,
+    uptime,
+    prefix: p,
+    total: totalCommands(features),
   });
-  return box(
-    `ᴍᴇɴᴜ ${cat.label}`,
-    lines,
-    pageFooter(prefix, cat.key, sliced.current, sliced.pages, cat.count)
-  );
+  const pages = buildMenuPages(features, p, header);
+  const current = Math.min(pages.length, Math.max(1, Number(page) || 1));
+  const lines = [pages[current - 1], '', `${p}menu <kategori> • ${p}menu all • ${p}menu cari <kata>`];
+  if (pages.length > 1) {
+    const nav = [];
+    if (current > 1) nav.push(`sebelumnya: ${p}menu ${current - 1}`);
+    if (current < pages.length) nav.push(`berikutnya: ${p}menu ${current + 1}`);
+    lines.push(`Halaman ${current}/${pages.length}${nav.length ? ` • ${nav.join(' • ')}` : ''}`);
+  }
+  return lines.join('\n');
 }
 
-function formatBuiltinCategory(builtin, prefix, page) {
-  const sliced = pageOf(builtin.commands, page);
+function formatAllIndex(prefix, features) {
   const lines = [];
-  if (builtin.description) {
-    lines.push(oneLine(builtin.description, 90));
+  lines.push(`${features.length} kategori • ${totalCommands(features)} command`);
+  for (const group of groupCategories(features)) {
     lines.push('');
-  }
-  lines.push(...sliced.items.map((cmd) => `• ${prefix}${cmd}`));
-  return box(
-    `ꜰɪᴛᴜʀ ${builtin.label}`,
-    lines,
-    pageFooter(prefix, `fitur ${builtin.key}`, sliced.current, sliced.pages, builtin.commands.length)
-  );
-}
-
-function formatAllIndex(prefix, builtins, categories) {
-  const lines = [];
-  lines.push(
-    `${builtins.length} fitur Tsukasa • ${categories.length} kategori Kaguya • ${totalCommands(
-      categories,
-      builtins
-    )} command`
-  );
-  lines.push('');
-  if (builtins.length) {
-    lines.push('*Fitur Tsukasa*');
-    for (const item of builtins) {
-      lines.push(`${item.label} (${item.commands.length}) — ${prefix}menu fitur ${item.key}`);
-      lines.push(sampleCommands(item.commands, prefix));
+    lines.push(`《 ${upper(group.label)} 》`);
+    for (const cat of group.items) {
+      lines.push(`${prefix}menu ${cat.key} — ${cat.label} (${cat.count})`);
     }
   }
-  if (categories.length) {
-    lines.push('');
-    lines.push('*Fitur Kaguya*');
-    for (const group of groupCategories(categories)) {
-      lines.push('');
-      lines.push(`*${group.label}*`);
-      for (const cat of group.items) {
-        lines.push(`• ${cat.label} (${cat.count})`);
-        lines.push(`  ${sampleCommands(cat.commands, prefix)}`);
-      }
-    }
-  }
-  return box(`ɪɴᴅᴇᴋs ${smallCaps('menu')}`, lines, [
-    `${prefix}menu <kategori> — semua command kategori`,
-    `${prefix}menu fitur <nama> — semua command fitur Tsukasa`,
-    `${prefix}menu <kategori> <halaman> — halaman berikutnya`,
-    `${prefix}menu cari <kata> — cari command dengan cepat`,
+  return box('INDEKS MENU', lines, [
+    `${prefix}menu — katalog lengkap`,
+    `${prefix}menu <kategori> — daftar command`,
+    `${prefix}menu cari <kata> — cari command`,
   ].join('\n'));
 }
-
-function formatSearch(query, prefix, builtins, categories) {
+function formatSearch(query, prefix, features) {
   const q = String(query || '').trim().toLowerCase();
   if (!q) return null;
 
   const nameHits = [];
   const descHits = [];
   const seen = new Set();
+  const catalog = getCatalog();
   const add = (bucket, line, key) => {
     if (seen.has(key) || nameHits.length + descHits.length >= 60) return;
     seen.add(key);
@@ -881,27 +955,20 @@ function formatSearch(query, prefix, builtins, categories) {
   };
 
   // Pass 1: cocokkan nama command dulu supaya hasil paling relevan muncul di atas.
-  for (const item of builtins) {
-    for (const cmd of item.commands) {
-      if (cmd.includes(q)) add(nameHits, `• ${prefix}${cmd} — ${item.label}`, cmd);
-    }
-  }
-
-  const catalog = getCatalog();
-  for (const cat of categories) {
-    for (const cmd of cat.commands) {
-      if (cmd.includes(q)) add(nameHits, `• ${prefix}${cmd} — ${cat.label}`, cmd);
+  for (const feature of features) {
+    for (const cmd of feature.commands) {
+      if (cmd.includes(q)) add(nameHits, `${prefix}${cmd} — ${feature.label}`, cmd);
     }
   }
 
   // Pass 2: cocokkan deskripsi untuk melengkapi hasil.
-  for (const cat of categories) {
-    for (const cmd of cat.commands) {
+  for (const feature of features) {
+    for (const cmd of feature.commands) {
       const entry = (catalog.byCommand.get(cmd) || [])[0];
       const desc = entry && entry.description ? entry.description.toLowerCase() : '';
       if (!desc.includes(q)) continue;
       const note = ` — ${oneLine(entry.description, 48)}`;
-      add(descHits, `• ${prefix}${cmd} — ${cat.label}${note}`, cmd);
+      add(descHits, `${prefix}${cmd} — ${feature.label}${note}`, cmd);
     }
   }
 
@@ -918,78 +985,40 @@ function formatSearch(query, prefix, builtins, categories) {
     total > results.length
       ? `${total} hasil ditemukan • gunakan kata kunci lebih spesifik.`
       : `Gunakan ${prefix}help <command> untuk cara pakai.`;
-  return box(`ᴄᴀʀɪ ${oneLine(query, 24)}`, results, footer);
+  return box(`CARI: ${oneLine(query, 24)}`, results, footer);
 }
 
-function formatMenu({ category, isOwner, prefix, builtinCategories }) {
+function formatMenu({ category, isOwner, prefix, builtinCategories, userName, uptime }) {
   const raw = String(category || '').trim();
   const key = raw.toLowerCase();
   const p = prefix || '.';
   const catalog = getCatalog();
   const builtins = normalizeBuiltins(builtinCategories);
-  const categories = orderedCategories(catalog.categories);
+  const features = unifyFeatures(builtins, catalog.categories);
 
   if (!raw) {
-    const lines = [];
-    lines.push(`Hai! Aku ${configured && configured.botName ? configured.botName : 'Tsukasa'} ✨`);
-    lines.push('');
-    lines.push(`╭─「 ${smallCaps('menu utama')} 」`);
-    lines.push(`│ Bot    : ${configured && configured.botName ? configured.botName : 'Tsukasa'}`);
-    lines.push('│ Prefix : . ! /');
-    lines.push(
-      `│ Total  : ${builtins.length + categories.length} kategori • ${totalCommands(
-        categories,
-        builtins
-      )} command`
-    );
-    lines.push('│');
-    if (builtins.length) {
-      lines.push('│ *Fitur Tsukasa*');
-      for (const item of builtins) {
-        lines.push(`│ ${item.label} — ${item.commands.length} cmd`);
-      }
-    }
-    if (categories.length) {
-      lines.push('│');
-      lines.push('│ *Fitur Kaguya*');
-      for (const group of groupCategories(categories)) {
-        const count = group.items.reduce((sum, cat) => sum + cat.count, 0);
-        lines.push(`│ *${group.label}* — ${group.items.length} kategori · ${count} cmd`);
-        lines.push(`│ ${group.items.map((cat) => cat.label).join(', ')}`);
-      }
-    }
-    lines.push('╰──────────────────────');
-    lines.push('');
-    lines.push(`${p}menu <kategori> — daftar command`);
-    lines.push(`${p}menu fitur <nama> — daftar command fitur Tsukasa`);
-    lines.push(`${p}menu all — indeks semua kategori + contoh`);
-    lines.push(`${p}menu cari <kata> — cari command`);
-    lines.push(`${p}help — panduan & bantuan`);
-    lines.push(isOwner ? 'Owner mode aktif' : 'User mode');
-    return lines.join('\n');
+    return formatMainMenu(features, { prefix: p, userName, uptime });
+  }
+
+  if (/^\d{1,3}$/.test(key)) {
+    return formatMainMenu(features, {
+      prefix: p,
+      userName,
+      uptime,
+      page: Number(key),
+    });
   }
 
   if (key === 'all' || key === 'semua') {
-    return formatAllIndex(p, builtins, categories);
+    return formatAllIndex(p, features);
   }
 
   if (key === 'cari' || key === 'search') {
     return `Gunakan ${p}menu cari <kata> untuk mencari command.`;
   }
 
-  if (key === 'fitur' || key === 'feature') {
-    if (!builtins.length) return 'Belum ada fitur Tsukasa yang aktif di chat ini.';
-    return box(
-      'ꜰɪᴛᴜʀ ᴛꜱᴜᴋᴀꜱᴀ',
-      builtins.map(
-        (item) => `• ${p}menu fitur ${item.key} — ${item.label} (${item.commands.length})`
-      ),
-      `${p}menu <kategori> — daftar fitur Kaguya`
-    );
-  }
-
   const search = key.match(/^(?:cari|search)\s+([\s\S]+)$/);
-  if (search) return formatSearch(search[1], p, builtins, categories);
+  if (search) return formatSearch(search[1], p, features);
 
   let name = key;
   let page = 1;
@@ -999,26 +1028,10 @@ function formatMenu({ category, isOwner, prefix, builtinCategories }) {
     page = Number(paged[2]) || 1;
   }
 
-  // Namespace "fitur" memaksa pencarian ke fitur Tsukasa. Ini perlu karena
-  // beberapa nama fitur sama dengan kategori Kaguya (sticker, anime, tools).
-  const fiturMatch = name.match(/^(?:fitur|feature)\s+(.+)$/);
-  if (fiturMatch) {
-    const wanted = fiturMatch[1].trim().toLowerCase();
-    const builtin = builtins.find(
-      (item) => item.key === wanted || item.label.toLowerCase() === wanted
-    );
-    return builtin ? formatBuiltinCategory(builtin, p, page) : null;
-  }
-
-  const found = categories.find(
+  const found = features.find(
     (cat) => cat.key === name || cat.label.toLowerCase() === name
   );
   if (found) return formatCategory(found, p, page);
-
-  const builtin = builtins.find(
-    (item) => item.key === name || item.label.toLowerCase() === name
-  );
-  if (builtin) return formatBuiltinCategory(builtin, p, page);
 
   return null;
 }
@@ -1027,55 +1040,38 @@ function formatHelp({ query, prefix, builtinCategories }) {
   const q = String(query || '').trim().toLowerCase().replace(/^[.\/!]+/, '');
   const catalog = getCatalog();
   const builtins = normalizeBuiltins(builtinCategories);
+  const features = unifyFeatures(builtins, catalog.categories);
   const p = prefix || '.';
 
   if (!q) {
     return [
-      `╭─「 ${smallCaps('bantuan')} 」`,
+      '╭─〔 BANTUAN 〕',
       `│ ${p}menu — katalog menu`,
       `│ ${p}menu <kategori> — command per kategori`,
-      `│ ${p}menu fitur <nama> — command fitur Tsukasa`,
       `│ ${p}menu <kategori> <halaman> — halaman berikutnya`,
       `│ ${p}menu all — indeks semua kategori`,
       `│ ${p}menu cari <kata> — cari command`,
       `│ ${p}help <command> — cara pakai command`,
       `│ ${p}help <kategori> — daftar command kategori`,
-      `│ ${p}help fitur <nama> — daftar command fitur Tsukasa`,
       `│`,
       `│ Command bisa memakai prefix . ! /`,
       `│ atau panggil dengan trigger "${configured && configured.trigger ? configured.trigger : 'tsukasa'}".`,
-      `╰──────────────────────`,
+      '╰──────────',
       '',
       `Contoh: ${p}help rpg`,
-      `Contoh: ${p}help fitur sticker`,
+      `Contoh: ${p}help animedl`,
     ].join('\n');
   }
 
-  const fiturQuery = q.match(/^(?:fitur|feature)\s+(.+)$/);
-  if (fiturQuery) {
-    const wanted = fiturQuery[1].trim().toLowerCase();
-    const builtin = builtins.find(
-      (b) => b.key === wanted || b.label.toLowerCase() === wanted
-    );
-    if (!builtin) {
-      return `Fitur *${wanted}* tidak ditemukan.\nLihat daftar fitur dengan ${p}menu fitur.`;
-    }
-    const lines = [builtin.description, ''].filter(Boolean);
-    lines.push(...builtin.commands.map((cmd) => `• ${p}${cmd}`));
-    return box(
-      `ʙᴀɴᴛᴜᴀɴ ${builtin.label}`,
-      lines,
-      `${p}menu fitur ${builtin.key} untuk katalog`
-    );
-  }
-
-  // Untuk nama yang dipakai bersama (anime, sticker, tools), kategori Kaguya
-  // dimenangkan lebih dulu. Fitur Tsukasa tetap bisa dibuka lewat
-  // "help fitur <nama>".
-  const cat = catalog.categories.find((c) => c.key === q || c.label.toLowerCase() === q);
+  const cat = features.find((c) => c.key === q || c.label.toLowerCase() === q);
   if (cat) {
     const lines = [];
     const seen = new Set();
+    let shown = 0;
+    if (cat.description) {
+      lines.push(oneLine(cat.description, 90));
+      lines.push('');
+    }
     for (const cmd of cat.commands) {
       const entry = (catalog.byCommand.get(cmd) || [])[0];
       const raw = entry && entry.help && entry.help[0] ? entry.help[0] : cmd;
@@ -1086,34 +1082,24 @@ function formatHelp({ query, prefix, builtinCategories }) {
       seen.add(usage);
       const desc = entry && entry.description ? ` — ${oneLine(entry.description, 70)}` : '';
       lines.push(`• ${usage}${desc}`);
-      if (lines.length >= 60) break;
+      shown += 1;
+      if (shown >= 60) break;
     }
-    if (cat.commands.length > lines.length) {
-      lines.push(`… dan ${cat.commands.length - lines.length} command lainnya`);
+    if (cat.commands.length > shown) {
+      lines.push(`… dan ${cat.commands.length - shown} command lainnya`);
     }
-    return box(`ʙᴀɴᴛᴜᴀɴ ${cat.label}`, lines, `${p}menu ${cat.key} untuk katalog`);
-  }
-
-  const builtinCat = builtins.find((b) => b.key === q || b.label.toLowerCase() === q);
-  if (builtinCat) {
-    const lines = [builtinCat.description, ''].filter(Boolean);
-    lines.push(...builtinCat.commands.map((cmd) => `• ${p}${cmd}`));
-    return box(
-      `ʙᴀɴᴛᴜᴀɴ ${builtinCat.label}`,
-      lines,
-      `${p}menu fitur ${builtinCat.key} untuk katalog`
-    );
+    return box(`BANTUAN ${upper(cat.label)}`, lines, `${p}menu ${cat.key} untuk katalog`);
   }
 
   const builtinCmd = builtins.find((b) => b.commands.includes(q));
   if (builtinCmd) {
-    return box(`ʙᴀɴᴛᴜᴀɴ ${q}`, [
+    return box(`BANTUAN ${upper(q)}`, [
       builtinCmd.description,
       '',
-      `Fitur : ${builtinCmd.label}`,
+      `Kategori : ${builtinCmd.label}`,
       `Pakai : ${p}${q}`,
       '',
-      `Command lain di fitur ini:`,
+      'Command lain di kategori ini:',
       ...builtinCmd.commands.filter((cmd) => cmd !== q).slice(0, 12).map((cmd) => `• ${p}${cmd}`),
     ].filter(Boolean));
   }
@@ -1142,7 +1128,7 @@ function formatHelp({ query, prefix, builtinCategories }) {
   if (entry.admin) lines.push('', 'Khusus admin grup');
   if (entry.group) lines.push('', 'Hanya di grup');
   if (entry.private) lines.push('', 'Hanya di chat pribadi');
-  return box(`ʙᴀɴᴛᴜᴀɴ ${q}`, lines);
+  return box(`BANTUAN ${upper(q)}`, lines);
 }
 
 module.exports = {

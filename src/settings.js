@@ -1053,6 +1053,20 @@ const DEFS = [
       cfg.auditLogMaxBytes = v;
     },
   },
+
+  // --- Tampilan ---
+  {
+    key: 'MENU_IMAGE_URL',
+    group: 'tampilan',
+    label: 'URL gambar banner menu utama (kosong = teks saja)',
+    type: 'string',
+    default: '',
+    allowEmpty: true,
+    maxLength: 1000,
+    apply: (cfg, v) => {
+      cfg.menuImageUrl = v;
+    },
+  },
 ];
 
 const BY_KEY = new Map();
@@ -1073,6 +1087,7 @@ const GROUPS = {
   ai: 'AI Tools',
   update: 'Auto Update',
   reliability: 'Reliability',
+  tampilan: 'Tampilan',
 };
 
 let overrides = {};

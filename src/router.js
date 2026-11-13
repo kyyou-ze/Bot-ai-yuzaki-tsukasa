@@ -1087,7 +1087,34 @@ class Router {
             isOwner,
             prefix: usedPrefix,
             builtinCategories,
+            userName:
+              memory.getUserName(sender) || String(m.pushName || '').trim() || jidUser(sender),
+            uptime: this.formatUptime(process.uptime()),
           });
+
+          // Banner hanya untuk menu utama. Caption WhatsApp terbatas, jadi
+          // gambar dikirim dulu lalu katalog teks menyusul.
+          if (!String(bang.rest || '').trim()) {
+            const imageUrl = String(process.env.MENU_IMAGE_URL || '').trim();
+            if (imageUrl) {
+              try {
+                const res = await fetch(imageUrl, {
+                  signal: AbortSignal.timeout(15000),
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const type = String(res.headers.get('content-type') || '');
+                if (!/^image\//i.test(type)) {
+                  throw new Error(`bukan gambar (${type || 'tanpa content-type'})`);
+                }
+                const buf = Buffer.from(await res.arrayBuffer());
+                if (buf.length > 8 * 1024 * 1024) throw new Error('gambar terlalu besar');
+                await wa.sendImage(chat, buf, '', m, type);
+              } catch (err) {
+                log.warn('[MENU] banner gagal dimuat:', err && err.message ? err.message : err);
+              }
+            }
+          }
+
           await wa.sendText(
             chat,
             menu ||

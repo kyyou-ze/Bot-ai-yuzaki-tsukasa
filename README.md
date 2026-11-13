@@ -62,20 +62,21 @@ Bot ini memakai **arsitektur bridge**: inti bot tetap milik Tsukasa, sedangkan p
 
 | Command | Fungsi |
 | --- | --- |
-| `.menu` | Katalog menu bergaya box Kaguya: ringkasan fitur Tsukasa + kategori plugin Kaguya yang dikelompokkan per tema. |
-| `.menu <kategori>` | Lihat command dalam satu kategori (dipaginasi 40 command), mis. `.menu rpg`, `.menu tools`, `.menu sticker`. |
-| `.menu fitur <nama>` | Lihat command fitur bawaan Tsukasa, mis. `.menu fitur tools`, `.menu fitur sticker`, `.menu fitur verif`. Dipakai saat nama fitur sama dengan kategori Kaguya. |
+| `.menu` | Katalog utama: header bot (user, runtime, total command) lalu box per kategori berisi daftar command. |
+| `.menu <kategori>` | Lihat command dalam satu kategori (dipaginasi 60 command), mis. `.menu rpg`, `.menu tools`, `.menu sticker`. |
 | `.menu <kategori> <halaman>` | Halaman berikutnya, mis. `.menu rpg 2`. |
-| `.menu all` | Indeks semua kategori + contoh command. Tidak lagi menumpahkan seluruh command ke satu pesan. |
+| `.menu all` | Indeks ringkas semua kategori + jumlah command. |
 | `.menu cari <kata>` | Cari command berdasarkan nama atau deskripsi, mis. `.menu cari anime`. |
+| `.menu <halaman>` | Halaman berikutnya untuk katalog utama, mis. `.menu 2`. |
 | `.help` | Panduan singkat penggunaan menu dan command. |
 | `.help <command>` | Cara pakai command tertentu, mis. `.help animedl`, `.help cn`. |
-| `.help <kategori>` | Daftar command + deskripsi dalam kategori Kaguya. |
-| `.help fitur <nama>` | Daftar command fitur bawaan Tsukasa, mis. `.help fitur sticker`. |
+| `.help <kategori>` | Daftar command + deskripsi dalam kategori tersebut. |
 
 Catatan:
-- Kategori Kaguya dikelompokkan menjadi **RPG & Game**, **Anime & Fandom**, **Tools & Download**, **Sosial & Komunitas**, dan **Lainnya** agar menu tidak terasa seperti folder plugin mentah.
-- Beberapa nama dipakai bersama oleh fitur Tsukasa dan kategori Kaguya (`anime`, `sticker`, `tools`). Gunakan `.menu fitur <nama>` / `.help fitur <nama>` untuk fitur Tsukasa, dan `.menu <nama>` / `.help <nama>` untuk kategori Kaguya.
+- Semua fitur tampil sebagai fitur Tsukasa. Tidak ada pemisahan “fitur Tsukasa” dan “fitur Kaguya”.
+- Nama kategori yang sama (`anime`, `sticker`, `tools`) otomatis digabung menjadi satu kategori.
+- `.menu` menampilkan bentuk katalog; `.help` menampilkan panduan dan cara pakai.
+- Banner menu bisa diatur lewat `.config set MENU_IMAGE_URL <direct link gambar>` (owner) atau `MENU_IMAGE_URL` di `.env`. Kalau kosong, menu dikirim sebagai teks. Caption WhatsApp terbatas, jadi banner dikirim lebih dulu lalu katalog menyusul.
 - Command plugin bisa dipakai dengan prefix `.`, `!`, `/`, atau trigger `tsukasa`.
 - Fitur grup yang dimatikan lewat `.fitur off` otomatis hilang dari katalog `.menu` dan `.help`.
 - Database plugin memakai JSON (`global.dbEngine = 'json'`) agar tidak wajib compile SQLite native.
