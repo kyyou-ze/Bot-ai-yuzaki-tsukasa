@@ -222,7 +222,7 @@ class WelcomeHandler {
 
   /**
    * Kartu banner untuk welcome/goodbye. URL target tidak ditulis ke teks,
-   * hanya dipakai sebagai canonical-url preview.
+   * hanya thumbnail + judul/deskripsi yang tampil sebagai kartu.
    */
   async banner(kind, group) {
     const fallback = new Promise((resolve) => {
@@ -286,7 +286,7 @@ class WelcomeHandler {
 
     try {
       const content = { text: body, mentions };
-      if (preview) content.linkPreview = preview;
+      if (preview) content.contextInfo = { externalAdReply: preview };
       await sock.sendMessage(chat, content);
       log.info(
         `[GREETING] ${kind} ${mentions.length} peserta di ${chat} (${conf.custom ? 'custom' : 'default'})`
@@ -393,7 +393,7 @@ class WelcomeHandler {
       });
       const preview = await this.banner(kind, group);
       const content = { text: body, mentions: [actor] };
-      if (preview) content.linkPreview = preview;
+      if (preview) content.contextInfo = { externalAdReply: preview };
       await sock.sendMessage(chat, content);
       return true;
     }

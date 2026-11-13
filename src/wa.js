@@ -300,9 +300,18 @@ async function sendText(jid, text, quoted, mentions, linkPreview) {
   }
   const content = { text: str };
   if (mentions && mentions.length) content.mentions = mentions;
-  // Preview link eksplisit (kartu banner) supaya WhatsApp tidak perlu
-  // menebak metadata dari URL di dalam teks.
-  if (linkPreview) content.linkPreview = linkPreview;
+  if (linkPreview) {
+    if (linkPreview.thumbnailUrl) {
+      // Kartu banner: gambar besar + judul/deskripsi ditempel lewat
+      // externalAdReply, jadi URL tidak perlu (dan tidak boleh) tampil di teks.
+      content.contextInfo = { externalAdReply: linkPreview };
+      // Cegah Baileys membuat preview link otomatis dari URL di teks.
+      content.linkPreview = null;
+    } else {
+      // Kompatibilitas dengan format lama (WAUrlInfo / linkPreview).
+      content.linkPreview = linkPreview;
+    }
+  }
   const res = await sendMessage(jid, content, quoted);
   try {
     await sock.sendPresenceUpdate('paused', to);

@@ -111,12 +111,9 @@ class Promo {
   }
 
   async preview() {
-    if (!this.opts.imageUrl) return null;
     try {
       const menuBanner = require('./menubanner');
       return await menuBanner.buildMenuPreview({
-        imageUrl: this.opts.imageUrl,
-        linkUrl: this.url,
         title: (this.cfg && this.cfg.botName) || 'Tsukasa',
         description: 'Sticker, unduhan, game grup, dan moderasi.',
       });

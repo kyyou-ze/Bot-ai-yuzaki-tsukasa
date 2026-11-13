@@ -52,13 +52,6 @@ const SEWA_PUBLIC_COMMANDS = new Set([
 
 const sewaNoticeAt = new Map();
 
-// Kandidat gambar banner, dicoba berurutan sampai ada yang berhasil diunduh.
-// Daftar & fallback gambar dikelola di src/menubanner.js supaya menu, promo,
-// dan welcome/goodbye memakai banner yang sama.
-function bannerImageCandidates() {
-  return menuBanner.bannerImageCandidates();
-}
-
 // Di grup, pesan yang datang berdekatan digabung dalam satu jendela waktu.
 // Tujuannya: AI menjawab satu alur percakapan, bukan tiap pesan satu balasan.
 const GROUP_AI_WINDOW_MS = Math.max(
@@ -1145,13 +1138,13 @@ class Router {
         const labels = {
           all: 'balas semua pesan',
           reply: 'balas saat pesan di-reply (sebut tsukasa atau balas pesan bot)',
-          call: 'balas hanya saat dipanggil tsukasa',
+          call: 'balas hanya saat dipanggil tsukasa (reply ke bot tidak dihitung)',
         };
         const help =
           '⚙️ *Mode Balasan Grup*\n' +
           '• .modegrup all — balas semua pesan\n' +
           '• .modegrup reply — balas saat pesan di-reply dan menyebut tsukasa (atau reply pesan bot)\n' +
-          '• .modegrup call — balas hanya saat dipanggil tsukasa (default)\n' +
+          '• .modegrup call — balas hanya saat dipanggil tsukasa; reply ke bot tidak dihitung\n' +
           '• .modegrup status — lihat mode aktif';
         const sub = String(bang.rest || '').trim().toLowerCase();
         const map = {
@@ -1343,48 +1336,36 @@ class Router {
           .filter((f) => f.commands.length);
 
         if (bang.cmd === 'menu') {
-          // Diagnostik banner: `.menu banner` (khusus owner).
+          // Diagnostik banner: `.menu banner` (khusus owner). Pesan ini juga
+          // membawa kartu banner supaya hasilnya bisa langsung dilihat.
           if (isOwner && /^banner$/i.test(String(bang.rest || '').trim())) {
-            let report = null;
-            for (const imageUrl of bannerImageCandidates()) {
-              report = await menuBanner.testMenuBanner({
-                imageUrl,
-                linkUrl:
-                  process.env.MENU_LINK_URL ||
-                  process.env.PROMO_URL ||
-                  (this.cfg && this.cfg.promo && this.cfg.promo.url) ||
-                  imageUrl,
-                title: (this.cfg && this.cfg.botName) || 'Tsukasa',
-                description: 'Sticker, unduhan, game grup, dan moderasi.',
-              });
-              if (report.ok) break;
-            }
+            const sample = await menuBanner.buildMenuPreview({
+              title: (this.cfg && this.cfg.botName) || 'Tsukasa',
+              description: 'Sticker, unduhan, game grup, dan moderasi.',
+            });
+            const report = await menuBanner.testMenuBanner({
+              title: (this.cfg && this.cfg.botName) || 'Tsukasa',
+              description: 'Sticker, unduhan, game grup, dan moderasi.',
+            });
             const i = (report && report.info) || {};
-            const kb = (n) => `${(Number(n) / 1024).toFixed(1)} KB`;
             const short = (v, n) => {
               const s = String(v || '');
               return s.length > n ? `${s.slice(0, n - 1)}…` : s;
             };
             const lines = ['╭─〔 TES BANNER 〕'];
-            lines.push(`│ URL    : ${i.imageUrl ? 'terisi' : 'kosong'}`);
-            if (i.imageUrl) lines.push(`│ Target : ${short(i.imageUrl, 60)}`);
-            lines.push(
-              `│ Unduh  : ${
-                i.downloaded ? `ok — ${i.mime || '?'} ${kb(i.originalBytes)}` : 'gagal'
-              }`
-            );
-            lines.push(`│ Thumb  : ${i.thumbBytes ? kb(i.thumbBytes) : 'tidak ada'}`);
-            lines.push(`│ Upload : ${i.hqUploaded ? 'ok (high quality)' : 'tidak'}`);
-            lines.push(`│ Link   : ${i.linkUrl ? short(i.linkUrl, 60) : '-'}`);
+            lines.push(`│ Mode   : ${i.mode || 'externalAdReply'}`);
+            lines.push(`│ Gambar : ${i.thumbnailUrl ? 'siap' : 'kosong'}`);
+            if (i.thumbnailUrl) lines.push(`│ URL    : ${short(i.thumbnailUrl, 60)}`);
+            if (i.linkUrl) lines.push(`│ Link   : ${short(i.linkUrl, 60)}`);
             if (i.error) lines.push(`│ Error  : ${i.error}`);
             lines.push('╰──────────');
             lines.push('');
             lines.push(
               report.ok
-                ? 'Banner siap. Kalau gambar tetap tidak muncul, coba buka WhatsApp Android versi terbaru.'
-                : 'Banner belum siap. Perbaiki bagian Error di atas.'
+                ? 'Banner siap. Kartu di pesan ini dikirim lewat externalAdReply; URL tidak ditulis di badan menu.'
+                : 'Banner belum siap. Isi MENU_IMAGE_URL dengan direct URL gambar (https).'
             );
-            await wa.sendText(chat, lines.join('\n'), m);
+            await wa.sendText(chat, lines.join('\n'), m, undefined, sample);
             return;
           }
 
@@ -1416,31 +1397,17 @@ class Router {
             }
           }
 
-          // Banner hanya untuk menu utama. Link ditaruh paling atas supaya
-          // tidak ikut terlipat di bagian "Baca selengkapnya".
-          let linkPreview = null;
-          let linkTarget = '';
+          // Banner hanya untuk menu utama. Kartu banner ditempel lewat
+          // externalAdReply supaya URL tidak perlu tampil di badan pesan.
+          let banner = null;
           if (!String(bang.rest || '').trim()) {
-            linkTarget =
-              process.env.MENU_LINK_URL ||
-              process.env.PROMO_URL ||
-              (this.cfg && this.cfg.promo && this.cfg.promo.url) ||
-              '';
-            for (const imageUrl of bannerImageCandidates()) {
-              linkPreview = await menuBanner.buildMenuPreview({
-                imageUrl,
-                linkUrl: linkTarget || imageUrl,
-                title: (this.cfg && this.cfg.botName) || 'Tsukasa',
-                description: 'Sticker, unduhan, game grup, dan moderasi.',
-              });
-              if (linkPreview) break;
-            }
-            if (linkTarget) {
-              menuText = `Info & fitur: ${linkTarget}\n\n${menuText}`;
-            }
+            banner = await menuBanner.buildMenuPreview({
+              title: (this.cfg && this.cfg.botName) || 'Tsukasa',
+              description: 'Sticker, unduhan, game grup, dan moderasi.',
+            });
           }
 
-          await wa.sendText(chat, menuText, m, undefined, linkPreview);
+          await wa.sendText(chat, menuText, m, undefined, banner);
           return;
         }
 
@@ -1898,8 +1865,11 @@ class Router {
     // men-@mention bot. Ini mencegah bot terasa "tidak ke-trigger" padahal
     // user memanggil lewat mention/reply.
     const quotedFromBotEarly = this.isQuotedFromBot(wa.contextInfoOf(content));
-    const hasTrig =
-      this.reTrig.test(origTxt) || this.isBotMention(m, content) || quotedFromBotEarly;
+    // Panggilan sah = menyebut trigger atau men-@mention bot. Reply ke pesan bot
+    // hanya pemicu tambahan untuk mode `reply`; di mode `call` reply ke bot
+    // tidak dianggap memanggil, jadi bot harus diam.
+    const calledByTrigger = this.reTrig.test(origTxt) || this.isBotMention(m, content);
+    const hasTrig = calledByTrigger || quotedFromBotEarly;
     const isTagAllCmd = isCmd && cmd === 'tagall';
     const isRvoCmd = isCmd && cmd === 'rvo';
 
@@ -2001,7 +1971,18 @@ class Router {
     // Tentukan teks user tanpa awalan trigger, lalu tambahkan konteks quote
     // supaya AI tetap tahu pesan yang sedang dibalas.
     let userText = hasTrig && !isCmd ? stripLeadingTrigger(origTxt, this.cfg.trigger) : origTxt;
-    userText = String(userText || '').trim();
+    userText = String(userText || '')
+      .replace(/@\d{6,}/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    // Panggilan yang isinya hanya tanda baca ("tsukasa?", "@bot") dianggap
+    // panggilan kosong, bukan pertanyaan.
+    if (userText && !/[\p{L}\p{N}]/u.test(userText)) userText = '';
+    // Dipanggil tanpa pesan lain: tetap balas supaya mode `call` tidak terasa
+    // mati hanya karena teksnya kosong. Kalau ada quote, teks quote yang dipakai.
+    if (!userText && !q.text && calledByTrigger) {
+      userText = 'Halo Tsukasa, aku memanggilmu.';
+    }
     if (q.text) {
       if (!userText || RE_REPLY_CUE.test(userText)) {
         txt = q.text;
@@ -2016,7 +1997,7 @@ class Router {
     // bot / mention bot); reply = harus reply ke suatu pesan sekaligus
     // menyebut trigger; all tidak dibatasi.
     if (isGroup && !isTagAllCmd) {
-      if (groupMode === 'call' && !hasTrig && !quotedFromBot) return;
+      if (groupMode === 'call' && !calledByTrigger) return;
       if (groupMode === 'reply') {
         // Wajib berupa balasan/quote, lalu sebut trigger atau balas pesan bot.
         if (!hasQuoted) return;

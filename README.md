@@ -34,7 +34,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **TikTok (scraper lokal + multi-API)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Scraper lokal membaca halaman embed TikTok langsung dari panel; kalau embed kena WAF, bot otomatis pindah ke Jina Reader, TikWM, TikHub, tiktok-api23, Ensig, lalu Jina HTML sebagai fallback terakhir. Batas ukuran bisa dikonfigurasi.
 - **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 3 menit, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Sumber utama scraper lokal (embed) sehingga tidak mudah kena WAF. Akun hasil `/verif` otomatis masuk pantauan; kelola lewat `/addakun`, `/delakun`, `/listakun`, `/detector`. Command verif: `/verif`, `/listverif`, `/unverif`, `/me`, `/siapaup`, `/cekup`, `/history` (tanpa argumen menampilkan semua akun; juga bisa `Tsukasa ...` atau `.verif`).
 - **CN TikTok** — `.cn <nama>` menampilkan tiga contoh CN siap pakai dengan nama memakai huruf bold Unicode (tanpa tanda bintang saat disalin): `` `𝙀𝘾𝙉᭄ ``, `ft 𝙀𝘾𝙉`, dan `〆𝙀𝘾𝙉`. Keyword mengikuti `TIKTOK_CN_KEYWORD`.
-- **Reply & Tag Status** — Di chat pribadi bot tetap membalas walaupun pesanmu adalah reply/quote. Di grup, reply ke pesan bot juga diproses tanpa trigger. Tag status WhatsApp yang menyebut bot terdeteksi dan dibalas di chat terkait.
+- **Reply & Tag Status** — Di chat pribadi bot tetap membalas walaupun pesanmu adalah reply/quote. Di grup, reply ke pesan bot diproses tanpa trigger hanya pada mode `all`/`reply`; di mode `call` bot tetap diam sampai dipanggil `tsukasa`. Tag status WhatsApp yang menyebut bot terdeteksi dan dibalas di chat terkait.
 - **AnimeKita** — `!anime ...` (new/movie/schedule/list/genre/search/detail/episode/roulette). Episode dengan link Pixeldrain bisa diunduh otomatis.
 - **Anime Roulette** — `!anime roulette [genre]` memilih anime acak dari AniList lengkap dengan sinopsis (diterjemahkan ke Indonesia bila Gemini tersedia), skor, episode, tahun, dan link.
 - **Grup Toolkit** — `!ingatkan` (pengingat persisten dengan waktu natural), `!poll` (polling native WhatsApp), `!rangkum` (ringkasan percakapan terakhir via AI), `!statistik`, `!topaktif` (leaderboard persisten), serta `.welcome`/`.goodbye` (pesan sambutan & perpisahan per grup, mendukung multi-baris).
@@ -69,7 +69,7 @@ Bot ini memakai **arsitektur bridge**: inti bot tetap milik Tsukasa, sedangkan p
 | `.menu all` | Indeks ringkas semua kategori + jumlah command. |
 | `.menu cari <kata>` | Cari command berdasarkan nama atau deskripsi, mis. `.menu cari anime`. |
 | `.menu <halaman>` | Halaman berikutnya untuk katalog utama, mis. `.menu 2`. |
-| `.menu banner` | (Owner) Tes unduh gambar dan upload thumbnail banner. Menampilkan sumber error bila gambar tidak muncul. |
+| `.menu banner` | (Owner) Cek kesiapan banner (mode `externalAdReply`, URL gambar yang dipakai, dan sumber error bila gambar tidak muncul). |
 | `.promo` | (Owner) Status promosi otomatis: interval, grup terakhir, jumlah terkirim. |
 | `.promo on` / `.promo off` | (Owner) Nyalakan atau matikan promosi otomatis. Pilihan tersimpan di `database/promo.json`. |
 | `.promo now` | (Owner) Kirim promosi sekarang tanpa menunggu jadwal. |
@@ -81,10 +81,10 @@ Catatan:
 - Semua fitur tampil sebagai fitur Tsukasa. Tidak ada pemisahan “fitur Tsukasa” dan “fitur Kaguya”.
 - Nama kategori yang sama (`anime`, `sticker`, `tools`) otomatis digabung menjadi satu kategori.
 - `.menu` menampilkan bentuk katalog; `.help` menampilkan panduan dan cara pakai.
-- Banner menu berbentuk **link preview** (kartu gambar) dalam **satu pesan** dengan menu. Link ditaruh di baris paling atas, langsung diikuti katalog. Thumbnail diambil dari `MENU_IMAGE_URL` (cadangan: `PROMO_IMAGE_URL`, lalu gambar bawaan); target link memakai halaman web (`MENU_LINK_URL`, atau `PROMO_URL` bila kosong) karena WhatsApp hanya menampilkan kartu untuk URL halaman HTML, bukan URL gambar langsung.
-- Banner lama Kaguya (`cdn.zass.in`) sudah dibuang. Kalau ingin banner sendiri, isi `THUMB_MENU_URL` / `THUMB_STORE_URL` (opsional).
-- Gambar banner diunggah sebagai `highQualityThumbnail` ke server WhatsApp. Ini wajib agar kartu gambar tampil di Android; `jpegThumbnail` saja sering hanya menampilkan teks.
-- Kalau banner tidak muncul, jalankan `.menu banner` (owner) untuk melihat apakah unduhan gambar dan upload thumbnail berhasil.
+- Banner menu berbentuk **kartu preview** (`contextInfo.externalAdReply`) dalam **satu pesan** dengan menu. Gambar besar, judul, dan deskripsi tampil sebagai banner; **URL tidak ditulis** di badan pesan.
+- Gambar diambil dari `MENU_IMAGE_URL` (cadangan: `PROMO_IMAGE_URL`, lalu gambar bawaan). WhatsApp mengunduh gambar langsung dari URL tersebut, jadi URL harus bisa diakses publik (HTTPS).
+- `sourceUrl` kartu sengaja dikosongkan agar tidak ada baris link/domain yang ikut tampil. Kalau nanti ingin kartu bisa diklik, isi `sourceUrl` di `src/menubanner.js`.
+- Kalau banner tidak muncul, jalankan `.menu banner` (owner) untuk memeriksa URL gambar yang dipakai.
 - Command plugin bisa dipakai dengan prefix `.`, `!`, `/`, atau trigger `tsukasa`.
 - Fitur grup yang dimatikan lewat `.fitur off` otomatis hilang dari katalog `.menu` dan `.help`.
 - Database plugin memakai JSON (`global.dbEngine = 'json'`) agar tidak wajib compile SQLite native.
@@ -97,7 +97,7 @@ Setelah bot terhubung, `src/promo.js` menjadwalkan promosi web + nomor bot ke gr
 - Grup diambil dari `groupFetchAllParticipating()`, lalu dikirim **bergiliran** maksimal `PROMO_MAX_PER_RUN` grup per putaran. Putaran berikutnya melanjutkan dari grup setelahnya, jadi semua grup kebagian tanpa dibom sekaligus.
 - Ada jeda `PROMO_SEND_DELAY_SEC` + jitter acak 0-4 detik antar grup.
 - Jadwal terakhir disimpan di `database/promo.json`, jadi restart/reconnect tidak langsung mengirim promosi lagi.
-- Pesan memakai link preview (banner) bila `PROMO_IMAGE_URL` atau `MENU_IMAGE_URL` terisi.
+- Pesan memakai kartu banner (`externalAdReply`) bila `PROMO_IMAGE_URL` atau `MENU_IMAGE_URL` terisi.
 - Template bisa diubah lewat `PROMO_MESSAGE` dengan placeholder `{bot}`, `{url}`, `{number}`.
 - Owner bisa cek `.promo`, mematikan sementara `.promo off`, atau mengirim sekarang `.promo now`.
 
@@ -108,7 +108,7 @@ Promosi massal berisiko membuat nomor dibatasi WhatsApp. Pakai interval yang waj
 Sewa bot memakai paket di `global.sewaPlans` (dari `lib/kaguya-config.js`, atau env `SEWA_PLANS`):
 
 ```bash
-.sewa                      # daftar paket + banner link preview
+.sewa                      # daftar paket + banner
 .sewa <paket> [link grup]  # buat order (di grup: paket saja)
 .buktisewa                 # kirim bukti bayar (mode manual)
 .ceksewa                   # status sewa grup ini
@@ -130,7 +130,7 @@ Pembayaran:
 
 Bukti bayar diteruskan ke `global.owners`, yang diisi dari `SEWA_OWNER_NUMBER` / `OWNER_NUMBER` / `PAIRING_NUMBER`.
 
-Banner `.sewa` memakai metode yang sama dengan promosi dan menu: **link preview** (kartu gambar), bukan foto terpisah. Thumbnail diambil dari `SEWA_IMAGE_URL` → `MENU_IMAGE_URL` → `PROMO_IMAGE_URL`; link tujuan dari `SEWA_LINK_URL` → `MENU_LINK_URL` → `PROMO_URL`.
+Banner `.sewa` memakai metode yang sama dengan promosi dan menu: **kartu `externalAdReply`** (gambar + judul/deskripsi), bukan foto terpisah dan tanpa URL di badan pesan. Gambar diambil dari `SEWA_IMAGE_URL` → `MENU_IMAGE_URL` → `PROMO_IMAGE_URL`.
 
 ## Struktur Proyek
 
@@ -926,13 +926,14 @@ Admin grup (dan owner bot) bisa mengatur kapan Tsukasa membalas di grup masing-m
 .modegrup call     # balas hanya saat dipanggil "tsukasa" (default)
 ```
 
-- Default grup adalah `call`: bot hanya merespons saat ada panggilan `tsukasa`.
+- Default grup adalah `call`: bot hanya merespons saat ada panggilan `tsukasa` atau saat bot di-mention. Memanggil dengan nama saja (`tsukasa`, `tsukasa?`) tetap dibalas.
 - Semua perintah (`.help`, `.stiker`, `.tagall`, dll.) dan fitur tetap berfungsi di mode mana pun.
 - Di mode `reply`, pesan harus berupa balasan/quote ke pesan lain, lalu menyebut `tsukasa` **atau** membalas pesan bot. Quote video/dokumen/sticker/caption juga dihitung sebagai balasan.
+- Di mode `call`, membalas pesan bot saja **tidak** dianggap memanggil; bot tetap diam sampai ada kata `tsukasa` atau mention.
 - Di mode `all`, bot membalas semua pesan grup tanpa perlu trigger.
 - Di semua mode, pesan grup yang datang berdekatan (default 1,2 detik) digabung dulu sebelum AI membalas. Jadi AI menjawab satu alur percakapan, bukan tiap pesan satu balasan, dan balasan tidak saling mendahului.
 - Balasan AI di grup dibatasi maksimal 2 bubble (chat pribadi tetap 4), dan tidak menempelkan `@mention` owner di setiap balasan.
-- Jarak minimal antar balasan bot di grup 6 detik. Pesan yang jelas ditujukan ke bot (dipanggil `tsukasa`, reply ke pesan bot, atau mention bot) tetap dijawab cepat.
+- Jarak minimal antar balasan bot di grup 6 detik. Pesan yang jelas ditujukan ke bot (dipanggil `tsukasa`, mention bot, atau reply ke bot pada mode `reply`) tetap dijawab cepat.
 - Prompt grup memberi tahu AI bahwa ada beberapa pembicara, jadi ia tidak menganggap percakapan hanya dengan satu orang atau menebak nama.
 
 Atur lewat env bila perlu: `GROUP_AI_WINDOW_MS` (jeda penggabungan pesan, default `1200`), `GROUP_AI_COOLDOWN_MS` (jeda antar balasan, default `6000`), dan `GROUP_AI_MAX_BUBBLES` (default `2`).
@@ -954,7 +955,7 @@ Admin grup (dan owner) bisa mengubah pesan sambutan saat anggota baru masuk dan 
 ```
 
 - Template boleh **multi-baris**: kirim pesan dengan Enter/Shift+Enter setelah `.welcome set`, atau tulis `\n` di tengah teks.
-- Di atas pesan sambutan/perpisahan ada blok bergaya menu (`╭─〔 Tsukasa 〕 ... ╰──────────`). Banner link preview memakai gambar `MENU_IMAGE_URL` / `PROMO_IMAGE_URL`, tetapi URL-nya tidak ditulis ke badan pesan.
+- Di atas pesan sambutan/perpisahan ada blok bergaya menu (`╭─〔 Tsukasa 〕 ... ╰──────────`). Banner memakai kartu `externalAdReply` dengan gambar dari `MENU_IMAGE_URL` / `PROMO_IMAGE_URL`; URL tidak ditulis ke badan pesan.
 - Placeholder: `{mentions}` (tag semua peserta), `{user}`/`{name}` (nama), `{group}` (nama grup), `{count}` (jumlah peserta).
 - Template default bisa diatur lewat env `WELCOME_TEXT` / `GOODBYE_TEXT`; override per grup menang atas default.
 - Perubahan langsung berlaku tanpa restart karena disimpan di `tsukasa_state.json`.
