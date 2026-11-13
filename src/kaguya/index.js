@@ -283,7 +283,8 @@ function setGlobals(cfg) {
   g.publicTelegram = true;
   g.pconly = false;
   g.gconly = false;
-  g.sewamode = false;
+  // Jangan reset sewamode kalau sudah diubah lewat .sewamode / SEWA_MODE.
+  g.sewamode = typeof g.sewamode === 'boolean' ? g.sewamode : false;
   g.grupbot = false;
   g.botMode = 'all';
   g.buttonMode = false;
@@ -293,6 +294,44 @@ function setGlobals(cfg) {
   g.thumb = g.thumb || {};
   g.prefix = Array.isArray(g.prefix) ? g.prefix : ['.'];
   g.isPublic = () => true;
+  applySewaGlobals(g, cfg || {});
+}
+
+// Paket cadangan kalau lib/kaguya-config.js gagal dimuat (mis. dependensi
+// belum terpasang). Tanpa ini plugin sewa selalu menjawab "Paket sewa belum
+// diatur." dan fitur sewa tidak bisa dipakai sama sekali.
+const FALLBACK_SEWA_PLANS = [
+  { id: 'harian', nama: '1 Hari', hari: 1, harga: 2000 },
+  { id: 'mingguan', nama: '7 Hari', hari: 7, harga: 5000 },
+  { id: 'bulanan', nama: '30 Hari', hari: 30, harga: 10000 },
+  { id: '3bulan', nama: '90 Hari', hari: 90, harga: 20000 },
+  { id: 'permanen', nama: 'Permanen', hari: null, harga: 50000 },
+];
+
+function applySewaGlobals(g, cfg) {
+  const sewa = cfg.sewa || {};
+  if (typeof sewa.mode === 'boolean') g.sewamode = sewa.mode;
+  // Nilai dari env (SEWA_PLANS) menang; kalau kosong pakai yang sudah ada
+  // (lib/kaguya-config.js), terakhir baru paket cadangan.
+  const cfgPlans = Array.isArray(sewa.plans) ? sewa.plans : [];
+  if (cfgPlans.length) g.sewaPlans = cfgPlans;
+  if (!Array.isArray(g.sewaPlans) || !g.sewaPlans.length) g.sewaPlans = FALLBACK_SEWA_PLANS;
+
+  if (sewa.qrisStatic) g.qrisStatic = sewa.qrisStatic;
+  else g.qrisStatic = g.qrisStatic || '';
+
+  g.merchantGw = {
+    ...(g.merchantGw && typeof g.merchantGw === 'object' ? g.merchantGw : {}),
+    ...(sewa.merchantGw && sewa.merchantGw.url ? sewa.merchantGw : {}),
+  };
+
+  // Owner dipakai .buktisewa untuk meneruskan bukti bayar dan .accsewa.
+  const owners = String(sewa.ownerNumber || '')
+    .split(',')
+    .map((n) => String(n).replace(/\D+/g, ''))
+    .filter(Boolean);
+  if (owners.length) g.owners = [...new Set(owners)];
+  else if (!Array.isArray(g.owners)) g.owners = [];
 }
 
 async function ensureRuntime() {

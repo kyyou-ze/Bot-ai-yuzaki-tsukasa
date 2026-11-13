@@ -101,6 +101,35 @@ Setelah bot terhubung, `src/promo.js` menjadwalkan promosi web + nomor bot ke gr
 
 Promosi massal berisiko membuat nomor dibatasi WhatsApp. Pakai interval yang wajar, dan matikan dengan `.promo off` bila grup mulai terganggu.
 
+### Sewa bot
+
+Sewa bot memakai paket di `global.sewaPlans` (dari `lib/kaguya-config.js`, atau env `SEWA_PLANS`):
+
+```bash
+.sewa                      # daftar paket + banner link preview
+.sewa <paket> [link grup]  # buat order (di grup: paket saja)
+.buktisewa                 # kirim bukti bayar (mode manual)
+.ceksewa                   # status sewa grup ini
+.sewamode on|off           # (owner) aktifkan gerbang sewa
+.accsewa <id>              # (owner) setujui order
+.addsewa <durasi> [grup]   # (owner) aktifkan manual
+```
+
+**Bedanya grup menyewa dan tidak** ada di `.sewamode`:
+
+- `.sewamode on` — grup yang tidak punya sewa aktif **tidak dilayani**. Bot diam untuk obrolan biasa, dan hanya membalas perintah `.sewa`, `.menu`, `.help`, serta perintah pembayaran sewa. Grup yang menyewa memakai semua fitur seperti biasa.
+- `.sewamode off` — semua grup dilayani, termasuk yang belum menyewa.
+
+Status sewa grup ikut tampil di akhir `.menu`. Saat `.sewamode on`, grup yang belum menyewa juga melihat ajakan `.sewa` di sana.
+
+Pembayaran:
+- Otomatis: isi `MERCHANT_GW_URL` + `MERCHANT_GW_TOKEN` (gateway QRIS). Sewa aktif sendiri begitu pembayaran masuk.
+- Manual: isi `SEWA_QRIS` (atau pakai QRIS di `lib/kaguya-config.js`). Pembeli kirim bukti dengan `.buktisewa`, owner menyetujui dengan `.accsewa`.
+
+Bukti bayar diteruskan ke `global.owners`, yang diisi dari `SEWA_OWNER_NUMBER` / `OWNER_NUMBER` / `PAIRING_NUMBER`.
+
+Banner `.sewa` memakai metode yang sama dengan promosi dan menu: **link preview** (kartu gambar), bukan foto terpisah. Thumbnail diambil dari `SEWA_IMAGE_URL` → `MENU_IMAGE_URL` → `PROMO_IMAGE_URL`; link tujuan dari `SEWA_LINK_URL` → `MENU_LINK_URL` → `PROMO_URL`.
+
 ## Struktur Proyek
 
 ```

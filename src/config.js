@@ -280,6 +280,33 @@ function load() {
       imageUrl: getenv('PROMO_IMAGE_URL', getenv('MENU_IMAGE_URL', '')),
       message: getenv('PROMO_MESSAGE', ''),
     },
+    // Sewa bot. Paket & QRIS bisa diubah lewat env tanpa menyentuh
+    // lib/kaguya-config.js. Kalau kosong, nilai di kaguya-config tetap dipakai.
+    sewa: {
+      plans: (() => {
+        try {
+          const raw = JSON.parse(getenv('SEWA_PLANS', '[]'));
+          return Array.isArray(raw)
+            ? raw.filter((p) => p && p.id && Number.isFinite(Number(p.harga)))
+            : [];
+        } catch {
+          return [];
+        }
+      })(),
+      mode: (() => {
+        const v = String(getenv('SEWA_MODE', '')).trim().toLowerCase();
+        if (!v) return undefined;
+        if (['1', 'true', 'on', 'aktif'].includes(v)) return true;
+        if (['0', 'false', 'off', 'mati', 'nonaktif'].includes(v)) return false;
+        return undefined;
+      })(),
+      qrisStatic: String(getenv('SEWA_QRIS', '')).replace(/[\r\n]+/g, '').trim(),
+      ownerNumber: getenv('SEWA_OWNER_NUMBER', getenv('OWNER_NUMBER', getenv('PAIRING_NUMBER', ''))),
+      merchantGw: {
+        url: getenv('MERCHANT_GW_URL', ''),
+        token: getenv('MERCHANT_GW_TOKEN', ''),
+      },
+    },
     reconnectMaxDelaySec: Math.max(
       5,
       Math.min(600, intEnv(getenv('RECONNECT_MAX_DELAY_SEC', '60'), 60))

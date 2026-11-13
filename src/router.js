@@ -35,6 +35,44 @@ const memory = require('./memory');
 const wa = require('./wa');
 const menuBanner = require('./menubanner');
 const { isGroupJid, jidUser, formatDateTime, splitChatBubbles } = require('./util');
+
+// ── Gerbang sewa ──────────────────────────────────────────────────────────
+// Saat `.sewamode on`, hanya grup yang punya sewa aktif yang dilayani.
+// Perintah sewa/menu tetap boleh supaya grup bisa melihat paket dan menyewa.
+const SEWA_PUBLIC_COMMANDS = new Set([
+  'sewa',
+  'ceksewa',
+  'buktisewa',
+  'batalsewa',
+  'cekbayarsewa',
+  'menu',
+  'help',
+]);
+
+const sewaNoticeAt = new Map();
+
+function activeRentalOf(jid) {
+  const rentals = global.db && global.db.sewa && global.db.sewa.rentals;
+  const rental = rentals && rentals[jid];
+  if (!rental) return null;
+  if (rental.until !== null && Number(rental.until) <= Date.now()) return null;
+  return rental;
+}
+
+function sewaNoticeText() {
+  const plans = (Array.isArray(global.sewaPlans) ? global.sewaPlans : []).filter(
+    (p) => p && Number.isFinite(Number(p.harga))
+  );
+  const min = plans.length ? Math.min(...plans.map((p) => Number(p.harga))) : 0;
+  const price = min ? ` mulai Rp ${min.toLocaleString('id-ID')}` : '';
+  return [
+    '🔒 *Grup ini belum menyewa Tsukasa*',
+    '',
+    'Fitur bot di grup ini nonaktif karena mode sewa sedang aktif.',
+    `Sewa${price} — ketik .sewa untuk daftar paket.`,
+  ].join('\n');
+}
+
 const { shortError } = require('./logfmt');
 const { isHotCue, isStopCue } = require('./adultmode');
 const {
@@ -799,6 +837,24 @@ class Router {
     const cmdName = isCmd && parsed ? parsed.cmd : '';
     const cmdRest = isCmd && parsed ? parsed.rest : '';
 
+    // Gerbang sewa: inilah bedanya grup yang menyewa dan tidak.
+    // sewamode ON  -> grup tanpa sewa tidak dilayani (kecuali owner & perintah sewa/menu).
+    // sewamode OFF -> semua grup dilayani seperti biasa.
+    if (global.sewamode === true && isGroupJid(chat) && !isOwner && !activeRentalOf(chat)) {
+      // Obrolan biasa di grup yang belum menyewa diabaikan, bukan dibalas,
+      // supaya bot tidak ikut ramai.
+      if (!isCmd) return;
+      if (!SEWA_PUBLIC_COMMANDS.has(cmdName)) {
+        const last = sewaNoticeAt.get(chat) || 0;
+        if (Date.now() - last > 10 * 60 * 1000) {
+          sewaNoticeAt.set(chat, Date.now());
+          if (sewaNoticeAt.size > 1000) sewaNoticeAt.delete(sewaNoticeAt.keys().next().value);
+          await wa.sendText(chat, sewaNoticeText(), m).catch(() => {});
+        }
+        return;
+      }
+    }
+
     if (isCmd) {
       metrics.inc('commands');
       if (isOwner) {
@@ -1183,6 +1239,20 @@ class Router {
           let menuText =
             menu ||
             `Kategori *${String(bang.rest || '').trim()}* tidak ditemukan.\nCoba ${usedPrefix}menu atau ${usedPrefix}menu all.`;
+
+          // Status sewa grup ditampilkan di menu supaya bedanya kelihatan.
+          if (isGroupJid(chat)) {
+            const rental = activeRentalOf(chat);
+            if (rental) {
+              const until =
+                rental.until === null
+                  ? 'permanen'
+                  : `s/d ${formatDateTime(rental.until, this.cfg.timezone)}`;
+              menuText += `\n\nSewa grup: aktif ${until}`;
+            } else if (global.sewamode === true) {
+              menuText += `\n\nSewa grup: belum aktif — ketik ${usedPrefix}sewa`;
+            }
+          }
 
           // Banner hanya untuk menu utama: dikirim sebagai link preview
           // (kartu gambar), bukan foto terpisah. Target link memakai halaman

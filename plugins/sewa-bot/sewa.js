@@ -6,11 +6,12 @@
 
 import QRCode from 'qrcode'
 import { saveDB } from '../../lib/core/system.js'
-import { storeReply, sendThumb, gwUsable, quick, pick, row, copyBtn, sendBtn, allocTotal, createGatewayInvoice, cfg as merchantCfg } from '../../lib/store/merchant.js'
+import { storeReply, sendThumb, gwUsable, quick, copyBtn, sendBtn, allocTotal, createGatewayInvoice, cfg as merchantCfg } from '../../lib/store/merchant.js'
 import { formatDate, formatRemaining, sewaData, getRental } from '../../lib/core/data.js'
 import { toPN } from '../../lib/engine/plugins.js'
 import { waError } from '../../lib/platform/wa.js'
 import { ORDER_TTL_MIN, UNIQUE_MAX, GROUP_LINK, qrisText, qrisReady, toDynamic, merchantOf, rp, ACTIVE, STATUS, plans, durLabel, expireOrders, groupName } from '../../lib/store/sewa.js'
+import { sendPreview } from '../../lib/store/preview.js'
 
 // ===== .sewa [paket] [link grup] =====
 let handler = async (m, { sock, text, command, prefix, jid, isOwner, reply: baseReply }) => {
@@ -38,18 +39,16 @@ let handler = async (m, { sock, text, command, prefix, jid, isOwner, reply: base
                 : ''
             const rows = list.map((pl, i) => `${i + 1}. *${pl.id}* — ${durLabel(pl)}\n   💰 ${rp(pl.harga)}`)
             const auto = gwUsable()
-            return sendBtn(sock, m.chat, {
-                text:
-                    `╭─▣「 *SEWA BOT* 」▣─╮\n╰─────────────➤\n${status}\n${rows.join('\n')}\n\n` +
-                    (m.isGroup
-                        ? `Pesan untuk grup ini: ${p}sewa <paket>\nContoh: ${p}sewa ${list[0].id}`
-                        : `Pesan: ${p}sewa <paket> <link grup>\nContoh: ${p}sewa ${list[0].id} https://chat.whatsapp.com/xxxx`) +
-                    (auto ? `\n\nBayar lewat QRIS GoPay, sewa aktif *otomatis* begitu pembayaran masuk.` : `\n\nBayar lewat QRIS, lalu kirim bukti dengan ${p}buktisewa.`),
-                buttons: [
-                    pick('Pilih Paket', [{ title: 'Paket sewa', rows: list.slice(0, 10).map(pl => row(durLabel(pl), `${p}sewa ${pl.id}`, rp(pl.harga))) }]),
-                    quick('🏠 Menu Toko', `${p}store`)
-                ]
-            }, m)
+            // Banner sewa memakai metode yang sama dengan promosi/menu:
+            // link preview (kartu gambar), bukan foto terpisah.
+            return sendPreview(sock, m.chat,
+                `╭─▣「 *SEWA BOT TSUKASA* 」▣─╮\n╰─────────────➤\n${status}\n${rows.join('\n')}\n\n` +
+                (m.isGroup
+                    ? `Pesan untuk grup ini: ${p}sewa <paket>\nContoh: ${p}sewa ${list[0].id}`
+                    : `Pesan: ${p}sewa <paket> <link grup>\nContoh: ${p}sewa ${list[0].id} https://chat.whatsapp.com/xxxx`) +
+                (auto ? `\n\nBayar lewat QRIS GoPay, sewa aktif *otomatis* begitu pembayaran masuk.` : `\n\nBayar lewat QRIS, lalu kirim bukti dengan ${p}buktisewa.`),
+                { quoted: m }
+            )
         }
 
         const idx = /^\d+$/.test(planTok) ? Number(planTok) - 1 : -1
