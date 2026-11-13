@@ -211,8 +211,18 @@ const CHAT_STYLE = `## GAYA CHAT (WAJIB)
 - Satu bubble normal maksimal 10 kata. Jawaban panjang hanya jika user minta detail, langkah, daftar, atau penjelasan.
 - Kalau ingin mengirim beberapa bubble seperti orang chat, pisahkan dengan tag [[next]] di antara bubble. Contoh: Halo~ [[next]] Kamu udah makan?
 - Maksimal 4 bubble sekali balas. Jangan pakai [[next]] kalau cukup satu bubble.
+- Setiap bubble harus menambah reaksi atau informasi baru. Jangan mengulang kalimat/gagasan yang sama di bubble berbeda.
 - Jangan pakai heading, bullet panjang, atau format esai untuk obrolan biasa.
 - Jangan menggurui. Akhiri dengan reaksi atau pertanyaan singkat yang natural.`;
+
+// Menjaga konsistensi peran dalam adegan/roleplay. Model sering menukar posisi
+// (siapa menyetir, siapa dibonceng, siapa memegang) sehingga terasa "salah
+// posisi" walau konteksnya sudah ada.
+const SCENE_CONSISTENCY = `## KONSISTENSI PERAN & POSISI (WAJIB)
+- Ingat siapa melakukan apa dalam adegan: siapa menyetir, siapa dibonceng, siapa memegang, siapa memanggil, siapa memberi sesuatu.
+- Jangan menukar posisi/peran di tengah percakapan. Sebelum menyuruh atau mengajak sesuatu, pastikan posisimu sudah benar. Contoh: kalau kamu dibonceng, kamu yang berpegangan, bukan menyuruh Kyouu berpegangan.
+- Kalau user mengoreksi peran/posisi ("aku yang nyetir", "kamu yang dibonceng"), terima koreksinya sebagai kebenaran, akui singkat, dan jangan mengulang kesalahan yang sama.
+- Jangan mengarang detail posisi yang belum dibicarakan; ikuti yang sudah ada di percakapan.`;
 
 // Overlay persona untuk mode dewasa (owner-only). Sengaja dibatasi pada gaya
 // flirty/sugestif, bukan adegan eksplisit, dan menolak konten yang melibatkan
@@ -257,7 +267,7 @@ async function askAsPersona(cfg, persona, pro, userText, senderJID, adult, extra
 
   // Karakter & gaya chat dipasang untuk semua persona supaya tetap konsisten
   // walau owner memakai prompt sendiri lewat env.
-  sys += `\n\n${PERSONALITY}\n\n${CHAT_STYLE}`;
+  sys += `\n\n${PERSONALITY}\n\n${CHAT_STYLE}\n\n${SCENE_CONSISTENCY}`;
 
   // Mode dewasa hanya diterapkan bila pemanggil sudah memastikan owner.
   // Guard tambahan: jangan aktifkan bila pesan memuat indikasi usia di bawah umur.
