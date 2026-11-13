@@ -788,6 +788,8 @@ Fitur ini bisa dipakai tanpa trigger (langsung dengan `!`) dan tidak memerlukan 
 !ingatkan hapus <id>
 ```
 
+Alias singkat: `.listingat` = `!ingatkan list`, `.delingat <id>` = `!ingatkan hapus <id>`. Semuanya memakai data pengingat yang sama.
+
 - Waktu relatif: `10s`, `10m`, `2j`, `1 jam 30 menit`, `2 hari`.
 - Waktu absolut memakai `BOT_TIMEZONE`; offset UTC dihitung otomatis dari zona tersebut (default WIB). `BOT_TZ_OFFSET` hanya untuk override manual.
 - Pengingat disimpan di `tsukasa_state.json` dan tetap ada setelah restart.

@@ -251,8 +251,8 @@ class GroupTools {
     return [
       '*Pengingat*',
       '!ingatkan <waktu> <teks>',
-      '!ingatkan list',
-      '!ingatkan hapus <id>',
+      '!ingatkan list   (alias: .listingat)',
+      '!ingatkan hapus <id>   (alias: .delingat <id>)',
       '',
       'Contoh:',
       '!ingatkan 10m minum air',

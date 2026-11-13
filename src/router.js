@@ -1369,6 +1369,15 @@ class Router {
         if (await this.groupTools.handleReminder(this.sock, m, bang.rest)) return;
       }
 
+      // Alias singkat untuk sistem pengingat yang sama (bukan plugin terpisah).
+      if (bang.cmd === 'listingat') {
+        if (await this.groupTools.handleReminder(this.sock, m, 'list')) return;
+      }
+
+      if (bang.cmd === 'delingat') {
+        if (await this.groupTools.handleReminder(this.sock, m, `hapus ${bang.rest}`)) return;
+      }
+
       if (bang.cmd === 'poll' || bang.cmd === 'voting') {
         if (await this.groupTools.handlePoll(this.sock, m, bang.rest)) return;
       }
