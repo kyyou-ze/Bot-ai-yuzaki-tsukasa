@@ -100,6 +100,12 @@ const FEATURES = [
     commands: ['cosplay'],
   },
   {
+    key: 'cn',
+    label: 'CN TikTok',
+    description: 'Buat contoh CN TikTok dengan nama bergaya Unicode.',
+    commands: ['cn'],
+  },
+  {
     key: 'animechannel',
     label: 'Anime Channel',
     description: 'Auto-post info anime ke channel WhatsApp.',
@@ -142,7 +148,7 @@ const FEATURES = [
   {
     key: 'tools',
     label: 'Alat Grup',
-    description: 'Pengingat, polling, statistik, AFK, dan tagall.',
+    description: 'Pengingat, polling, statistik, AFK, tagall, dan info bot.',
     commands: [
       'ingatkan',
       'remind',
@@ -160,11 +166,16 @@ const FEATURES = [
       'goodbye',
       'selamattinggal',
       'pamit',
+      'bye',
       'afk',
       'back',
       'unafk',
       'kembali',
       'tagall',
+      'ping',
+      'status',
+      'health',
+      'whoami',
     ],
   },
   {

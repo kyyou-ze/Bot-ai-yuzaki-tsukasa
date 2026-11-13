@@ -64,15 +64,18 @@ Bot ini memakai **arsitektur bridge**: inti bot tetap milik Tsukasa, sedangkan p
 | --- | --- |
 | `.menu` | Katalog menu bergaya box Kaguya: ringkasan fitur Tsukasa + kategori plugin Kaguya yang dikelompokkan per tema. |
 | `.menu <kategori>` | Lihat command dalam satu kategori (dipaginasi 40 command), mis. `.menu rpg`, `.menu tools`, `.menu sticker`. |
+| `.menu fitur <nama>` | Lihat command fitur bawaan Tsukasa, mis. `.menu fitur tools`, `.menu fitur sticker`, `.menu fitur verif`. Dipakai saat nama fitur sama dengan kategori Kaguya. |
 | `.menu <kategori> <halaman>` | Halaman berikutnya, mis. `.menu rpg 2`. |
 | `.menu all` | Indeks semua kategori + contoh command. Tidak lagi menumpahkan seluruh command ke satu pesan. |
 | `.menu cari <kata>` | Cari command berdasarkan nama atau deskripsi, mis. `.menu cari anime`. |
 | `.help` | Panduan singkat penggunaan menu dan command. |
-| `.help <command>` | Cara pakai command tertentu, mis. `.help sticker`, `.help animedl`. |
-| `.help <kategori>` | Daftar command + deskripsi dalam kategori tersebut. |
+| `.help <command>` | Cara pakai command tertentu, mis. `.help animedl`, `.help cn`. |
+| `.help <kategori>` | Daftar command + deskripsi dalam kategori Kaguya. |
+| `.help fitur <nama>` | Daftar command fitur bawaan Tsukasa, mis. `.help fitur sticker`. |
 
 Catatan:
 - Kategori Kaguya dikelompokkan menjadi **RPG & Game**, **Anime & Fandom**, **Tools & Download**, **Sosial & Komunitas**, dan **Lainnya** agar menu tidak terasa seperti folder plugin mentah.
+- Beberapa nama dipakai bersama oleh fitur Tsukasa dan kategori Kaguya (`anime`, `sticker`, `tools`). Gunakan `.menu fitur <nama>` / `.help fitur <nama>` untuk fitur Tsukasa, dan `.menu <nama>` / `.help <nama>` untuk kategori Kaguya.
 - Command plugin bisa dipakai dengan prefix `.`, `!`, `/`, atau trigger `tsukasa`.
 - Fitur grup yang dimatikan lewat `.fitur off` otomatis hilang dari katalog `.menu` dan `.help`.
 - Database plugin memakai JSON (`global.dbEngine = 'json'`) agar tidak wajib compile SQLite native.
