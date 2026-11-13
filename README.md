@@ -1061,6 +1061,23 @@ Semua pengaturan di atas juga bisa diubah lewat chat:
 
 Semua respons menyertakan header CORS. Batasi origin lewat `HTTP_CORS_ORIGIN` (default `*`); isi domain landing page, mis. `https://tsukasa.vercel.app`, agar hanya situs itu yang bisa membaca `/status`.
 
+### URL HTTPS Publik via Cloudflare Tunnel
+
+Landing page berjalan di HTTPS, jadi API bot juga harus HTTPS. Kalau bot di-host di Pterodactyl tanpa akses root, gunakan Cloudflare Tunnel: bot menjalankan `cloudflared` sebagai proses anak, tanpa membuka port dan tanpa reverse proxy di host.
+
+1. Di Cloudflare Zero Trust → **Networks → Tunnels → Create a tunnel**, pilih **Cloudflared**, beri nama mis. `tsukasa-bot`.
+2. Tambah **Public hostname**: subdomain `bot`, domain `goyomi.my.id`, service **HTTP**, URL `127.0.0.1:PORT`.
+   `PORT` adalah allocation bot — lihat baris log `[BOOT] ... http 0.0.0.0:PORT`.
+3. Salin token tunnel, lalu isi di `.env` bot:
+   ```env
+   CLOUDFLARE_TUNNEL_TOKEN=token-dari-cloudflare
+   ```
+4. Restart bot. Log akan menampilkan `[TUNNEL] Cloudflare Tunnel diaktifkan.` dan cloudflared terhubung.
+5. Tes `https://bot.goyomi.my.id/status` — harus mengembalikan JSON.
+6. Di Vercel, isi `VITE_BOT_API_URL=https://bot.goyomi.my.id` lalu redeploy.
+
+Binary cloudflared diunduh otomatis sekali ke `data/bin/`. Bila hosting memblokir unduhan GitHub, unduh manual lalu tunjuk path-nya lewat `CLOUDFLARE_TUNNEL_BIN`. Token bersifat rahasia dan tidak pernah ditulis ke log.
+
 ## Catatan Teknis
 
 - Versi Baileys yang dipakai: **7.0.0-rc14** (paket ESM, dimuat dengan `import()` dinamis dari CommonJS). Versi ini mendukung LID-native addressing, `newsletterMetadata`, dan pengiriman pesan ke channel. Jika sesi lama tidak bisa dipakai setelah upgrade, pairing ulang sekali lewat QR/kode.

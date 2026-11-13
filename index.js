@@ -30,6 +30,7 @@ const { messageCache } = require('./src/messagecache');
 const { TaskQueue } = require('./src/taskqueue');
 const { Router } = require('./src/router');
 const { HttpApi } = require('./src/httpapi');
+const tunnel = require('./src/tunnel');
 const { Reminders } = require('./src/reminders');
 const { AnimeChannelPoster } = require('./src/features/animechannel');
 const { GroupTools } = require('./src/features/grouptools');
@@ -214,6 +215,9 @@ async function main() {
 
   const api = new HttpApi(cfg, isReady);
   api.start();
+  // Cloudflare Tunnel opsional: memberi URL HTTPS publik tanpa root/reverse
+  // proxy di host. Hanya aktif bila CLOUDFLARE_TUNNEL_TOKEN diisi.
+  tunnel.start();
   backup.start();
 
   log.info(`[BOOT] ${cfg.botName} | mode ${cfg.mode} | trigger "${cfg.trigger}"`);
@@ -488,6 +492,7 @@ async function main() {
   process.on('SIGINT', () => {
     shuttingDown = true;
     log.info('[BOOT] SIGINT | menutup...');
+    tunnel.stop();
     backup.stop();
     animeChannel.stop();
     groupTools.stop();
@@ -505,6 +510,7 @@ async function main() {
   process.on('SIGTERM', () => {
     shuttingDown = true;
     log.info('[BOOT] SIGTERM | menutup...');
+    tunnel.stop();
     backup.stop();
     animeChannel.stop();
     groupTools.stop();
