@@ -312,6 +312,28 @@ async function sendText(jid, text, quoted, mentions, linkPreview) {
   return res;
 }
 
+/**
+ * Unggah gambar ke server WhatsApp sebagai thumbnail link preview berkualitas
+ * tinggi. Di Android, `jpegThumbnail` saja sering tidak dirender — WhatsApp
+ * butuh `highQualityThumbnail` (media yang sudah di-upload) agar kartu gambar
+ * muncul.
+ */
+async function buildLinkThumbnail(buffer, mimetype) {
+  if (!sock || typeof sock.waUploadToServer !== 'function') {
+    throw new Error('socket WhatsApp belum siap');
+  }
+  const prepareWAMessageMedia = getBaileysFn('prepareWAMessageMedia');
+  const media = await prepareWAMessageMedia(
+    { image: buffer, ...(mimetype ? { mimetype } : {}) },
+    {
+      upload: sock.waUploadToServer,
+      mediaTypeOverride: 'thumbnail-link',
+      logger,
+    }
+  );
+  return media && media.imageMessage ? media.imageMessage : null;
+}
+
 async function sendImage(jid, buffer, caption, quoted, mimetype, mentions) {
   const content = { image: buffer, caption: caption || '' };
   if (mimetype) content.mimetype = mimetype;
@@ -389,6 +411,7 @@ module.exports = {
   resolveSendJid,
   sendMessage,
   sendText,
+  buildLinkThumbnail,
   sendImage,
   sendVideo,
   sendAudio,

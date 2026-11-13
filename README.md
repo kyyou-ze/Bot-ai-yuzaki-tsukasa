@@ -68,6 +68,7 @@ Bot ini memakai **arsitektur bridge**: inti bot tetap milik Tsukasa, sedangkan p
 | `.menu all` | Indeks ringkas semua kategori + jumlah command. |
 | `.menu cari <kata>` | Cari command berdasarkan nama atau deskripsi, mis. `.menu cari anime`. |
 | `.menu <halaman>` | Halaman berikutnya untuk katalog utama, mis. `.menu 2`. |
+| `.menu banner` | (Owner) Tes unduh gambar dan upload thumbnail banner. Menampilkan sumber error bila gambar tidak muncul. |
 | `.help` | Panduan singkat penggunaan menu dan command. |
 | `.help <command>` | Cara pakai command tertentu, mis. `.help animedl`, `.help cn`. |
 | `.help <kategori>` | Daftar command + deskripsi dalam kategori tersebut. |
@@ -77,6 +78,8 @@ Catatan:
 - Nama kategori yang sama (`anime`, `sticker`, `tools`) otomatis digabung menjadi satu kategori.
 - `.menu` menampilkan bentuk katalog; `.help` menampilkan panduan dan cara pakai.
 - Banner menu berbentuk **link preview** (kartu gambar), bukan foto yang dikirim terpisah. Atur thumbnail lewat `.config set MENU_IMAGE_URL <direct link gambar>` dan link tujuan lewat `.config set MENU_LINK_URL <url>` (owner), atau lewat `MENU_IMAGE_URL` / `MENU_LINK_URL` di `.env`. Kalau kosong, menu dikirim sebagai teks saja.
+- Gambar banner diunggah sebagai `highQualityThumbnail` ke server WhatsApp. Ini wajib agar kartu gambar tampil di Android; `jpegThumbnail` saja sering hanya menampilkan teks.
+- Kalau banner tidak muncul, jalankan `.menu banner` (owner) untuk melihat apakah unduhan gambar dan upload thumbnail berhasil.
 - Command plugin bisa dipakai dengan prefix `.`, `!`, `/`, atau trigger `tsukasa`.
 - Fitur grup yang dimatikan lewat `.fitur off` otomatis hilang dari katalog `.menu` dan `.help`.
 - Database plugin memakai JSON (`global.dbEngine = 'json'`) agar tidak wajib compile SQLite native.

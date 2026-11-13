@@ -1083,6 +1083,43 @@ class Router {
           .filter((f) => f.commands.length);
 
         if (bang.cmd === 'menu') {
+          // Diagnostik banner: `.menu banner` (khusus owner).
+          if (isOwner && /^banner$/i.test(String(bang.rest || '').trim())) {
+            const report = await menuBanner.testMenuBanner({
+              imageUrl: process.env.MENU_IMAGE_URL,
+              linkUrl: process.env.MENU_LINK_URL || process.env.MENU_IMAGE_URL,
+              title: (this.cfg && this.cfg.botName) || 'Tsukasa',
+              description: 'Katalog fitur Tsukasa',
+            });
+            const i = report.info || {};
+            const kb = (n) => `${(Number(n) / 1024).toFixed(1)} KB`;
+            const short = (v, n) => {
+              const s = String(v || '');
+              return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+            };
+            const lines = ['╭─〔 TES BANNER 〕'];
+            lines.push(`│ URL    : ${i.imageUrl ? 'terisi' : 'kosong'}`);
+            if (i.imageUrl) lines.push(`│ Target : ${short(i.imageUrl, 60)}`);
+            lines.push(
+              `│ Unduh  : ${
+                i.downloaded ? `ok — ${i.mime || '?'} ${kb(i.originalBytes)}` : 'gagal'
+              }`
+            );
+            lines.push(`│ Thumb  : ${i.thumbBytes ? kb(i.thumbBytes) : 'tidak ada'}`);
+            lines.push(`│ Upload : ${i.hqUploaded ? 'ok (high quality)' : 'tidak'}`);
+            lines.push(`│ Link   : ${i.linkUrl ? short(i.linkUrl, 60) : '-'}`);
+            if (i.error) lines.push(`│ Error  : ${i.error}`);
+            lines.push('╰──────────');
+            lines.push('');
+            lines.push(
+              report.ok
+                ? 'Banner siap. Kalau gambar tetap tidak muncul, coba buka WhatsApp Android versi terbaru.'
+                : 'Banner belum siap. Perbaiki bagian Error di atas.'
+            );
+            await wa.sendText(chat, lines.join('\n'), m);
+            return;
+          }
+
           const menu = kaguya.formatMenu({
             category: bang.rest,
             isOwner,

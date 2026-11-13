@@ -1,15 +1,17 @@
 'use strict';
 
 const log = require('./logger');
+const wa = require('./wa');
 const { downloadImage } = require('./imageutil');
 
-// Kartu preview link untuk menu. Gambar diunduh sekali, dikompres jadi JPEG
-// kecil, lalu dipakai sebagai thumbnail. Bukan foto yang dikirim terpisah,
-// jadi WhatsApp menampilkannya sebagai banner berbentuk link preview.
+// Kartu preview link untuk menu. Gambar diunduh sekali, dikompres, lalu
+// di-upload sebagai highQualityThumbnail. Tanpa upload itu, WhatsApp Android
+// sering hanya menampilkan teks tanpa gambar.
 const CACHE_TTL_MS = 30 * 60 * 1000;
-const MAX_THUMB_BYTES = 100 * 1024;
+// jpegThumbnail cukup kecil; highQualityThumbnail yang membawa versi besar.
+const MAX_THUMB_BYTES = 256 * 1024;
 
-let cache = { url: '', at: 0, value: null };
+let cache = { url: '', link: '', at: 0, value: null };
 
 function isHttpUrl(value) {
   try {
@@ -21,8 +23,8 @@ function isHttpUrl(value) {
 }
 
 /**
- * Pastikan thumbnail berupa JPEG. sharp sudah dipakai imageutil, tapi kalau
- * tidak tersedia kita coba @napi-rs/canvas sebagai cadangan.
+ * Pastikan thumbnail berupa JPEG. sharp dipakai imageutil, tapi kalau tidak
+ * tersedia kita coba @napi-rs/canvas sebagai cadangan.
  */
 async function toJpegThumb(img) {
   if (!img || !img.data || !img.data.length) return null;
@@ -32,12 +34,12 @@ async function toJpegThumb(img) {
     const src = await loadImage(img.data);
     const srcW = Number(src.width) || 640;
     const srcH = Number(src.height) || srcW;
-    const width = Math.max(1, Math.min(400, srcW));
+    const width = Math.max(1, Math.min(720, srcW));
     const height = Math.max(1, Math.round((srcH / srcW) * width));
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
     ctx.drawImage(src, 0, 0, width, height);
-    if (typeof canvas.encode === 'function') return await canvas.encode('image/jpeg', 70);
+    if (typeof canvas.encode === 'function') return await canvas.encode('image/jpeg', 72);
     return canvas.toBuffer('image/jpeg');
   } catch (err) {
     log.warn('[MENU] gagal membuat thumbnail JPEG:', err && err.message ? err.message : err);
@@ -46,44 +48,108 @@ async function toJpegThumb(img) {
 }
 
 /**
- * Bangun objek WAUrlInfo untuk `linkPreview`.
- * @returns {Promise<null | { 'canonical-url': string, 'matched-text': string, title: string, description?: string, jpegThumbnail?: Buffer }>}
+ * Bangun data preview + info diagnostik. Tidak melempar error supaya menu
+ * tetap terkirim walau banner gagal.
  */
-async function buildMenuPreview({ imageUrl, linkUrl, title, description }) {
+async function resolvePreview({ imageUrl, linkUrl, title, description }) {
   const image = String(imageUrl || '').trim();
-  if (!isHttpUrl(image)) return null;
+  const info = {
+    imageUrl: image,
+    linkUrl: '',
+    downloaded: false,
+    mime: '',
+    originalBytes: 0,
+    thumbBytes: 0,
+    hqUploaded: false,
+    error: '',
+  };
 
-  const now = Date.now();
-  if (cache.url === image && now - cache.at < CACHE_TTL_MS) return cache.value;
-
-  const link = isHttpUrl(linkUrl) ? String(linkUrl).trim() : image;
-  let preview = null;
-
-  try {
-    const img = await downloadImage(image, {
-      maxBytes: 8 * 1024 * 1024,
-      timeoutMs: 20000,
-      maxWidth: 400,
-      quality: 60,
-      compressAbove: 1,
-    });
-    const thumb = await toJpegThumb(img);
-    preview = {
-      'canonical-url': link,
-      'matched-text': link,
-      title: String(title || 'Menu').slice(0, 120),
-      description: String(description || '').slice(0, 200),
-    };
-    if (thumb && thumb.length && thumb.length <= MAX_THUMB_BYTES) {
-      preview.jpegThumbnail = thumb;
-    }
-  } catch (err) {
-    log.warn('[MENU] banner gagal dimuat:', err && err.message ? err.message : err);
-    preview = null;
+  if (!isHttpUrl(image)) {
+    info.error = 'MENU_IMAGE_URL belum diisi atau bukan URL http/https';
+    return { preview: null, info };
   }
 
-  cache = { url: image, at: now, value: preview };
+  const link = isHttpUrl(linkUrl) ? String(linkUrl).trim() : image;
+  info.linkUrl = link;
+
+  const now = Date.now();
+  if (cache.url === image && cache.link === link && now - cache.at < CACHE_TTL_MS && cache.value) {
+    info.cached = true;
+    return { preview: cache.value, info: { ...info, ...(cache.value.__info || {}) } };
+  }
+
+  let img;
+  try {
+    img = await downloadImage(image, {
+      maxBytes: 8 * 1024 * 1024,
+      timeoutMs: 20000,
+      maxWidth: 720,
+      quality: 72,
+      compressAbove: 1,
+    });
+  } catch (err) {
+    info.error = `gagal unduh gambar: ${err && err.message ? err.message : err}`;
+    log.warn('[MENU] banner gagal dimuat:', info.error);
+    cache = { url: image, link, at: now, value: null };
+    return { preview: null, info };
+  }
+
+  info.downloaded = true;
+  info.mime = img.mime;
+  info.originalBytes = img.originalBytes || (img.data && img.data.length) || 0;
+
+  const thumb = await toJpegThumb(img);
+  if (thumb && thumb.length) info.thumbBytes = thumb.length;
+
+  const preview = {
+    'canonical-url': link,
+    'matched-text': link,
+    title: String(title || 'Menu').slice(0, 120),
+    description: String(description || '').slice(0, 200),
+  };
+  if (thumb && thumb.length && thumb.length <= MAX_THUMB_BYTES) {
+    preview.jpegThumbnail = thumb;
+  }
+
+  // Upload versi besar ke server WhatsApp. Ini yang membuat kartu gambar
+  // tampil di Android.
+  try {
+    const hq = await wa.buildLinkThumbnail(img.data, img.mime);
+    if (hq) {
+      preview.highQualityThumbnail = hq;
+      info.hqUploaded = true;
+      const small = hq.jpegThumbnail ? Buffer.from(hq.jpegThumbnail) : null;
+      if (small && small.length && small.length <= MAX_THUMB_BYTES) {
+        preview.jpegThumbnail = small;
+        info.thumbBytes = small.length;
+      }
+    }
+  } catch (err) {
+    info.error = `upload thumbnail gagal: ${err && err.message ? err.message : err}`;
+    log.warn('[MENU]', info.error);
+  }
+
+  Object.defineProperty(preview, '__info', { value: info, enumerable: false });
+  cache = { url: image, link, at: now, value: preview };
+  return { preview, info };
+}
+
+/**
+ * Bangun objek WAUrlInfo untuk `linkPreview`.
+ * @returns {Promise<null | { 'canonical-url': string, 'matched-text': string, title: string, description?: string, jpegThumbnail?: Buffer, highQualityThumbnail?: object }>}
+ */
+async function buildMenuPreview(opts) {
+  const { preview } = await resolvePreview(opts || {});
   return preview;
 }
 
-module.exports = { buildMenuPreview, isHttpUrl };
+/**
+ * Tes banner tanpa mengirim menu. Dipakai `.menu banner` untuk mendiagnosis
+ * kenapa gambar tidak muncul.
+ */
+async function testMenuBanner(opts) {
+  const { preview, info } = await resolvePreview(opts || {});
+  return { ok: Boolean(preview), info, preview };
+}
+
+module.exports = { buildMenuPreview, testMenuBanner, isHttpUrl };
