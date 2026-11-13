@@ -80,7 +80,7 @@ Catatan:
 - Semua fitur tampil sebagai fitur Tsukasa. Tidak ada pemisahan “fitur Tsukasa” dan “fitur Kaguya”.
 - Nama kategori yang sama (`anime`, `sticker`, `tools`) otomatis digabung menjadi satu kategori.
 - `.menu` menampilkan bentuk katalog; `.help` menampilkan panduan dan cara pakai.
-- Banner menu berbentuk **link preview** (kartu gambar), bukan foto yang dikirim terpisah. Atur thumbnail lewat `.config set MENU_IMAGE_URL <direct link gambar>` dan link tujuan lewat `.config set MENU_LINK_URL <url>` (owner), atau lewat `MENU_IMAGE_URL` / `MENU_LINK_URL` di `.env`. Kalau kosong, menu dikirim sebagai teks saja.
+- Banner menu berbentuk **link preview** (kartu gambar), bukan foto yang dikirim terpisah. Thumbnail diambil dari `.config set MENU_IMAGE_URL <direct link gambar>`; target link memakai halaman web (`MENU_LINK_URL`, atau `PROMO_URL` bila kosong) karena WhatsApp hanya menampilkan kartu untuk URL halaman HTML, bukan URL gambar langsung. Tanpa `MENU_LINK_URL`, URL web promosi dipakai otomatis.
 - Gambar banner diunggah sebagai `highQualityThumbnail` ke server WhatsApp. Ini wajib agar kartu gambar tampil di Android; `jpegThumbnail` saja sering hanya menampilkan teks.
 - Kalau banner tidak muncul, jalankan `.menu banner` (owner) untuk melihat apakah unduhan gambar dan upload thumbnail berhasil.
 - Command plugin bisa dipakai dengan prefix `.`, `!`, `/`, atau trigger `tsukasa`.

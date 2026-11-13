@@ -1133,9 +1133,13 @@ class Router {
           if (isOwner && /^banner$/i.test(String(bang.rest || '').trim())) {
             const report = await menuBanner.testMenuBanner({
               imageUrl: process.env.MENU_IMAGE_URL,
-              linkUrl: process.env.MENU_LINK_URL || process.env.MENU_IMAGE_URL,
+              linkUrl:
+                process.env.MENU_LINK_URL ||
+                process.env.PROMO_URL ||
+                (this.cfg && this.cfg.promo && this.cfg.promo.url) ||
+                process.env.MENU_IMAGE_URL,
               title: (this.cfg && this.cfg.botName) || 'Tsukasa',
-              description: 'Katalog fitur Tsukasa',
+              description: 'Sticker, unduhan, game grup, dan moderasi.',
             });
             const i = report.info || {};
             const kb = (n) => `${(Number(n) / 1024).toFixed(1)} KB`;
@@ -1181,17 +1185,25 @@ class Router {
             `Kategori *${String(bang.rest || '').trim()}* tidak ditemukan.\nCoba ${usedPrefix}menu atau ${usedPrefix}menu all.`;
 
           // Banner hanya untuk menu utama: dikirim sebagai link preview
-          // (kartu gambar), bukan foto terpisah.
+          // (kartu gambar), bukan foto terpisah. Target link memakai halaman
+          // web (PROMO_URL / MENU_LINK_URL), bukan URL gambar: WhatsApp hanya
+          // menampilkan kartu kalau URL di teks benar-benar halaman HTML.
           let linkPreview = null;
+          let linkTarget = '';
           if (!String(bang.rest || '').trim()) {
+            linkTarget =
+              process.env.MENU_LINK_URL ||
+              process.env.PROMO_URL ||
+              (this.cfg && this.cfg.promo && this.cfg.promo.url) ||
+              '';
             linkPreview = await menuBanner.buildMenuPreview({
               imageUrl: process.env.MENU_IMAGE_URL,
-              linkUrl: process.env.MENU_LINK_URL || process.env.MENU_IMAGE_URL,
+              linkUrl: linkTarget || process.env.MENU_IMAGE_URL,
               title: (this.cfg && this.cfg.botName) || 'Tsukasa',
-              description: 'Katalog fitur Tsukasa',
+              description: 'Sticker, unduhan, game grup, dan moderasi.',
             });
-            if (linkPreview && linkPreview['matched-text']) {
-              menuText += `\n\n${linkPreview['matched-text']}`;
+            if (linkPreview && linkTarget) {
+              menuText += `\n\nInfo & fitur: ${linkTarget}`;
             }
           }
 
