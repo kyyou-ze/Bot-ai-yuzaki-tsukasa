@@ -681,6 +681,11 @@ Tsukasa tetap terasa dekat dengan owner saat mereka bertemu di grup, tetapi tida
 - Ringkasan itu hanya dipakai sebagai konteks internal. Prompt melarang Tsukasa mengutip atau menceritakan isi chat pribadi kepada siapa pun di grup, termasuk kepada owner di depan orang lain.
 - Kalau owner ikut bicara di grup, barisnya ditandai `(owner)`. Tsukasa boleh lebih hangat dan akrab kepadanya, tetapi tetap sopan, tanpa flirty berlebihan dan tanpa panggilan mesra.
 - Ringkasan disimpan di `data/memory/_owner-gist.json`. Menghapus riwayat chat pribadi owner (`.reset` di DM) juga menghapus ringkasannya.
+- Ringkasan punya masa berlaku (default 14 hari) karena suasana hati cepat berubah. Setelah kedaluwarsa, isinya tidak lagi dipakai di grup sampai owner ngobrol lagi dan ringkasan baru dibuat. `.ingatanku` akan menandainya sebagai kedaluwarsa.
+
+```env
+MEMORY_GIST_TTL_DAYS=14
+```
 
 Matikan fitur ini bila tidak diinginkan:
 
@@ -704,7 +709,14 @@ Fakta yang ditulis sendiri oleh user disimpan per nomor dan hanya dipakai sebaga
 - Maksimal 10 catatan per user, masing-masing 160 karakter, duplikat ditolak.
 - Di DM, catatan dipakai agar jawaban nyambung. Di grup, catatan peserta dipakai sebagai latar belakang dan **tidak boleh dibacakan atau diungkit**.
 - Disimpan di `data/memory/_facts.json`.
+- Catatan punya masa berlaku (default 180 hari). Menulis fakta yang sama lagi akan menyegarkan masanya; `.ingat list` menampilkan sisa hari saat sudah mendekati batas.
 - Owner bisa melihat ringkasan ingatan untuk grup lewat `.ingatanku`, dan menghapusnya dengan `.ingatanku reset`.
+
+```env
+MEMORY_FACT_TTL_DAYS=180
+```
+
+Setel `0` pada salah satu env di atas bila ingin ingatan itu berlaku selamanya.
 
 ## Tsukasa Mengadu ke Owner
 

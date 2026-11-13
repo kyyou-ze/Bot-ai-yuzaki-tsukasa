@@ -10,6 +10,20 @@ const OWNER_GIST_FILE = path.join(MEMORY_DIR, '_owner-gist.json');
 const FACTS_FILE = path.join(MEMORY_DIR, '_facts.json');
 const MAX_FACTS = 10;
 const MAX_FACT_LEN = 160;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Masa berlaku ingatan. Ringkasan suasana owner cepat basi, sedangkan fakta
+// pribadi yang ditulis sendiri user boleh bertahan lama. 0 = tidak kedaluwarsa.
+function ttlDaysFromEnv(name, fallback) {
+  const raw = String(process.env[name] ?? '').trim();
+  if (!raw) return fallback;
+  const n = Number.parseFloat(raw);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return n;
+}
+
+const GIST_TTL_DAYS = ttlDaysFromEnv('MEMORY_GIST_TTL_DAYS', 14);
+const FACT_TTL_DAYS = ttlDaysFromEnv('MEMORY_FACT_TTL_DAYS', 180);
 
 const chatHistMap = new Map();
 const userNameMap = new Map();
@@ -68,15 +82,33 @@ function loadAll() {
   }
 
   try {
+    const stat = fs.statSync(FACTS_FILE);
+    const fallbackAt = Number(stat.mtimeMs) || Date.now();
     const raw = JSON.parse(fs.readFileSync(FACTS_FILE, 'utf8'));
+    let changed = false;
     for (const [jid, list] of Object.entries(raw || {})) {
       if (!Array.isArray(list)) continue;
-      const clean = list
-        .map((v) => String(v || '').trim())
-        .filter(Boolean)
-        .slice(0, MAX_FACTS);
+      const entries = [];
+      for (const item of list) {
+        const entry = normalizeFactEntry(item, fallbackAt);
+        if (!entry) {
+          changed = true;
+          continue;
+        }
+        // Catatan format lama masih berupa string; simpan ulang sebagai objek
+        // supaya punya cap waktu dan bisa kedaluwarsa.
+        if (typeof item === 'string' || !item.createdAt) changed = true;
+        if (factExpired(entry)) {
+          changed = true;
+          continue;
+        }
+        entries.push(entry);
+      }
+      const clean = entries.slice(0, MAX_FACTS);
+      if (clean.length !== entries.length) changed = true;
       if (clean.length) factsMap.set(jid, clean);
     }
+    if (changed) persistFacts();
   } catch {
     /* belum ada catatan */
   }
@@ -258,13 +290,24 @@ function markOwnerDm(chatJID) {
 }
 
 /** Ringkasan aman tentang owner (bukan transkrip) untuk konteks grup. */
+function ownerGistExpired(now = Date.now()) {
+  if (GIST_TTL_DAYS <= 0) return false;
+  if (!ownerGist.updatedAt) return false;
+  return now - ownerGist.updatedAt > GIST_TTL_DAYS * DAY_MS;
+}
+
 function getOwnerGist() {
+  const expired = ownerGistExpired();
   return {
-    text: ownerGist.text,
+    text: expired ? '' : ownerGist.text,
     updatedAt: ownerGist.updatedAt,
     sourceChat: ownerGist.sourceChat,
     dirty: ownerGist.dirty,
     seq: ownerGistSeq,
+    expired,
+    // Ringkasan lama masih tersimpan, tetapi sudah tidak dipakai.
+    stale: expired && Boolean(ownerGist.text),
+    ttlDays: GIST_TTL_DAYS,
   };
 }
 
@@ -313,42 +356,107 @@ function cleanFact(text) {
     .slice(0, MAX_FACT_LEN);
 }
 
+function factStamp(entry) {
+  return Number(entry && (entry.updatedAt || entry.createdAt)) || 0;
+}
+
+function factAgeDays(entry, now = Date.now()) {
+  const stamp = factStamp(entry);
+  if (!stamp) return 0;
+  return Math.max(0, (now - stamp) / DAY_MS);
+}
+
+function factExpired(entry, now = Date.now()) {
+  if (FACT_TTL_DAYS <= 0) return false;
+  const stamp = factStamp(entry);
+  if (!stamp) return false;
+  return now - stamp > FACT_TTL_DAYS * DAY_MS;
+}
+
+/** Sisa hari sebelum catatan kedaluwarsa; null bila tidak memakai masa berlaku. */
+function factDaysLeft(entry, now = Date.now()) {
+  if (FACT_TTL_DAYS <= 0) return null;
+  return Math.max(0, FACT_TTL_DAYS - factAgeDays(entry, now));
+}
+
+function normalizeFactEntry(value, fallbackAt) {
+  const source = value && typeof value === 'object' ? value : { text: value };
+  const text = cleanFact(source.text);
+  if (!text) return null;
+  const createdAt = Number(source.createdAt) || fallbackAt;
+  const updatedAt = Number(source.updatedAt) || createdAt;
+  return { text, createdAt, updatedAt };
+}
+
+/**
+ * Fakta aktif (belum kedaluwarsa). Catatan basi dibuang sambil merapikan
+ * file supaya tidak menumpuk.
+ */
+function activeFacts(key) {
+  const list = factsMap.get(key);
+  if (!list) return [];
+  const now = Date.now();
+  const alive = list.filter((entry) => !factExpired(entry, now));
+  if (alive.length !== list.length) {
+    if (alive.length) factsMap.set(key, alive);
+    else factsMap.delete(key);
+    persistFacts();
+  }
+  return alive;
+}
+
 /**
  * Simpan fakta pribadi untuk satu JID. Mengembalikan status agar pemanggil
- * bisa membedakan duplikat, penuh, dan berhasil.
+ * bisa membedakan duplikat, penuh, dan berhasil. Menulis ulang fakta yang sama
+ * akan menyegarkan masa berlakunya.
  */
 function addFact(jid, text) {
   const key = String(jid || '').trim();
   const fact = cleanFact(text);
   if (!key || !fact) return { ok: false, reason: 'kosong' };
-  const list = factsMap.get(key) || [];
-  if (list.some((v) => v.toLowerCase() === fact.toLowerCase())) {
-    return { ok: false, reason: 'duplikat', fact };
+  const list = activeFacts(key);
+  const now = Date.now();
+  const existing = list.find((entry) => entry.text.toLowerCase() === fact.toLowerCase());
+  if (existing) {
+    existing.updatedAt = now;
+    factsMap.set(key, list);
+    persistFacts();
+    return { ok: false, reason: 'duplikat', fact, refreshed: true, ttlDays: FACT_TTL_DAYS };
   }
   if (list.length >= MAX_FACTS) return { ok: false, reason: 'penuh', fact };
-  list.push(fact);
+  list.push({ text: fact, createdAt: now, updatedAt: now });
   factsMap.set(key, list);
   persistFacts();
-  return { ok: true, fact, count: list.length };
+  return { ok: true, fact, count: list.length, ttlDays: FACT_TTL_DAYS };
 }
 
-/** Daftar fakta pribadi (salinan) untuk satu JID. */
+/** Daftar fakta pribadi (teks saja) untuk satu JID. */
 function getFacts(jid) {
-  return (factsMap.get(String(jid || '').trim()) || []).slice();
+  return activeFacts(String(jid || '').trim()).map((entry) => entry.text);
+}
+
+/** Daftar fakta beserta sisa masa berlaku, untuk ditampilkan ke user. */
+function getFactEntries(jid) {
+  return activeFacts(String(jid || '').trim()).map((entry) => ({
+    text: entry.text,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+    daysLeft: factDaysLeft(entry),
+  }));
 }
 
 /** Hapus satu fakta berdasarkan nomor urut 1-based. */
 function removeFact(jid, index) {
   const key = String(jid || '').trim();
-  const list = factsMap.get(key);
-  if (!list) return '';
+  const list = activeFacts(key);
+  if (!list.length) return '';
   const i = Number(index) - 1;
   if (!Number.isInteger(i) || i < 0 || i >= list.length) return '';
   const [removed] = list.splice(i, 1);
   if (list.length) factsMap.set(key, list);
   else factsMap.delete(key);
   persistFacts();
-  return removed || '';
+  return (removed && removed.text) || '';
 }
 
 /** Hapus semua fakta pribadi satu JID. */
@@ -390,6 +498,11 @@ function extractActualUserInput(contextText) {
   return contextText;
 }
 
+/** Masa berlaku ingatan yang aktif, untuk ditampilkan di bantuan. */
+function memoryTtl() {
+  return { gistDays: GIST_TTL_DAYS, factDays: FACT_TTL_DAYS };
+}
+
 module.exports = {
   loadAll,
   load,
@@ -406,7 +519,9 @@ module.exports = {
   ownerChatHistory,
   addFact,
   getFacts,
+  getFactEntries,
   removeFact,
   clearFacts,
+  memoryTtl,
   extractActualUserInput,
 };

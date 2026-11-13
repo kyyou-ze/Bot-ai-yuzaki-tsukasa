@@ -10,6 +10,15 @@ function isCommand(cmd) {
   return COMMANDS.includes(String(cmd || '').trim().toLowerCase());
 }
 
+/** Keterangan sisa masa berlaku, hanya muncul saat sudah mendekati batas. */
+function expiryNote(entry) {
+  if (!entry || entry.daysLeft === null || entry.daysLeft === undefined) return '';
+  const days = Math.ceil(entry.daysLeft);
+  if (days <= 0) return ' _(kedaluwarsa)_';
+  if (days > 30) return '';
+  return ` _(sisa ${days} hari)_`;
+}
+
 /**
  * Catatan fakta pribadi yang ditulis sendiri oleh user lewat `.ingat`.
  * Catatan ini privat: hanya dipakai sebagai konteks internal, tidak pernah
@@ -90,7 +99,7 @@ class PersonalMemoryFeature {
   }
 
   async sendList(chat, m, sender) {
-    const facts = memory.getFacts(sender);
+    const facts = memory.getFactEntries(sender);
     if (!facts.length) {
       await wa.sendText(
         chat,
@@ -99,8 +108,12 @@ class PersonalMemoryFeature {
       );
       return;
     }
+    const ttl = memory.memoryTtl();
     const lines = ['*Catatan pribadimu*'];
-    facts.forEach((fact, i) => lines.push(`${i + 1}. ${fact}`));
+    facts.forEach((fact, i) => lines.push(`${i + 1}. ${fact.text}${expiryNote(fact)}`));
+    if (ttl.factDays > 0) {
+      lines.push('', `_Catatan berlaku ${ttl.factDays} hari sejak terakhir ditulis._`);
+    }
     lines.push('', 'Hapus: `.ingat hapus <nomor>` atau `.ingat hapus all`.');
     await wa.sendText(chat, lines.join('\n'), m);
   }
@@ -119,7 +132,7 @@ class PersonalMemoryFeature {
     }
 
     const gist = memory.getOwnerGist();
-    const facts = memory.getFacts(chat);
+    const facts = memory.getFactEntries(chat);
     const lines = ['*Yang aku ingat*'];
     if (gist.text) {
       const when = gist.updatedAt
@@ -128,12 +141,20 @@ class PersonalMemoryFeature {
       lines.push('', '*Ringkasan suasana/obrolan*');
       lines.push(gist.text);
       if (when) lines.push(`_Diperbarui: ${when}_`);
+      if (gist.ttlDays > 0) lines.push(`_Ringkasan berlaku ${gist.ttlDays} hari._`);
+    } else if (gist.stale) {
+      lines.push(
+        '',
+        '*Ringkasan suasana/obrolan*',
+        '_Ringkasan lama sudah kedaluwarsa dan tidak aku pakai lagi._',
+        'Ngobrol dulu di chat pribadi supaya aku buat yang baru.'
+      );
     } else {
       lines.push('', 'Belum ada ringkasan obrolan. Ngobrol dulu di chat pribadi ya.');
     }
     if (facts.length) {
       lines.push('', '*Catatan pribadi*');
-      facts.forEach((fact, i) => lines.push(`${i + 1}. ${fact}`));
+      facts.forEach((fact, i) => lines.push(`${i + 1}. ${fact.text}${expiryNote(fact)}`));
     }
     lines.push(
       '',

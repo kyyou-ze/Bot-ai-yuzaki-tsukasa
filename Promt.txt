@@ -13,3 +13,100 @@ Fix module/tiktok.js:
 5. Jangan cek 4 akun sekaligus, cek satu-satu dengan interval.
 
 Update file module/tiktok.js dengan scraper baru yang anti-WAF.
+
+---
+
+# Backlog Pengembangan Bot Tsukasa
+
+Catatan ini menyimpan saran yang belum dikerjakan. Urutan di bawah adalah
+prioritas, bukan kewajiban.
+
+Status: nomor 5 (ingatan berumur) sudah dikerjakan pada commit `1e66b50`+
+(ringkasan owner 14 hari, fakta `.ingat` 180 hari, bisa diatur lewat
+`MEMORY_GIST_TTL_DAYS` dan `MEMORY_FACT_TTL_DAYS`).
+
+---
+
+## 1. State adegan per chat
+
+Masalah: konsistensi peran masih bergantung pada prompt. Saat adegan panjang
+dan riwayat 8 turn terpotong, Tsukasa bisa lupa siapa menyetir, siapa
+dibonceng, sedang di mana, atau sedang melakukan apa.
+
+Rencana:
+
+- Simpan catatan adegan kecil per chat, misalnya:
+  `{ lokasi, aktivitas, peran: { tsukasa, lawanBicara }, updatedAt }`.
+- Perbarui setiap beberapa turn, bisa lewat model murah atau aturan sederhana.
+- Kedaluwarsa otomatis setelah 30-60 menit tanpa aktivitas.
+- Suntikkan sebagai konteks internal, bukan untuk dibacakan.
+- Jangan simpan detail sensitif; samakan filternya dengan ringkasan owner.
+
+Manfaat: memperbaiki "salah posisi" tanpa menambah aturan prompt terus-menerus.
+
+## 2. Aduan yang lebih terkendali
+
+Masalah: deteksi hinaan memakai regex, masih bisa salah lapor dan bisa
+dipakai orang untuk membanjiri DM owner.
+
+Rencana:
+
+- Batas global per grup (misalnya maksimal 3 laporan per grup per jam), bukan
+  hanya per pengirim.
+- Command owner: `.aduan` untuk melihat daftar terakhir, `.aduan off <grup>`
+  untuk mematikan laporan di grup tertentu.
+- Kelompokkan laporan berulang dari orang yang sama agar tidak jadi spam.
+- Pertimbangkan hanya melapor bila hinaan terulang atau tergolong berat.
+- Jangan sertakan kutipan panjang bila laporan dikirim malam hari; cukup
+  ringkasan.
+
+## 3. Rampingkan prompt
+
+Masalah: prompt makin menumpuk (kepribadian, gaya chat, konsistensi peran,
+emosi, aturan grup, fakta, tools). Setiap aturan baru bersaing dengan aturan
+lain dan bisa saling bertabrakan.
+
+Rencana:
+
+- Gabungkan aturan yang tumpang tindih.
+- Sisakan 5 aturan terpenting; selebihnya pindahkan ke kode (deterministik).
+- Batasi panjang total system prompt dan ukur dampaknya ke kualitas balasan.
+- Buat daftar prioritas: keselamatan > hubungan owner > konsistensi peran >
+  gaya chat > detail kecil.
+
+## 4. Pecah `router.js` dan tambah smoke test
+
+Masalah: `src/router.js` sudah sangat besar; gate trigger, sewa, command, AI,
+banner, dan memori bercampur. Setiap fitur baru menambah risiko regresi dan
+semua pengujian masih manual.
+
+Rencana:
+
+- Pecah menjadi modul, misalnya:
+  - `src/ai/group-queue.js`
+  - `src/ai/reply.js`
+  - `src/gates/trigger.js`
+  - `src/gates/sewa.js`
+- Tambah smoke test untuk:
+  - keputusan trigger (panggil, mention, reply, mode grup),
+  - `isMistreating` (positif dan negatif),
+  - `splitChatBubbles`,
+  - fakta `.ingat` (tambah, duplikat, kedaluwarsa, hapus),
+  - ringkasan owner (kedaluwarsa dan sanitasi).
+- Jalankan test di `npm run check` atau script terpisah.
+
+---
+
+## Catatan kecil lain
+
+- **Dekorasi owner di DM**: `@nama (mas Kyou)` muncul di setiap balasan.
+  Pertimbangkan hanya muncul sesekali atau saat quoting agar tidak berisik dan
+  tidak memperparah kebingungan "siapa sedang bicara".
+- **`Eror.txt`**: file ini selalu berubah dan tracked git. Sebaiknya masuk
+  `.gitignore` dan log diputar ke luar repo supaya `.update now`
+  (`git pull --ff-only`) tidak gagal karena perubahan lokal.
+- **Token GitHub**: jangan pernah disimpan di repo. Revoke token yang pernah
+  ditempel di chat, lalu gunakan credential helper atau deploy key.
+- **Memori jangka panjang**: pertimbangkan retrieval sederhana (pilih fakta
+  yang relevan dengan pesan terakhir) daripada menyuntik semua fakta setiap
+  kali.
