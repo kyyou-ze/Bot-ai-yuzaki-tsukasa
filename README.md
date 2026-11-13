@@ -954,6 +954,7 @@ Admin grup (dan owner) bisa mengubah pesan sambutan saat anggota baru masuk dan 
 ```
 
 - Template boleh **multi-baris**: kirim pesan dengan Enter/Shift+Enter setelah `.welcome set`, atau tulis `\n` di tengah teks.
+- Di atas pesan sambutan/perpisahan ada blok bergaya menu (`╭─〔 Tsukasa 〕 ... ╰──────────`). Banner link preview memakai gambar `MENU_IMAGE_URL` / `PROMO_IMAGE_URL`, tetapi URL-nya tidak ditulis ke badan pesan.
 - Placeholder: `{mentions}` (tag semua peserta), `{user}`/`{name}` (nama), `{group}` (nama grup), `{count}` (jumlah peserta).
 - Template default bisa diatur lewat env `WELCOME_TEXT` / `GOODBYE_TEXT`; override per grup menang atas default.
 - Perubahan langsung berlaku tanpa restart karena disimpan di `tsukasa_state.json`.
@@ -988,6 +989,7 @@ Nama perintah (mis. `news`, `cosplay`, `history`, `s`) diprioritaskan sebagai ov
 ```
 
 - Alasan AFK disimpan di `tsukasa_state.json`, jadi tetap ada setelah restart.
+- Notifikasi AFK hanya menyebut **nama** user, tanpa tag/mention, supaya tidak ikut membangunkan orang yang sedang AFK.
 - Saat user AFK di-mention atau pesannya di-reply, bot membalas status AFK beserta alasannya (dibatasi cooldown 5 menit per user/chat agar tidak spam).
 - Begitu user AFK mengirim pesan, sticker, atau media apa pun, statusnya otomatis dicabut dan bot menyambut dengan durasi AFK.
 - `.tagall` bisa juga ditulis `!tagall`, `/tagall`, atau `tsukasa tagall`; teks setelah kata `tagall` dipakai sebagai isi pesan. Tanpa teks, bot memakai sapaan default.

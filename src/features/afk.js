@@ -1,6 +1,7 @@
 'use strict';
 
 const wa = require('../wa');
+const memory = require('../memory');
 const { jidUser } = require('../util');
 
 const COMMANDS = new Set(['afk', 'back', 'unafk', 'kembali']);
@@ -8,6 +9,16 @@ const AFK_OFF = /^(off|stop|clear|hapus|batal|kembali|balik)$/i;
 const AFK_LIST = /^(list|daftar)$/i;
 const MAX_REASON = 200;
 const NOTICE_COOLDOWN_MS = 5 * 60 * 1000;
+
+/**
+ * Nama untuk ditampilkan di pesan AFK. Tag/mention sengaja tidak dipakai:
+ * notifikasi AFK cukup menyebut nama, tanpa menandai (dan membangunkan) user.
+ */
+function displayName(jid, pushName) {
+  const saved = String(memory.getUserName(jid) || '').trim();
+  const push = String(pushName || '').trim();
+  return saved || push || jidUser(jid) || 'User';
+}
 
 function formatDuration(ms) {
   const total = Math.max(0, Math.floor(Number(ms) / 1000));
@@ -61,12 +72,10 @@ class AfkFeature {
         .slice(0, 30)
         .map((a) => {
           const reason = a.reason ? ` — ${a.reason}` : '';
-          return `• @${jidUser(a.user)} (${formatDuration(Date.now() - a.since)})${reason}`;
+          return `• ${displayName(a.user)} (${formatDuration(Date.now() - a.since)})${reason}`;
         })
         .join('\n');
-      await wa
-        .sendText(chat, `😴 *Daftar AFK*\n${body}`, m, rows.slice(0, 30).map((a) => a.user))
-        .catch(() => {});
+      await wa.sendText(chat, `😴 *Daftar AFK*\n${body}`, m).catch(() => {});
       return true;
     }
 
@@ -96,14 +105,10 @@ class AfkFeature {
     const self = this.store.getAfk(sender);
     if (self) {
       const dur = formatDuration(Date.now() - self.since);
+      const who = displayName(sender, m && m.pushName);
       await this.store.clearAfk(sender);
       await wa
-        .sendText(
-          chat,
-          `👋 @${jidUser(sender)} sudah kembali setelah ${dur}.`,
-          m,
-          [sender]
-        )
+        .sendText(chat, `👋 ${who} sudah kembali setelah ${dur}.`, m)
         .catch(() => {});
     }
 
@@ -137,11 +142,10 @@ class AfkFeature {
       await wa
         .sendText(
           chat,
-          `😴 @${jidUser(jid)} sedang AFK sejak ${formatDuration(
+          `😴 ${displayName(jid)} sedang AFK sejak ${formatDuration(
             Date.now() - afk.since
           )} lalu.${reason}`,
-          m,
-          [jid]
+          m
         )
         .catch(() => {});
       break;

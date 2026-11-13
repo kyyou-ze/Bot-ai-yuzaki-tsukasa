@@ -2,6 +2,7 @@
 
 const log = require('../logger');
 const memory = require('../memory');
+const menuBanner = require('../menubanner');
 const { onlyDigits, jidUser, isGroupJid, destJid, firstNonEmpty } = require('../util');
 const wa = require('../wa');
 
@@ -100,6 +101,22 @@ const DEFAULT_WELCOME_TEXT =
 const DEFAULT_GOODBYE_TEXT = 'Selamat jalan {mentions} 👋\nSemoga sukses di luar sana!';
 const MAX_GREETING_TEXT = 2000;
 
+/**
+ * Blok pembuka bergaya menu. Sengaja tanpa URL: kartu link preview tetap
+ * dikirim terpisah, jadi alamat web tidak tampil sebagai baris teks.
+ */
+function greetingHeader(kind, { group, count, botName } = {}) {
+  const name = String(botName || 'Tsukasa').trim() || 'Tsukasa';
+  const label = kind === 'goodbye' ? 'Sampai jumpa' : 'Selamat datang';
+  return [
+    `╭─〔 ${name} 〕`,
+    `│ ${label}`,
+    `│ Grup: ${String(group || '-').trim() || '-'}`,
+    `│ Peserta: ${Number(count) || 0}`,
+    '╰──────────',
+  ].join('\n');
+}
+
 function envEnabled(name, fallback = true) {
   const raw = String(process.env[name] || '').trim().toLowerCase();
   if (!raw) return fallback;
@@ -193,6 +210,42 @@ class WelcomeHandler {
       .trim();
   }
 
+  /** Header menu + isi sambutan/perpisahan. */
+  decorate(kind, text, ctx = {}) {
+    const header = greetingHeader(kind, {
+      group: ctx.group,
+      count: Array.isArray(ctx.mentions) ? ctx.mentions.length : ctx.count,
+      botName: this.cfg && this.cfg.botName,
+    });
+    return text ? `${header}\n\n${text}` : header;
+  }
+
+  /**
+   * Kartu banner untuk welcome/goodbye. URL target tidak ditulis ke teks,
+   * hanya dipakai sebagai canonical-url preview.
+   */
+  async banner(kind, group) {
+    const fallback = new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(null), 8000);
+      if (typeof timer.unref === 'function') timer.unref();
+    });
+    try {
+      return await Promise.race([
+        menuBanner.buildGreetingPreview({
+          title: (this.cfg && this.cfg.botName) || 'Tsukasa',
+          description:
+            kind === 'goodbye'
+              ? `Sampai jumpa dari ${String(group || 'grup').trim() || 'grup'}.`
+              : `Selamat datang di ${String(group || 'grup').trim() || 'grup'}.`,
+        }),
+        fallback,
+      ]);
+    } catch (err) {
+      log.warn('[GREETING] banner dilewati:', err && err.message ? err.message : err);
+      return null;
+    }
+  }
+
   async groupName(sock, chat) {
     try {
       if (!sock || typeof sock.groupMetadata !== 'function') return chat;
@@ -228,8 +281,13 @@ class WelcomeHandler {
     const text = this.render(conf.text, { mentions, group });
     if (!text) return false;
 
+    const body = this.decorate(kind, text, { mentions, group });
+    const preview = await this.banner(kind, group);
+
     try {
-      await sock.sendMessage(chat, { text, mentions });
+      const content = { text: body, mentions };
+      if (preview) content.linkPreview = preview;
+      await sock.sendMessage(chat, content);
       log.info(
         `[GREETING] ${kind} ${mentions.length} peserta di ${chat} (${conf.custom ? 'custom' : 'default'})`
       );
@@ -312,9 +370,15 @@ class WelcomeHandler {
         return true;
       }
       await this.store.setGreeting(chat, kind, { text: body, enabled: true });
+      const group = await this.groupName(sock, chat);
+      const previewText = this.decorate(
+        kind,
+        this.render(body, { mentions: [m.key.participant || chat], group }),
+        { mentions: [m.key.participant || chat], group }
+      );
       await wa.sendText(
         chat,
-        `✅ Template ${label.toLowerCase()} disimpan.\n\n*Preview:*\n${this.render(body, { mentions: [m.key.participant || chat], group: await this.groupName(sock, chat) })}`,
+        `✅ Template ${label.toLowerCase()} disimpan.\n\n*Preview:*\n${previewText}`,
         m
       );
       return true;
@@ -323,8 +387,14 @@ class WelcomeHandler {
     if (['preview', 'tes', 'test', 'contoh'].includes(first)) {
       const actor = bareJid(m.key.participant || chat);
       const group = await this.groupName(sock, chat);
-      const text = this.render(conf.text, { mentions: [actor], group });
-      await sock.sendMessage(chat, { text, mentions: [actor] });
+      const body = this.decorate(kind, this.render(conf.text, { mentions: [actor], group }), {
+        mentions: [actor],
+        group,
+      });
+      const preview = await this.banner(kind, group);
+      const content = { text: body, mentions: [actor] };
+      if (preview) content.linkPreview = preview;
+      await sock.sendMessage(chat, content);
       return true;
     }
 

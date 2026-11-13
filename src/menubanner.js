@@ -11,7 +11,25 @@ const CACHE_TTL_MS = 30 * 60 * 1000;
 // jpegThumbnail cukup kecil; highQualityThumbnail yang membawa versi besar.
 const MAX_THUMB_BYTES = 256 * 1024;
 
+// Banner cadangan kalau MENU_IMAGE_URL / PROMO_IMAGE_URL belum diisi.
+const DEFAULT_BANNER_IMAGE =
+  'https://raw.githubusercontent.com/kyyou-ze/tsukasa-img/refs/heads/main/Profil%20Anime%20Pastel%20Ungu%20Yuzaki%20Tsukasa.png';
+
 let cache = { url: '', link: '', at: 0, value: null };
+
+function bannerImageCandidates() {
+  return [
+    ...new Set(
+      [process.env.MENU_IMAGE_URL, process.env.PROMO_IMAGE_URL, DEFAULT_BANNER_IMAGE]
+        .map((v) => String(v || '').trim())
+        .filter(Boolean)
+    ),
+  ];
+}
+
+function bannerLinkUrl() {
+  return String(process.env.MENU_LINK_URL || process.env.PROMO_URL || '').trim();
+}
 
 function isHttpUrl(value) {
   try {
@@ -144,6 +162,24 @@ async function buildMenuPreview(opts) {
 }
 
 /**
+ * Banner untuk welcome/goodbye. Link target tidak ikut ditulis ke badan pesan,
+ * jadi yang terlihat hanya kartu preview (judul/deskripsi), bukan URL panjang.
+ */
+async function buildGreetingPreview({ title, description } = {}) {
+  const linkUrl = bannerLinkUrl();
+  for (const imageUrl of bannerImageCandidates()) {
+    const preview = await buildMenuPreview({
+      imageUrl,
+      linkUrl: linkUrl || imageUrl,
+      title: title || 'Tsukasa',
+      description: description || 'Bot WhatsApp Tsukasa.',
+    });
+    if (preview) return preview;
+  }
+  return null;
+}
+
+/**
  * Tes banner tanpa mengirim menu. Dipakai `.menu banner` untuk mendiagnosis
  * kenapa gambar tidak muncul.
  */
@@ -152,4 +188,12 @@ async function testMenuBanner(opts) {
   return { ok: Boolean(preview), info, preview };
 }
 
-module.exports = { buildMenuPreview, testMenuBanner, isHttpUrl };
+module.exports = {
+  buildMenuPreview,
+  buildGreetingPreview,
+  bannerImageCandidates,
+  bannerLinkUrl,
+  testMenuBanner,
+  isHttpUrl,
+  DEFAULT_BANNER_IMAGE,
+};

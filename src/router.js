@@ -52,18 +52,11 @@ const SEWA_PUBLIC_COMMANDS = new Set([
 
 const sewaNoticeAt = new Map();
 
-// Banner cadangan kalau MENU_IMAGE_URL / PROMO_IMAGE_URL belum diisi.
-const DEFAULT_BANNER_IMAGE =
-  'https://raw.githubusercontent.com/kyyou-ze/tsukasa-img/refs/heads/main/Profil%20Anime%20Pastel%20Ungu%20Yuzaki%20Tsukasa.png';
-
 // Kandidat gambar banner, dicoba berurutan sampai ada yang berhasil diunduh.
-// Ini mencegah banner hilang hanya karena satu URL env sudah mati.
+// Daftar & fallback gambar dikelola di src/menubanner.js supaya menu, promo,
+// dan welcome/goodbye memakai banner yang sama.
 function bannerImageCandidates() {
-  return [...new Set(
-    [process.env.MENU_IMAGE_URL, process.env.PROMO_IMAGE_URL, DEFAULT_BANNER_IMAGE]
-      .map((v) => String(v || '').trim())
-      .filter(Boolean)
-  )];
+  return menuBanner.bannerImageCandidates();
 }
 
 // Di grup, pesan yang datang berdekatan digabung dalam satu jendela waktu.
