@@ -69,6 +69,9 @@ Bot ini memakai **arsitektur bridge**: inti bot tetap milik Tsukasa, sedangkan p
 | `.menu cari <kata>` | Cari command berdasarkan nama atau deskripsi, mis. `.menu cari anime`. |
 | `.menu <halaman>` | Halaman berikutnya untuk katalog utama, mis. `.menu 2`. |
 | `.menu banner` | (Owner) Tes unduh gambar dan upload thumbnail banner. Menampilkan sumber error bila gambar tidak muncul. |
+| `.promo` | (Owner) Status promosi otomatis: interval, grup terakhir, jumlah terkirim. |
+| `.promo on` / `.promo off` | (Owner) Nyalakan atau matikan promosi otomatis. Pilihan tersimpan di `database/promo.json`. |
+| `.promo now` | (Owner) Kirim promosi sekarang tanpa menunggu jadwal. |
 | `.help` | Panduan singkat penggunaan menu dan command. |
 | `.help <command>` | Cara pakai command tertentu, mis. `.help animedl`, `.help cn`. |
 | `.help <kategori>` | Daftar command + deskripsi dalam kategori tersebut. |
@@ -84,6 +87,19 @@ Catatan:
 - Fitur grup yang dimatikan lewat `.fitur off` otomatis hilang dari katalog `.menu` dan `.help`.
 - Database plugin memakai JSON (`global.dbEngine = 'json'`) agar tidak wajib compile SQLite native.
 - Registrasi Kaguya dimatikan; plugin langsung bisa dipakai tanpa `.daftar`.
+
+### Promosi otomatis
+
+Setelah bot terhubung, `src/promo.js` menjadwalkan promosi web + nomor bot ke grup setiap `PROMO_INTERVAL_HOURS` jam (default 6). Detailnya:
+
+- Grup diambil dari `groupFetchAllParticipating()`, lalu dikirim **bergiliran** maksimal `PROMO_MAX_PER_RUN` grup per putaran. Putaran berikutnya melanjutkan dari grup setelahnya, jadi semua grup kebagian tanpa dibom sekaligus.
+- Ada jeda `PROMO_SEND_DELAY_SEC` + jitter acak 0-4 detik antar grup.
+- Jadwal terakhir disimpan di `database/promo.json`, jadi restart/reconnect tidak langsung mengirim promosi lagi.
+- Pesan memakai link preview (banner) bila `PROMO_IMAGE_URL` atau `MENU_IMAGE_URL` terisi.
+- Template bisa diubah lewat `PROMO_MESSAGE` dengan placeholder `{bot}`, `{url}`, `{number}`.
+- Owner bisa cek `.promo`, mematikan sementara `.promo off`, atau mengirim sekarang `.promo now`.
+
+Promosi massal berisiko membuat nomor dibatasi WhatsApp. Pakai interval yang wajar, dan matikan dengan `.promo off` bila grup mulai terganggu.
 
 ## Struktur Proyek
 
@@ -151,6 +167,11 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `SEND_API_KEY` | - | API key untuk `/send` |
 | `SEND_RATE_PER_MIN` | `10` | Rate limit `/send` per IP |
 | `HTTP_CORS_ORIGIN` | `*` | Origin yang diizinkan membaca HTTP API. Isi domain landing page untuk membatasi |
+| `PROMO_ENABLED` | `true` | Promosi otomatis web + nomor bot ke grup |
+| `PROMO_URL` | `https://tsukasabot-md.vercel.app` | Link web yang dipromosikan |
+| `PROMO_INTERVAL_HOURS` | `6` | Jarak antar promosi otomatis |
+| `PROMO_MAX_PER_RUN` | `20` | Batas grup per putaran; sisanya digilir |
+| `PROMO_SEND_DELAY_SEC` | `8` | Jeda antar grup (ditambah jitter 0-4 detik) |
 | `GEMINI_API_KEYS` / `GEMINI_API_KEY` | - | API key Gemini (bisa koma) — wajib |
 | `GEMINI_TEXT_MODEL` | `gemini-3.5-flash-lite` | Model chat |
 | `ELEVENLABS_API_KEY` / `ELEVENLABS_VOICE_ID` | - | Untuk fitur VN TTS |

@@ -42,6 +42,7 @@ const metrics = require('./src/metrics');
 const { downloadQueue } = require('./src/downloadqueue');
 const { SessionBackup } = require('./src/backup');
 const { AuditLog } = require('./src/audit');
+const { Promo } = require('./src/promo');
 const { hardenAuthState } = require('./src/waauth');
 
 // Logger Baileys sudah diarahkan ke logger aplikasi (lihat src/wa.js).
@@ -127,6 +128,7 @@ async function main() {
   const isReady = () => waReady;
   const backup = new SessionBackup(cfg);
   const audit = new AuditLog(cfg);
+  const promo = new Promo(cfg);
   downloadQueue.setConcurrency(cfg.downloadQueueConcurrency);
 
   // Error hook: catat metrik dan kirim notifikasi ke owner dengan cooldown.
@@ -308,7 +310,8 @@ async function main() {
       groupGuard,
       updater,
       backup,
-      audit
+      audit,
+      promo
     );
 
     // Akun yang sudah diverifikasi sebelum fitur ini ada tetap ikut dipantau.
@@ -369,6 +372,7 @@ async function main() {
         groupGuard.start();
         tiktokMonitor.start();
         updater.start();
+        promo.start();
       }
 
       if (connection === 'connecting') {
@@ -379,6 +383,7 @@ async function main() {
         groupGuard.stop();
         tiktokMonitor.stop();
         updater.stop();
+        promo.stop();
         log.info('[WA] Menghubungkan...');
       }
 
@@ -391,6 +396,7 @@ async function main() {
         groupGuard.stop();
         tiktokMonitor.stop();
         updater.stop();
+        promo.stop();
         if (shuttingDown) return;
 
         const statusCode =

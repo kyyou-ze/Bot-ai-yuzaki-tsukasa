@@ -267,6 +267,19 @@ function load() {
     ),
     sessionBackupDir: path.resolve(getenv('SESSION_BACKUP_DIR', 'backups/session')),
     sessionBackupKeep: Math.max(1, Math.min(100, intEnv(getenv('SESSION_BACKUP_KEEP', '7'), 7))),
+    // Promosi otomatis web + nomor bot ke grup, tiap beberapa jam.
+    promo: {
+      enabled: boolEnv(getenv('PROMO_ENABLED', 'true'), true),
+      url: getenv('PROMO_URL', 'https://tsukasabot-md.vercel.app'),
+      number: getenv('PROMO_NUMBER', getenv('PAIRING_NUMBER', '')),
+      intervalHours: Math.max(1, intEnv(getenv('PROMO_INTERVAL_HOURS', '6'), 6)),
+      // Batas grup per putaran; sisanya digilir di putaran berikutnya.
+      maxPerRun: Math.max(1, Math.min(100, intEnv(getenv('PROMO_MAX_PER_RUN', '20'), 20))),
+      delaySec: Math.max(0, Math.min(120, intEnv(getenv('PROMO_SEND_DELAY_SEC', '8'), 8))),
+      startDelaySec: Math.max(0, intEnv(getenv('PROMO_START_DELAY_SEC', '120'), 120)),
+      imageUrl: getenv('PROMO_IMAGE_URL', getenv('MENU_IMAGE_URL', '')),
+      message: getenv('PROMO_MESSAGE', ''),
+    },
     reconnectMaxDelaySec: Math.max(
       5,
       Math.min(600, intEnv(getenv('RECONNECT_MAX_DELAY_SEC', '60'), 60))

@@ -183,7 +183,8 @@ class Router {
     groupGuard,
     updater,
     backup,
-    audit
+    audit,
+    promo
   ) {
     this.cfg = cfg;
     this.sock = sock;
@@ -191,6 +192,7 @@ class Router {
     this.store = store;
     this.backup = backup || null;
     this.audit = audit || null;
+    this.promo = promo || null;
     this.animeChannel = animeChannel || null;
     this.groupTools = groupTools || new GroupTools(cfg, store);
     this.afk = new AfkFeature(cfg, store);
@@ -1033,6 +1035,50 @@ class Router {
         }
         if (st.lastError) lines.push(`• Error    : ${st.lastError}`);
         lines.push('', 'Gunakan .backup run untuk backup sekarang.');
+        await wa.sendText(chat, lines.join('\n'), m);
+        return;
+      }
+
+      if (bang.cmd === 'promo') {
+        if (!isOwner) {
+          await wa.sendText(chat, 'Perintah ini khusus owner.', m);
+          return;
+        }
+        if (!this.promo) {
+          await wa.sendText(chat, 'Fitur promosi tidak tersedia.', m);
+          return;
+        }
+        const sub = String(bang.rest || '').trim().toLowerCase();
+        if (sub === 'on' || sub === 'nyala' || sub === 'aktif') {
+          this.promo.setEnabled(true);
+          await wa.sendText(chat, 'Promosi otomatis: aktif.', m);
+          return;
+        }
+        if (sub === 'off' || sub === 'mati' || sub === 'nonaktif') {
+          this.promo.setEnabled(false);
+          await wa.sendText(chat, 'Promosi otomatis: nonaktif.', m);
+          return;
+        }
+        if (sub === 'now' || sub === 'sekarang' || sub === 'run') {
+          await wa.sendText(chat, 'Mengirim promosi sekarang...', m).catch(() => {});
+          const res = await this.promo.run('manual');
+          await wa.sendText(
+            chat,
+            res.ok
+              ? `Promosi terkirim ke ${res.sent} grup (gagal ${res.failed}, total ${res.groups}).`
+              : `Promosi tidak terkirim: ${res.reason || 'tidak ada grup'}.`,
+            m
+          );
+          return;
+        }
+        const st = this.promo.status();
+        const lines = ['PROMOSI OTOMATIS', `Status: ${st.enabled ? 'aktif' : 'nonaktif'}`];
+        lines.push(`Interval: ${st.intervalH} jam`);
+        lines.push(`Web: ${st.url}`);
+        lines.push(`Grup terakhir: ${st.lastGroups}`);
+        lines.push(`Terkirim: ${st.lastSent} (gagal ${st.lastFailed})`);
+        if (st.lastAt) lines.push(`Terakhir: ${formatDateTime(st.lastAt, this.cfg.timezone)}`);
+        lines.push('', 'Perintah: .promo on | .promo off | .promo now');
         await wa.sendText(chat, lines.join('\n'), m);
         return;
       }
