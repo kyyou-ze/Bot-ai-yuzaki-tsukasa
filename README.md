@@ -671,6 +671,22 @@ STICKER_DIR=assets/stickers
 
 Auto-reply hanya berjalan untuk pesan sticker (bukan teks biasa), tidak membalas pesan bot sendiri, dan dibatasi cooldown per chat supaya tidak spam.
 
+## Ingatan Owner di Grup
+
+Tsukasa tetap terasa dekat dengan owner saat mereka bertemu di grup, tetapi tidak membocorkan chat pribadi.
+
+- Setiap kali owner mengobrol di chat pribadi, bot menandai bahwa ringkasan ingatan perlu diperbarui.
+- Saat ada aktivitas AI di grup, bot membuat ringkasan aman dari beberapa percakapan terakhir: suasana hati owner, hal yang sedang dikerjakan, dan topik umum. Kutipan mentah, detail intim, rahasia, alamat, nomor, dan data sensitif tidak dimasukkan.
+- Ringkasan itu hanya dipakai sebagai konteks internal. Prompt melarang Tsukasa mengutip atau menceritakan isi chat pribadi kepada siapa pun di grup, termasuk kepada owner di depan orang lain.
+- Kalau owner ikut bicara di grup, barisnya ditandai `(owner)`. Tsukasa boleh lebih hangat dan akrab kepadanya, tetapi tetap sopan, tanpa flirty berlebihan dan tanpa panggilan mesra.
+- Ringkasan disimpan di `data/memory/_owner-gist.json`. Menghapus riwayat chat pribadi owner (`.reset` di DM) juga menghapus ringkasannya.
+
+Matikan fitur ini bila tidak diinginkan:
+
+```env
+OWNER_GROUP_MEMORY=false
+```
+
 ## AI Tool Calling (Tier 2)
 
 Saat chat AI berjalan, model tidak hanya membalas teks. Bot menyisipkan daftar tool ke system prompt, lalu model boleh menutup balasannya dengan tag aksi. Tag tersebut dibuang sebelum pesan dikirim dan sebelum disimpan ke memori, jadi user tidak pernah melihatnya.

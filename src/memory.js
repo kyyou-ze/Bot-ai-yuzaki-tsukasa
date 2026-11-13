@@ -6,9 +6,23 @@ const path = require('path');
 
 const MAX_TURNS = 8;
 const MEMORY_DIR = path.resolve(process.cwd(), 'data', 'memory');
+const OWNER_GIST_FILE = path.join(MEMORY_DIR, '_owner-gist.json');
 
 const chatHistMap = new Map();
 const userNameMap = new Map();
+
+// Ringkasan aman percakapan pribadi owner. Dipakai supaya Tsukasa tetap
+// terasa dekat dengan owner saat mereka bertemu di grup, tanpa membocorkan
+// isi chat pribadi. `dirty` menandai ringkasan perlu diperbarui.
+const ownerGist = {
+  text: '',
+  updatedAt: 0,
+  sourceChat: '',
+  dirty: false,
+};
+// Naik setiap owner chat; dipakai agar ringkasan yang selesai belakangan
+// tidak menghapus penanda "perlu diperbarui" dari pesan yang lebih baru.
+let ownerGistSeq = 0;
 
 const reNameRequest = /^(panggil aku|sebut aku|nama aku|namaku|name is|call me)\s+(.+)$/i;
 
@@ -37,6 +51,15 @@ function loadAll() {
     for (const [k, v] of Object.entries(raw || {})) userNameMap.set(k, v);
   } catch {
     /* ignore */
+  }
+
+  try {
+    const gist = JSON.parse(fs.readFileSync(OWNER_GIST_FILE, 'utf8'));
+    ownerGist.text = String(gist.text || '');
+    ownerGist.updatedAt = Number(gist.updatedAt) || 0;
+    ownerGist.sourceChat = String(gist.sourceChat || '');
+  } catch {
+    /* belum ada ringkasan */
   }
 
   let entries = [];
@@ -100,6 +123,13 @@ function clear(chatJID) {
   } catch {
     /* file memang belum ada */
   }
+  // Ingatan owner ikut dihapus bila yang dibersihkan adalah chat pribadinya.
+  if (ownerGist.sourceChat === key) {
+    ownerGist.text = '';
+    ownerGist.updatedAt = 0;
+    ownerGist.dirty = false;
+    persistOwnerGist();
+  }
   return existed;
 }
 
@@ -135,6 +165,25 @@ function buildContext(hist, newUserText, senderJID) {
   return parts.join('\n');
 }
 
+/**
+ * Konteks untuk grup: tetap memuat riwayat, tetapi tanpa mengunci percakapan
+ * ke satu nama pengguna. Nama pembicara sudah ada di transkrip batch.
+ */
+function buildGroupContext(hist, newUserText) {
+  const parts = [];
+  if (hist.length > 0) {
+    parts.push('Konteks percakapan grup sebelumnya:');
+    for (const t of hist) {
+      const who = t.role === 'user' ? `Peserta${t.name ? ` (${t.name})` : ''}` : 'Tsukasa';
+      parts.push(`${who}: ${t.text}`);
+    }
+    parts.push('');
+  }
+  parts.push('Pertanyaan/teks baru:');
+  parts.push(newUserText);
+  return parts.join('\n');
+}
+
 function detectNameRequest(text) {
   const t = String(text || '').trim();
   const m = t.match(reNameRequest);
@@ -152,6 +201,77 @@ function setUserName(senderJID, name) {
 
 function getUserName(senderJID) {
   return userNameMap.get(senderJID) || '';
+}
+
+// ---------------- Ingatan owner lintas chat ----------------
+
+function persistOwnerGist() {
+  try {
+    fs.mkdirSync(MEMORY_DIR, { recursive: true });
+    fs.writeFileSync(
+      OWNER_GIST_FILE,
+      JSON.stringify(
+        {
+          text: ownerGist.text,
+          updatedAt: ownerGist.updatedAt,
+          sourceChat: ownerGist.sourceChat,
+        },
+        null,
+        2
+      )
+    );
+  } catch (err) {
+    log.error('[MEMORY] gagal simpan ingatan owner:', err.message);
+  }
+}
+
+/**
+ * Tandai bahwa owner baru saja mengobrol di chat pribadi. Chat-nya diingat
+ * sebagai sumber ringkasan. Isi mentah tidak pernah dipakai di grup.
+ */
+function markOwnerDm(chatJID) {
+  const key = String(chatJID || '').trim();
+  if (key) ownerGist.sourceChat = key;
+  ownerGistSeq += 1;
+  ownerGist.dirty = true;
+  persistOwnerGist();
+}
+
+/** Ringkasan aman tentang owner (bukan transkrip) untuk konteks grup. */
+function getOwnerGist() {
+  return {
+    text: ownerGist.text,
+    updatedAt: ownerGist.updatedAt,
+    sourceChat: ownerGist.sourceChat,
+    dirty: ownerGist.dirty,
+    seq: ownerGistSeq,
+  };
+}
+
+/** Buang data yang tidak boleh ikut ke konteks grup (nomor, email, tautan). */
+function sanitizeGist(text) {
+  return String(text || '')
+    .replace(/\+?\d[\d\s\-()]{6,}\d/g, '[disembunyikan]')
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[disembunyikan]')
+    .replace(/https?:\/\/\S+/gi, '[tautan]')
+    .trim();
+}
+
+/**
+ * Simpan ringkasan baru dari model. `seq` adalah nomor urut saat ringkasan
+ * mulai dibuat; bila owner sudah chat lagi, ringkasan tetap ditandai usang.
+ */
+function setOwnerGist(text, seq) {
+  ownerGist.text = sanitizeGist(text).slice(0, 1500);
+  ownerGist.updatedAt = Date.now();
+  ownerGist.dirty = typeof seq === 'number' ? seq !== ownerGistSeq : false;
+  persistOwnerGist();
+  return ownerGist.text;
+}
+
+/** Riwayat chat pribadi owner terakhir, dipakai untuk membuat ringkasan. */
+function ownerChatHistory() {
+  return ownerGist.sourceChat ? load(ownerGist.sourceChat) : [];
 }
 
 function extractActualUserInput(contextText) {
@@ -190,8 +310,13 @@ module.exports = {
   clear,
   saveTurn,
   buildContext,
+  buildGroupContext,
   detectNameRequest,
   setUserName,
   getUserName,
+  markOwnerDm,
+  getOwnerGist,
+  setOwnerGist,
+  ownerChatHistory,
   extractActualUserInput,
 };

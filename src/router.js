@@ -313,6 +313,8 @@ class Router {
     this.statusMentionSeen = new Set();
     // Antrean balasan AI per grup: { items, timer, running }.
     this.groupAiQueues = new Map();
+    // Cegah pembaruan ringkasan owner berjalan dobel.
+    this.ownerMemoryRefreshing = false;
     kaguya.configure(cfg);
   }
 
@@ -1982,6 +1984,29 @@ class Router {
     this.scheduleGroupAi(chat, q);
   }
 
+  /**
+   * Perbarui ringkasan aman chat pribadi owner. Ringkasan ini dipakai di grup
+   * supaya Tsukasa tetap terasa akrab dengan owner tanpa membocorkan isi DM.
+   */
+  async refreshOwnerMemory() {
+    if (this.ownerMemoryRefreshing) return;
+    if (String(process.env.OWNER_GROUP_MEMORY || 'true').toLowerCase() === 'false') return;
+    const gist = memory.getOwnerGist();
+    if (!gist.dirty) return;
+    this.ownerMemoryRefreshing = true;
+    try {
+      const hist = memory.ownerChatHistory();
+      if (!hist.length) return;
+      const seq = gist.seq;
+      const summary = await llm.summarizeOwnerMemory(hist);
+      if (summary) memory.setOwnerGist(summary, seq);
+    } catch (err) {
+      log.warn(`[MEMORY] gagal memperbarui ingatan owner: ${shortError(err)}`);
+    } finally {
+      this.ownerMemoryRefreshing = false;
+    }
+  }
+
   /** Proses satu batch pesan grup dengan satu panggilan AI. */
   async flushGroupAi(chat) {
     const q = this.groupAiQueues.get(chat);
@@ -1991,9 +2016,11 @@ class Router {
 
     try {
       const last = batch[batch.length - 1];
+      // Tandai baris milik owner supaya AI tahu Kyouu ikut bicara di grup.
       const lines = batch
-        .map((it) => `[${it.senderName || 'User'}]: ${it.txt}`)
+        .map((it) => `[${it.senderName || 'User'}${it.isOwner ? ' (owner)' : ''}]: ${it.txt}`)
         .join('\n');
+      const ownerPresent = batch.some((it) => it.isOwner);
       const combined = [
         'Ini percakapan grup WhatsApp. Beberapa pesan terakhir:',
         lines,
@@ -2001,6 +2028,10 @@ class Router {
         'Balas sebagai Tsukasa untuk keseluruhan percakapan di atas.',
         'Tanggapi alur dan pesan terakhir yang paling relevan. Jangan membalas tiap baris satu per satu.',
       ].join('\n');
+
+      // Perbarui ringkasan chat pribadi owner di latar belakang. Balasan batch
+      // ini memakai ringkasan yang sudah ada agar tidak menambah jeda.
+      this.refreshOwnerMemory().catch(() => {});
 
       await this.generateAiReply({
         chat,
@@ -2010,6 +2041,7 @@ class Router {
         sender: last.sender,
         senderName: last.senderName,
         group: true,
+        ownerPresent,
       });
     } finally {
       q.running = false;
@@ -2020,7 +2052,17 @@ class Router {
   }
 
   /** Satu panggilan AI + pengiriman bubble, dipakai chat pribadi dan batch grup. */
-  async generateAiReply({ chat, m, isOwner, txt, sender, senderName, group = false, ownerCandidates = [] }) {
+  async generateAiReply({
+    chat,
+    m,
+    isOwner,
+    txt,
+    sender,
+    senderName,
+    group = false,
+    ownerPresent = false,
+    ownerCandidates = [],
+  }) {
     const state = this.store.get(chat);
 
     // Mode dewasa otomatis: hanya di chat pribadi owner. Jika owner memulai
@@ -2065,12 +2107,23 @@ class Router {
           '- Ini grup, bukan chat pribadi. Banyak orang ikut bicara.',
           '- Ikuti alur percakapan; jangan hanya menanggapi satu orang seolah berduaan.',
           '- Jangan menandai/@mention siapa pun dan jangan menebak nama.',
+          '- Baris bertanda "(owner)" adalah Kyouu, pemilik bot. Kepadanya boleh lebih akrab, tetapi tetap sopan dan jangan membocorkan chat pribadi.',
           '- Balas singkat, maksimal 2 bubble, dan jangan mengulang yang sudah dijawab orang lain.',
         ].join('\n')
       : '';
 
+    // Ringkasan aman chat pribadi owner + penanda kehadiran owner di grup.
+    const ownerBridgeOn = String(process.env.OWNER_GROUP_MEMORY || 'true').toLowerCase() !== 'false';
+    const groupMeta = group
+      ? { ownerPresent, ownerGist: ownerBridgeOn ? memory.getOwnerGist().text : '' }
+      : {};
+
     const hist = memory.load(chat);
-    const ctxTxt = memory.buildContext(hist, txt, sender);
+    // Di grup jangan menulis "Nama pengguna: <satu nama>", karena itu membuat
+    // model merasa sedang berduaan dengan satu orang.
+    const ctxTxt = group
+      ? memory.buildGroupContext(hist, txt)
+      : memory.buildContext(hist, txt, sender);
 
     // Tier 2: AI boleh memilih aksi lewat tag [[...]]. Panggilan pertama
     // memakai tool prompt penuh (termasuk izin search).
@@ -2085,7 +2138,8 @@ class Router {
         .filter(Boolean)
         .join('\n\n'),
       isOwner,
-      group
+      group,
+      groupMeta
     );
 
     let aiParsed = this.aiTools.parse(rawReply);
@@ -2114,7 +2168,8 @@ class Router {
           .filter(Boolean)
           .join('\n\n'),
         isOwner,
-        group
+        group,
+        groupMeta
       );
       aiParsed = this.aiTools.parse(rawReply);
     }
@@ -2124,6 +2179,8 @@ class Router {
     // supaya terasa seperti orang chatting. Simpan riwayat sebagai satu turn.
     const bubbles = splitChatBubbles(reply, group ? GROUP_AI_MAX_BUBBLES : 4);
     memory.saveTurn(chat, 'user', txt, senderName);
+    // Owner mengobrol di DM: tandai agar ringkasan aman untuk grup diperbarui.
+    if (isOwner && !group) memory.markOwnerDm(chat);
     if (bubbles.length) memory.saveTurn(chat, 'assistant', bubbles.join('\n'));
 
     for (let i = 0; i < bubbles.length; i += 1) {

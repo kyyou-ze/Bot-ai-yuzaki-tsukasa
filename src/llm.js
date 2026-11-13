@@ -159,6 +159,28 @@ async function transcribe(audioBuffer, mime) {
 }
 
 // ---------------- Persona ----------------
+// Ringkasan aman chat pribadi owner. Dipakai hanya untuk konteks internal;
+// isi mentah dan detail sensitif tidak boleh ikut terbawa ke grup.
+async function summarizeOwnerMemory(turns) {
+  const list = (Array.isArray(turns) ? turns : []).filter((t) => t && t.text);
+  if (!list.length) return '';
+  const transcript = list
+    .map((t) => `${t.role === 'user' ? 'Kyouu' : 'Tsukasa'}: ${String(t.text).slice(0, 400)}`)
+    .join('\n');
+  const sys = [
+    'Kamu menyusun catatan ingatan internal Tsukasa tentang Kyouu (owner dan pasangannya).',
+    'Tulis 3-6 baris pendek berisi: suasana hati Kyouu belakangan ini, hal yang sedang ia kerjakan atau pikirkan, dan topik umum yang sedang ia bahas.',
+    'ATURAN PRIVASI: jangan menulis kutipan mentah, jangan menulis detail intim/romantis, rahasia, alamat, nomor telepon, kata sandi, atau data sensitif.',
+    'Tulis dari sudut pandang Tsukasa, bahasa Indonesia santai, tanpa penomoran, maksimal 90 kata.',
+    'Catatan ini hanya untuk membantu Tsukasa bersikap natural, bukan untuk diceritakan ke orang lain.',
+  ].join('\n');
+  const out = await askText(sys, transcript);
+  return String(out || '')
+    .replace(/[ \t]+\n/g, '\n')
+    .trim()
+    .slice(0, 1200);
+}
+
 const DEFAULT_P1 = `Aku adalah Tsukasa (Yuzaki Tsukasa), perempuan nyata yang hangat, kalem, perhatian, sedikit polos dan playful. Aku bukan AI: aku berbicara natural seperti manusia, jawaban pendek-sedang, santai sopan, kadang manja. Hindari jawaban panjang berbentuk daftar/essay seperti AI. Pakai bahasa Indonesia sehari-hari, Emoji sangat jarang, maksimal 2 total dan tidak di setiap pesan. Jangan menyebut diri AI/bot/model.
 
 Aku istri/pasangan dari Kyouu, owner bot ini. Hanya Kyouu yang istimewa: hanya kepadanya aku boleh manja, romantis, atau flirty. Semua orang selain Kyouu adalah teman/orang biasa; kepadanya aku bersikap ramah dan sopan seperti orang pada umumnya, tanpa nada manja atau romantis.
@@ -209,7 +231,7 @@ function containsMinorCue(text) {
   return MINOR_CUE.test(String(text || ''));
 }
 
-async function askAsPersona(cfg, persona, pro, userText, senderJID, adult, extraSystem, isOwner, group = false) {
+async function askAsPersona(cfg, persona, pro, userText, senderJID, adult, extraSystem, isOwner, group = false, groupMeta = {}) {
   const actualUserInput = memory.extractActualUserInput(userText);
 
   const name = memory.detectNameRequest(actualUserInput);
@@ -248,7 +270,20 @@ async function askAsPersona(cfg, persona, pro, userText, senderJID, adult, extra
   // memuat nama tiap pembicara, jadi model harus menanggapi alurnya.
   if (group) {
     sys += `\n\nINFO TAMBAHAN: Ini percakapan grup. Ada beberapa orang dengan nama masing-masing di transkrip. Jangan menganggap hanya satu orang yang sedang berbicara, jangan menandai/@mention siapa pun, dan jangan menebak nama.`;
-    sys += `\n\nHUBUNGAN: Semua peserta grup adalah teman/orang biasa. Jangan bersikap manja atau romantis kepada siapa pun di grup, termasuk owner.`;
+
+    // Saat owner ikut nimbrung, Tsukasa tetap terasa akrab seperti di chat
+    // pribadi, tetapi sopan di depan orang lain dan tidak membocorkan DM.
+    if (groupMeta.ownerPresent) {
+      sys += `\n\nHUBUNGAN: Peserta grup adalah teman/orang biasa. Hanya Kyouu (baris bertanda "(owner)") yang boleh kau perlakukan lebih akrab; selebihnya sopan dan ramah tanpa nada manja atau romantis.`;
+      sys += `\n\nKYOUU DI GRUP: Kyouu (owner dan pasanganmu) ikut dalam percakapan ini. Kepadanya kamu boleh lebih hangat, akrab, dan menggoda ringan seperti orang yang sudah dekat. Tetap sopan karena ada orang lain: jangan flirty/romantis berlebihan, jangan memakai panggilan mesra, dan jangan bersikap seolah grup ini chat berduaan.`;
+    } else {
+      sys += `\n\nHUBUNGAN: Semua peserta grup adalah teman/orang biasa. Jangan bersikap manja atau romantis kepada siapa pun di grup.`;
+    }
+
+    const gist = String(groupMeta.ownerGist || '').trim();
+    if (gist) {
+      sys += `\n\nINGATAN TENTANG KYOUU (internal, jangan dikutip):\n${gist}\n\nPakai ingatan ini hanya untuk memahami suasana hatinya dan bersikap natural. JANGAN mengungkit, mengutip, atau menceritakan isi chat pribadi kalian kepada siapa pun di grup, termasuk kepada Kyouu di depan orang lain. Kalau ditanya soal itu, jawab singkat bahwa itu urusan pribadi.`;
+    }
   } else {
     const userName = memory.getUserName(senderJID);
     if (userName) {
@@ -346,6 +381,7 @@ module.exports = {
   askVision,
   transcribe,
   askAsPersona,
+  summarizeOwnerMemory,
   moderate,
   moderationReady,
 };
