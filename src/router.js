@@ -1496,6 +1496,28 @@ class Router {
       }
     }
 
+    // Plugin pasif Kaguya: jawaban game yang butuh reply (family100, tebak,
+    // adu, dll), captcha, menfess, autodl, JPM. Dijalankan sebelum gate mode
+    // grup dan sebelum AI, supaya Tsukasa tidak ikut membalas jawaban tersebut
+    // di mode all/reply.
+    if (!bang) {
+      const usedPrefix = /^[.!/]/.test(origTxt) ? origTxt[0] : '.';
+      const passiveHandled = await kaguya.dispatchPassive({
+        sock: this.sock,
+        raw: m,
+        cfg: this.cfg,
+        chat,
+        sender,
+        text: origTxt,
+        prefix: usedPrefix,
+        isOwner,
+        isAdmin: isOwner,
+        isPremium: false,
+        reply: (text) => wa.sendText(chat, text, m),
+      });
+      if (passiveHandled) return;
+    }
+
     // Moderation peraturan (berjalan untuk semua teks di grup).
     // Perintah bang dan pesan owner tidak perlu dimoderasi.
     if (!bang && !isOwner) {

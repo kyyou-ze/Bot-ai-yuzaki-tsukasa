@@ -169,6 +169,10 @@ function readCommandMetadata(source, folder) {
     help: [...new Set(help)].slice(0, 8),
     description,
     folder,
+    // Plugin pasif (tanpa command) dipanggil untuk pesan biasa, mis. jawaban
+    // game, captcha, menfess, autodl. Deteksi cukup dari adanya customPrefix;
+    // regex aslinya dibaca dari module saat dispatch agar tidak salah parsing.
+    passive: /(?:handler|plugin)\.customPrefix\s*=|customPrefix\s*:/.test(source),
   };
 }
 
@@ -192,6 +196,7 @@ function buildCatalog() {
   const categories = new Map();
   const byCommand = new Map();
   const entries = [];
+  const passives = [];
 
   for (const file of files) {
     let source = '';
@@ -203,7 +208,7 @@ function buildCatalog() {
     const rel = path.relative(PLUGINS_DIR, file).split(path.sep);
     const folder = rel[0];
     const meta = readCommandMetadata(source, folder);
-    if (!meta.commands.length) continue;
+    if (!meta.commands.length && !meta.passive) continue;
 
     const entry = {
       file,
@@ -212,6 +217,7 @@ function buildCatalog() {
       commands: meta.commands,
       help: meta.help,
       description: meta.description,
+      passive: meta.passive,
       owner: /\b(?:handler|plugin)\.owner\s*=\s*true|\bisOwner\s*:\s*true/.test(source),
       premium: /\b(?:handler|plugin)\.premium\s*=\s*true|\bisPremium\s*:\s*true/.test(source),
       admin: /\b(?:handler|plugin)\.admin\s*=\s*true|\bisAdmin\s*:\s*true/.test(source),
@@ -219,6 +225,11 @@ function buildCatalog() {
       private: /\b(?:handler|plugin)\.private\s*=\s*true|\bisPrivate\s*:\s*true/.test(source),
     };
     entries.push(entry);
+    if (entry.passive) passives.push(entry);
+
+    // File yang hanya berisi plugin pasif tidak punya command, jadi tidak
+    // dimasukkan ke katalog command/kategori.
+    if (!meta.commands.length) continue;
 
     if (!categories.has(folder)) {
       categories.set(folder, { ...categoryMeta(folder), commands: new Set(), files: 0 });
@@ -238,7 +249,7 @@ function buildCatalog() {
     .filter((cat) => cat.count > 0)
     .sort((a, b) => a.label.localeCompare(b.label, 'id'));
 
-  return { categories: list, byCommand, entries, scannedAt: Date.now() };
+  return { categories: list, byCommand, entries, passives, scannedAt: Date.now() };
 }
 
 function getCatalog() {
@@ -500,6 +511,171 @@ async function dispatch({
   return false;
 }
 
+/**
+ * Jalankan plugin pasif Kaguya (customPrefix) untuk pesan biasa.
+ *
+ * Dipakai untuk fitur yang butuh balasan/quote: jawaban game (family100,
+ * tebak-tebakan, adu, dll), captcha, menfess, autodl, JPM, dan sejenisnya.
+ * Kalau salah satu plugin menangani pesan, router berhenti di sini sehingga
+ * Tsukasa/AI tidak ikut membalas jawaban tersebut di mode all/reply.
+ */
+async function dispatchPassive({
+  sock,
+  raw,
+  cfg,
+  chat,
+  sender,
+  text,
+  prefix,
+  isOwner,
+  isAdmin,
+  isPremium,
+  reply,
+}) {
+  const body = String(text || '').trim();
+  if (!body) return false;
+
+  const catalog = getCatalog();
+  const candidates = Array.isArray(catalog.passives)
+    ? [...catalog.passives].sort((a, b) => a.rel.localeCompare(b.rel))
+    : [];
+  if (!candidates.length) return false;
+
+  let runtimeWa;
+  try {
+    const runtime = await ensureRuntime();
+    runtimeWa = runtime.wa;
+    await attachSock(sock);
+  } catch (err) {
+    console.error('[KAGUYA] passive runtime gagal:', err && (err.message || err));
+    return false;
+  }
+
+  const matched = [];
+  for (const entry of candidates) {
+    let plugin;
+    try {
+      plugin = await loadPlugin(entry);
+    } catch (err) {
+      console.error(`[KAGUYA] passive ${entry.rel} gagal dimuat:`, err && (err.message || err));
+      continue;
+    }
+    if (typeof plugin !== 'function' || plugin.disabled) continue;
+    const re = plugin.customPrefix;
+    if (!(re instanceof RegExp)) continue;
+    let ok = false;
+    try {
+      ok = re.test(body);
+    } catch {
+      ok = false;
+    }
+    if (!ok) continue;
+    matched.push({ entry, plugin });
+  }
+  if (!matched.length) return false;
+
+  // Pola ber-anchor (^...$) didahulukan, sama seperti dispatcher Kaguya asli.
+  matched.sort(
+    (a, b) =>
+      Number(b.plugin.customPrefix.source.startsWith('^')) -
+      Number(a.plugin.customPrefix.source.startsWith('^'))
+  );
+
+  let m;
+  try {
+    m = runtimeWa.serialize(sock, raw);
+  } catch (err) {
+    console.error('[KAGUYA] passive serialize gagal:', err && (err.message || err));
+    return false;
+  }
+  if (!m) return false;
+
+  // Metadata grup hanya diambil kalau ada plugin pasif yang memang butuh
+  // status admin, supaya pesan biasa tidak memicu request tambahan.
+  const needsMeta = matched.some(({ plugin }) => plugin.admin);
+  const groupMetadata = needsMeta ? await getGroupMeta(sock, chat) : null;
+  const botIds = [sock.user && sock.user.id, sock.user && sock.user.lid].filter(Boolean);
+  const botAdmin = Boolean(
+    groupMetadata &&
+      botIds.some((id) =>
+        (groupMetadata.participants || []).some(
+          (p) =>
+            p.admin &&
+            [p.id, p.phoneNumber, p.jid, p.lid]
+              .filter(Boolean)
+              .map((v) => String(v))
+              .includes(String(id))
+        )
+      )
+  );
+  // Hitung status admin dari metadata yang sudah diambil supaya router tidak
+  // perlu memanggil groupMetadata lagi untuk setiap pesan biasa.
+  const senderUser = String(sender || '').split('@')[0].split(':')[0];
+  const senderAdmin = Boolean(
+    groupMetadata &&
+      (groupMetadata.participants || []).some((p) => {
+        if (!p.admin) return false;
+        return [p.id, p.lid, p.phoneNumber, p.pn]
+          .filter(Boolean)
+          .some((v) => String(v).split('@')[0].split(':')[0] === senderUser);
+      })
+  );
+  const adminCtx = Boolean(isAdmin || isOwner || senderAdmin);
+
+  for (const { entry, plugin } of matched) {
+    if (plugin.owner && !isOwner) continue;
+    if (plugin.premium && !isPremium && !isOwner) continue;
+    if (plugin.admin && !adminCtx) continue;
+    if (plugin.group && !String(chat).endsWith('@g.us')) continue;
+    if (plugin.private && String(chat).endsWith('@g.us')) continue;
+
+    const usedPrefix = prefix || '.';
+    const ctx = {
+      sock,
+      conn: sock,
+      m,
+      text: body,
+      body,
+      args: [],
+      prefix: usedPrefix,
+      usedPrefix,
+      command: '',
+      reply: (value, options) => m.reply(value, options),
+      example: () => '',
+      sender: m.sender || sender,
+      jid: chat,
+      chat,
+      isOwner: Boolean(isOwner),
+      isAdmin: adminCtx,
+      isPremium: Boolean(isPremium || isOwner),
+      isBotAdmin: botAdmin,
+      isCmd: false,
+      pushName: m.pushName,
+      pushname: m.pushName,
+      mentionedJid: m.mentionedJid || [],
+      quoted: m.quoted || null,
+      groupMetadata,
+      participants:
+        groupMetadata && Array.isArray(groupMetadata.participants)
+          ? groupMetadata.participants.map((p) => ({ ...p, id: p.phoneNumber || p.id }))
+          : [],
+      config: {},
+    };
+
+    try {
+      const handled = await plugin(m, ctx);
+      if (handled) return true;
+    } catch (err) {
+      console.error(
+        `[KAGUYA] passive ${entry.rel} error:`,
+        err && (err.stack || err.message || err)
+      );
+    }
+  }
+
+  return false;
+}
+
 function box(title, lines, footer) {
   const out = [`╭─「 ${smallCaps(title)} 」`];
   for (const line of lines) out.push(`│ ${line}`);
@@ -580,21 +756,45 @@ function formatMenu({ category, isOwner, prefix, builtinCategories }) {
 
 function formatAllCommands(prefix, builtins = []) {
   const catalog = getCatalog();
-  const lines = [];
+  const p = prefix || '.';
+  const groups = [];
+
   for (const b of builtins) {
-    lines.push(`*${b.label.toUpperCase()}*`);
-    lines.push(b.commands.map((cmd) => `${prefix}${cmd}`).join(' • '));
-    lines.push('');
-  }
-  if (builtins.length && catalog.categories.length) {
-    lines.push('*FITUR KAGUYA*');
-    lines.push('');
+    if (b && b.commands.length) {
+      groups.push({ icon: '✨', label: b.label, commands: b.commands });
+    }
   }
   for (const c of catalog.categories) {
-    lines.push(`*${c.label.toUpperCase()}*`);
-    lines.push(c.commands.map((cmd) => `${prefix}${cmd}`).join(' • '));
-    lines.push('');
+    if (c.commands.length) {
+      groups.push({ icon: c.icon, label: c.label, commands: c.commands });
+    }
   }
+
+  const total = groups.reduce((n, g) => n + g.commands.length, 0);
+  const lines = [
+    `╭─「 ${smallCaps('menu all')} 」`,
+    `│ ${total} command • ${groups.length} kategori`,
+    `│ ${p}help <command> untuk cara pakai`,
+    '╰──────────────────────',
+  ];
+
+  for (const g of groups) {
+    lines.push('');
+    lines.push(`╭─「 ${g.icon} ${smallCaps(g.label)} 」`);
+    const tokens = g.commands.map((cmd) => `${p}${cmd}`);
+    const width = Math.max(...tokens.map((t) => t.length)) + 2;
+    // Tiga command per baris supaya tidak jadi satu paragraf panjang.
+    for (let i = 0; i < tokens.length; i += 3) {
+      const row = tokens
+        .slice(i, i + 3)
+        .map((t) => t.padEnd(width))
+        .join('')
+        .trimEnd();
+      lines.push(`│ ${row}`);
+    }
+    lines.push(`╰─ ${g.commands.length} command`);
+  }
+
   return lines.join('\n').trim();
 }
 
@@ -688,6 +888,7 @@ module.exports = {
   hasCommand,
   commandEntries,
   dispatch,
+  dispatchPassive,
   formatMenu,
   formatHelp,
   prefixesFor,
