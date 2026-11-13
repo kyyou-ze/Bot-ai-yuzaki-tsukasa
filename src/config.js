@@ -170,6 +170,7 @@ function load() {
     // API key opsional; tanpa key tetap jalan dengan rate limit lebih kecil.
     tiktokJinaKey: getenv('TIKTOK_JINA_KEY', getenv('JINA_API_KEY', '')),
     tiktokJinaBase: getenv('TIKTOK_JINA_BASE', 'https://r.jina.ai/'),
+    tiktokJinaEnabled: boolEnv(getenv('TIKTOK_JINA_ENABLED', 'true'), true),
     // Setelah kena 403/WAF, berhenti dulu selama N menit (default 10).
     tiktokWafCooldownMin: Math.max(1, intEnv(getenv('TIKTOK_WAF_COOLDOWN_MIN', '10'), 10)),
     // Data runtime TikTok disimpan di folder data/ (diabaikan git) supaya

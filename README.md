@@ -30,7 +30,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Sticker Transform & Emoji Mix** — `.emojimix 😀 😍` (gabung dua emoji ala Emoji Kitchen), `.flip`/`.flipv`/`.rotate <derajat>`, `.grayscale`/`.invert`/`.blur`, `.crop`, dan `.resize <px>`. Bisa dipakai pada sticker langsung maupun sticker/gambar yang di-reply.
 - **AI Tool Calling** — Saat mengobrol, AI bisa memilih aksi sendiri: mengirim sticker sesuai mood, memberi reaksi emoji, membuat gambar, membuat pengingat, atau mencari info terbaru di web. Contoh: AI membalas "wkwk" lalu mengirim sticker `lucu`.
 - **Blue Archive & Pap** — `ba` / `!ba` atau kata kunci terkait, `!pap` / `pap`.
-- **TikTok (scraper lokal + multi-API)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Scraper lokal membaca halaman embed TikTok langsung dari panel (tanpa WAF/API key); TikWM/TikHub/tiktok-api23/Ensig dipakai sebagai cadangan bila perlu. Batas ukuran bisa dikonfigurasi.
+- **TikTok (scraper lokal + multi-API)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Scraper lokal membaca halaman embed TikTok langsung dari panel; kalau embed kena WAF, bot otomatis pindah ke Jina Reader, TikWM, TikHub, tiktok-api23, Ensig, lalu Jina HTML sebagai fallback terakhir. Batas ukuran bisa dikonfigurasi.
 - **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 3 menit, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Sumber utama scraper lokal (embed) sehingga tidak mudah kena WAF. Akun hasil `/verif` otomatis masuk pantauan; kelola lewat `/addakun`, `/delakun`, `/listakun`, `/detector`. Command verif: `/verif`, `/listverif`, `/unverif`, `/me`, `/siapaup`, `/cekup`, `/history` (tanpa argumen menampilkan semua akun; juga bisa `Tsukasa ...` atau `.verif`).
 - **CN TikTok** — `.cn <nama>` menampilkan tiga contoh CN siap pakai dengan nama memakai huruf bold Unicode (tanpa tanda bintang saat disalin): `` `𝙀𝘾𝙉᭄ ``, `ft 𝙀𝘾𝙉`, dan `〆𝙀𝘾𝙉`. Keyword mengikuti `TIKTOK_CN_KEYWORD`.
 - **Reply & Tag Status** — Di chat pribadi bot tetap membalas walaupun pesanmu adalah reply/quote. Di grup, reply ke pesan bot juga diproses tanpa trigger. Tag status WhatsApp yang menyebut bot terdeteksi dan dibalas di chat terkait.
@@ -62,14 +62,17 @@ Bot ini memakai **arsitektur bridge**: inti bot tetap milik Tsukasa, sedangkan p
 
 | Command | Fungsi |
 | --- | --- |
-| `.menu` | Katalog menu bergaya box Kaguya: daftar fitur Tsukasa + kategori plugin Kaguya. |
-| `.menu <kategori>` | Lihat semua command dalam satu kategori, mis. `.menu rpg`, `.menu tools`, `.menu sticker`. |
-| `.menu all` | Tampilkan seluruh command dari semua kategori. |
+| `.menu` | Katalog menu bergaya box Kaguya: ringkasan fitur Tsukasa + kategori plugin Kaguya yang dikelompokkan per tema. |
+| `.menu <kategori>` | Lihat command dalam satu kategori (dipaginasi 40 command), mis. `.menu rpg`, `.menu tools`, `.menu sticker`. |
+| `.menu <kategori> <halaman>` | Halaman berikutnya, mis. `.menu rpg 2`. |
+| `.menu all` | Indeks semua kategori + contoh command. Tidak lagi menumpahkan seluruh command ke satu pesan. |
+| `.menu cari <kata>` | Cari command berdasarkan nama atau deskripsi, mis. `.menu cari anime`. |
 | `.help` | Panduan singkat penggunaan menu dan command. |
 | `.help <command>` | Cara pakai command tertentu, mis. `.help sticker`, `.help animedl`. |
 | `.help <kategori>` | Daftar command + deskripsi dalam kategori tersebut. |
 
 Catatan:
+- Kategori Kaguya dikelompokkan menjadi **RPG & Game**, **Anime & Fandom**, **Tools & Download**, **Sosial & Komunitas**, dan **Lainnya** agar menu tidak terasa seperti folder plugin mentah.
 - Command plugin bisa dipakai dengan prefix `.`, `!`, `/`, atau trigger `tsukasa`.
 - Fitur grup yang dimatikan lewat `.fitur off` otomatis hilang dari katalog `.menu` dan `.help`.
 - Database plugin memakai JSON (`global.dbEngine = 'json'`) agar tidak wajib compile SQLite native.
@@ -177,6 +180,7 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `TIKTOK_COOKIE` | - | Cookie browser TikTok opsional untuk mengurangi WAF |
 | `TIKTOK_JINA_KEY` / `JINA_API_KEY` | - | Key Jina Reader opsional; tanpa key tetap jalan dengan rate limit lebih kecil |
 | `TIKTOK_JINA_BASE` | `https://r.jina.ai/` | Base URL Jina Reader untuk membaca profil TikTok |
+| `TIKTOK_JINA_ENABLED` | `true` | Aktifkan fallback Jina HTML saat download video kena WAF |
 | `TIKTOK_WAF_COOLDOWN_MIN` | `10` | Lama berhenti setelah kena 403/WAF; log peringatan hanya sekali |
 | `TIKTOK_DATA_DIR` | `./data/tiktok` | Folder data runtime TikTok (verif, riwayat UP, cache video, akun) |
 | `VERIF_DB` / `HISTORY_UP_DB` / `UP_TODAY_DB` / `SEEN_VIDEOS_DB` | `<TIKTOK_DATA_DIR>/*.json` | Override path database JSON fitur verif & detector |
@@ -639,13 +643,13 @@ AI_TOOLS_SEARCH=true
 
 Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTOK_CHECK_MIN` menit. Akun dicek satu per satu dengan jeda acak 2-5 detik.
 
-**Scraper lokal (utama).** Bot membaca `https://www.tiktok.com/embed/@username` langsung dari server panel. Halaman embed ini di-render oleh TikTok dan berisi JSON lengkap (nickname, bio, caption, cover, URL video), jadi **tidak terkena WAF**, tidak butuh API key, dan tidak butuh signature. Ini membuat detector tetap jalan walau halaman profil biasa diblokir. Kalau `www.tiktok.com` sedang kena WAF/DNS dari IP panel, bot otomatis mencoba host cadangan `m.tiktok.com` (atur urutannya lewat `TIKTOK_EMBED_HOSTS`) sebelum pindah ke sumber lain. Atur lewat `TIKTOK_SCRAPER_MODE`:
+**Scraper lokal (utama).** Bot membaca `https://www.tiktok.com/embed/@username` langsung dari server panel. Halaman embed ini di-render oleh TikTok dan berisi JSON lengkap (nickname, bio, caption, cover, URL video), jadi **lebih jarang terkena WAF** daripada halaman profil biasa, tanpa API key dan tanpa signature. Ini membuat detector tetap jalan walau halaman profil biasa diblokir. Kalau `www.tiktok.com` sedang kena WAF/DNS dari IP panel, bot otomatis mencoba host cadangan `m.tiktok.com` (atur urutannya lewat `TIKTOK_EMBED_HOSTS`) sebelum pindah ke sumber lain. Atur lewat `TIKTOK_SCRAPER_MODE`:
 
 - `auto` (default): scraper lokal dulu; kalau gagal, lanjut ke API/Jina yang dikonfigurasi.
 - `local`: hanya scraper lokal (paling hemat kuota). Kalau embed benar-benar diblokir WAF, bot tetap memakai Jina sebagai cadangan darurat agar detector tidak mati.
 - `api`: lewati scraper lokal dan pakai rantai API/Jina seperti konfigurasi lama.
 
-Cadangan bila scraper lokal gagal: endpoint custom/TikHub/tiktok-api23/Ensig (kalau diisi) → Jina Reader → TikWM → scraping profil langsung. Kalau semua sumber kena 403/WAF, bot berhenti selama `TIKTOK_WAF_COOLDOWN_MIN` menit dan hanya menulis satu log `[TIKTOK] WAF block, retry 10 menit`. Untuk tiap video baru, bot mengecek:
+Cadangan bila scraper lokal gagal: endpoint custom/TikHub/tiktok-api23/Ensig (kalau diisi) → Jina Reader (markdown) → Jina HTML (embed) → TikWM → scraping profil langsung. Kalau semua sumber kena 403/WAF, bot berhenti selama `TIKTOK_WAF_COOLDOWN_MIN` menit dan hanya menulis satu log `[TIKTOK] WAF block, retry 10 menit`. Untuk tiap video baru, bot mengecek:
 
 - Caption mengandung hashtag `TIKTOK_HASHTAG` (default `#margaecn`, case-insensitive).
 - Nickname/display name akun mengandung `TIKTOK_CN_KEYWORD` (default `ECN`). Huruf Unicode seperti `𝙀𝘾𝙉`, `〆𝙀𝘾𝙉`, dan `ft 𝙀𝘾𝙉` otomatis dinormalisasi jadi `ECN` sebelum dicocokkan.
@@ -934,6 +938,7 @@ Semua pengaturan di atas juga bisa diubah lewat chat:
 - **Reconnecting terus**: Hapus isi folder sesi hanya jika benar-benar ingin pairing ulang (akan minta QR/kode baru).
 - **Pesan bot tertulis “Menunggu pesan ini…” di chat penerima**: Ini bukan teks bot, melainkan pesan WhatsApp yang gagal didekripsi. Bot memakai Baileys v7 (LID-native) dan tetap mengarahkan kiriman `@lid` ke nomor telepon asli bila pemetaannya tersedia (`data/lidmap.json`). Jika masih muncul, minta penerima mengirim pesan baru ke bot agar pemetaan LID→nomor terbentuk, lalu balas lagi. Setelah upgrade dari Baileys 6.7.x, jika sesi lama bermasalah, pairing ulang sekali (QR/kode) lalu kirim pesan baru.
 - **Log `No session found to decrypt message` / `transaction failed, rolling back`**: Ini race normal saat pesan grup tiba sebelum SenderKey dibagikan, termasuk varian `forbidden`. WhatsApp otomatis mengirim ulang sesi/pesan, jadi tidak perlu tindakan. Error ini tidak lagi memicu notifikasi “Error Tsukasa” ke owner, tetapi tetap tercatat di log panel untuk diagnosis. Error unduh media seperti `Cannot derive from empty media key` (media sudah kedaluwarsa/tidak punya kunci) juga tidak lagi memicu notifikasi owner.
+- **TikTok kena WAF / 403 terus**: Coba `TIKTOK_JINA_KEY` (gratis di jina.ai) agar fallback Jina lebih stabil, atau isi `TIKTOK_PROXY_URLS` dengan proxy residential. Scraper lokal bisa dimatikan sementara lewat `TIKTOK_LOCAL_ENABLED=false` supaya bot langsung memakai Jina/TikWM. Kalau hanya satu akun yang gagal, cek apakah akun tersebut private/rename.
 - **HTTP API tidak bisa diakses**: Pastikan allocation/port benar, aplikasi listen `0.0.0.0`, dan firewall node mengizinkan port tersebut.
 - **Command plugin Kaguya membalas “Plugin gagal dijalankan”**: Biasanya dependency plugin belum terpasang. Jalankan `npm install` ulang, lalu cek log `[KAGUYA]` di panel untuk nama modul yang hilang.
 - **`.menu` kosong / kategori tidak muncul**: Pastikan folder `plugins/` ikut ter-commit dan `plugins/package.json` berisi `{"type":"module"}`. Katalog dibaca dari source plugin saat pertama kali dipanggil.

@@ -1959,6 +1959,14 @@ class Router {
       await wa.sendText(chat, 'Maaf, tidak menemukan media valid dari TikTok.', m);
     } catch (err) {
       log.error(`[TIKTOK] download gagal: ${shortError(err)}`);
+      if (err && err.waf) {
+        await wa.sendText(
+          chat,
+          'TikTok sedang membatasi akses dari server (WAF). Coba lagi beberapa saat, atau minta admin mengatur TIKTOK_PROXY_URLS / TIKTOK_COOKIE / TIKTOK_JINA_KEY.',
+          m
+        );
+        return;
+      }
       await wa.sendText(chat, 'Maaf, gagal mengambil media TikTok. Coba kirim lagi ya.', m);
     }
   }

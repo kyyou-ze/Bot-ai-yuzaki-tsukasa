@@ -20,7 +20,7 @@ const {
   normalizeHashtag,
   formatClock,
 } = require('./verifstore');
-const { fetchProfileEmbed } = require('./tiktoklocal');
+const { fetchProfileEmbed, parseEmbedState, videosFromEmbed } = require('./tiktoklocal');
 
 const START_DELAY_MS = 15000;
 const ACCOUNT_DELAY_MIN_MS = 2000;
@@ -346,10 +346,45 @@ async function fetchProfileJina(unique, cfg = {}) {
   throw new Error('Jina: tidak ada video di halaman profil');
 }
 
+/**
+ * Fallback Jina berbentuk HTML: ambil halaman embed lewat server Jina lalu
+ * parse `__FRONTITY_CONNECT_STATE__` yang sama dengan scraper lokal. Ini
+ * bekerja ketika embed langsung kena WAF, karena request tidak berasal dari
+ * IP panel.
+ */
+async function fetchProfileJinaHtml(unique, cfg = {}) {
+  const acc = normalizeAccount(unique);
+  if (!acc) return [];
+
+  const html = await readViaJina(
+    `https://www.tiktok.com/embed/@${encodeURIComponent(acc)}?lang=en`,
+    cfg,
+    60000,
+    'html'
+  );
+
+  const data = parseEmbedState(html);
+  if (!data) {
+    if (/couldn.?\s*t find this account|could not find this account|account is private/i.test(html)) {
+      const err = new Error(`akun @${acc} tidak ditemukan`);
+      err.notFound = true;
+      throw err;
+    }
+    if (/slardarClientWAF|Please wait\.\.\.|id="_wafchallengeid"|access denied/i.test(html)) {
+      const err = new Error('embed TikTok diblokir WAF (Jina HTML)');
+      err.waf = true;
+      throw err;
+    }
+    throw new Error('Jina HTML: state profil tidak ditemukan');
+  }
+
+  const result = videosFromEmbed(data, acc);
+  return normalizeList(result.items, acc);
+}
+
 async function fetchUserVideos(account, cfg = {}) {
   const unique = normalizeAccount(account);
   if (!unique) return [];
-
   const errors = [];
   let waf = false;
 
@@ -381,6 +416,7 @@ async function fetchUserVideos(account, cfg = {}) {
     return videos;
   };
   const tryJina = () => fetchProfileJina(unique, cfg);
+  const tryJinaHtml = () => fetchProfileJinaHtml(unique, cfg);
   const tryHtml = () => fetchProfileHtml(unique, cfg);
 
   // Mode "auto" (default): lokal dulu, lalu cadangan yang dikonfigurasi.
@@ -389,10 +425,15 @@ async function fetchUserVideos(account, cfg = {}) {
   const steps = [];
   if (mode !== 'api') steps.push(['Local', tryLocal]);
   if (hasConfiguredPostsApi(cfg)) steps.push(['API', tryApi]);
-  if (mode !== 'local') steps.push(['Jina', tryJina]);
-  // Mode local tetap boleh memakai Jina saat embed benar-benar diblokir WAF,
-  // supaya detector tidak mati total hanya karena IP panel sedang diblokir.
-  else steps.push(['Jina (cadangan WAF)', tryJina, 'onWaf']);
+  if (mode !== 'local') {
+    steps.push(['Jina', tryJina]);
+    steps.push(['Jina HTML', tryJinaHtml]);
+  } else {
+    // Mode local tetap boleh memakai Jina saat embed benar-benar diblokir WAF,
+    // supaya detector tidak mati total hanya karena IP panel sedang diblokir.
+    steps.push(['Jina (cadangan WAF)', tryJina, 'onWaf']);
+    steps.push(['Jina HTML (cadangan WAF)', tryJinaHtml, 'onWaf']);
+  }
   if (mode !== 'local' && !hasConfiguredPostsApi(cfg)) steps.push(['API', tryApi]);
   steps.push(['HTML', tryHtml]);
 

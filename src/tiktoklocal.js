@@ -487,6 +487,8 @@ module.exports = {
   EMBED_BASE,
   DESKTOP_UA,
   parseEmbedState,
+  profileFromEmbed,
+  videosFromEmbed,
   fetchProfileEmbed,
   fetchVideoInfoEmbed,
   probeLocal,

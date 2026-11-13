@@ -90,13 +90,13 @@ async function tiktokFetch(url, options = {}, timeoutMs = 30000, cfg = {}) {
  * TikTok karena halaman langsung sering diblokir Cloudflare/WAF. Jina
  * mengembalikan teks/markdown, bukan HTML mentah.
  */
-async function readViaJina(targetUrl, cfg = {}, timeoutMs = 45000) {
+async function readViaJina(targetUrl, cfg = {}, timeoutMs = 45000, format = 'markdown') {
   const base = String((cfg && cfg.tiktokJinaBase) || JINA_READER_BASE).trim();
   const readerUrl = base.replace(/\/?$/, '/') + String(targetUrl || '');
   const headers = {
     Accept: 'text/plain, text/markdown;q=0.9, */*;q=0.8',
     'User-Agent': DESKTOP_UA,
-    'X-Return-Format': 'markdown',
+    'X-Return-Format': format || 'markdown',
     // Wajib: tanpa ini Jina bisa mengembalikan halaman cache lama sehingga
     // video baru tidak terdeteksi.
     'X-No-Cache': 'true',
@@ -519,6 +519,77 @@ async function infoTiklydown(cfg, link) {
   return extractMedia(json);
 }
 
+/** Decode URL yang ditulis sebagai string JSON di dalam HTML. */
+function decodeJsUrl(value) {
+  return String(value || '')
+    .replace(/\\u002F/gi, '/')
+    .replace(/\\u0026/gi, '&')
+    .replace(/\\u003D/gi, '=')
+    .replace(/\\u003F/gi, '?')
+    .replace(/\\\//g, '/')
+    .replace(/\\"/g, '"');
+}
+
+/**
+ * Ambil URL media dari HTML yang dikembalikan Jina Reader.
+ *
+ * Halaman video TikTok menyimpan JSON pemutar dengan `playAddr` /
+ * `downloadAddr`. Karena HTML diambil oleh server Jina, IP panel tidak
+ * menyentuh WAF TikTok sama sekali. Dipakai sebagai fallback terakhir saat
+ * embed lokal dan API publik sama-sama diblokir.
+ */
+function extractJinaHtmlMedia(html) {
+  const text = String(html || '');
+  if (!text) return null;
+
+  const pick = (re) => {
+    const match = text.match(re);
+    return match ? decodeJsUrl(match[1]) : '';
+  };
+
+  let video = pick(/"playAddr"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (!video) video = pick(/"downloadAddr"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (!video) {
+    video = pick(
+      /"play_addr"\s*:\s*\{[\s\S]{0,240}?"url_list"\s*:\s*\[\s*"((?:[^"\\]|\\.)*)"/
+    );
+  }
+
+  const images = [];
+  const addImage = (value) => {
+    const url = decodeJsUrl(value);
+    if (url && /^https?:\/\//i.test(url) && !images.includes(url)) images.push(url);
+  };
+
+  for (const re of [
+    /"imageURL"\s*:\s*\{\s*"urlList"\s*:\s*\[\s*"((?:[^"\\]|\\.)*)"/g,
+    /"displayImage"\s*:\s*\{\s*"urlList"\s*:\s*\[\s*"((?:[^"\\]|\\.)*)"/g,
+  ]) {
+    let match;
+    while ((match = re.exec(text)) && images.length < 20) addImage(match[1]);
+  }
+
+  if (!video && !images.length) return null;
+  return {
+    video,
+    audio: '',
+    images,
+    partial: false,
+  };
+}
+
+async function infoJina(cfg, link) {
+  if (cfg && cfg.tiktokJinaEnabled === false) return null;
+  if (!extractAwemeId(link)) return null;
+  const html = await readViaJina(link, cfg, 60000, 'html');
+  const media = extractJinaHtmlMedia(html);
+  if (!media) {
+    if (isWafError(html)) throw new Error('Jina HTML: halaman video diblokir WAF TikTok');
+    throw new Error('Jina: media video tidak ditemukan di halaman');
+  }
+  return media;
+}
+
 async function infoTikwm(cfg, link) {
   let lastError = null;
   for (const host of TIKWM_HOSTS) {
@@ -550,6 +621,8 @@ async function fetchVideoInfoApi(link, cfg = {}) {
     ['ensig', infoEnsig],
     ['tikwm', infoTikwm],
     ['tiklydown', infoTiklydown],
+    // Fallback terakhir: halaman diambil server Jina, jadi bebas WAF IP panel.
+    ['jina', infoJina],
   ];
 
   const errors = [];
@@ -593,6 +666,8 @@ module.exports = {
   hasConfiguredPostsApi,
   extractVideoArray,
   extractMedia,
+  extractJinaHtmlMedia,
+  infoJina,
   fetchUserPostsApi,
   fetchVideoInfoApi,
 };
