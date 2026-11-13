@@ -16,6 +16,7 @@ const { AnimeFeature } = require('./features/anime');
 const { InfoFeature } = require('./features/info');
 const { PeraturanFeature } = require('./features/peraturan');
 const { GroupTools } = require('./features/grouptools');
+const PersonalMemoryFeature = require('./features/personalmemory');
 const { GroupGuard } = require('./features/groupguard');
 const { NewsFeature } = require('./features/news');
 const { ConfigFeature } = require('./features/configcmd');
@@ -69,16 +70,16 @@ function bannerImageCandidates() {
 // Tujuannya: AI menjawab satu alur percakapan, bukan tiap pesan satu balasan.
 const GROUP_AI_WINDOW_MS = Math.max(
   500,
-  Math.min(10000, parseInt(process.env.GROUP_AI_WINDOW_MS || '2000', 10) || 2000)
+  Math.min(10000, parseInt(process.env.GROUP_AI_WINDOW_MS || '1200', 10) || 1200)
 );
 // Pesan yang jelas ditujukan ke bot (dipanggil/di-reply) tidak perlu menunggu
 // lama, cukup jeda pendek supaya pesan lain yang menyusul ikut tergabung.
-const GROUP_AI_DIRECT_MS = 400;
+const GROUP_AI_DIRECT_MS = 300;
 // Jeda minimal antar balasan bot di grup supaya tidak mendominasi obrolan.
 // 0 = tanpa jeda tambahan (tetap menunggu GROUP_AI_WINDOW_MS).
 const GROUP_AI_COOLDOWN_MS = (() => {
   const n = parseInt(String(process.env.GROUP_AI_COOLDOWN_MS ?? ''), 10);
-  if (!Number.isFinite(n)) return 10000;
+  if (!Number.isFinite(n)) return 6000;
   return Math.max(0, Math.min(120000, n));
 })();
 // Di grup cukup 2 bubble; di chat pribadi tetap 4.
@@ -86,6 +87,31 @@ const GROUP_AI_MAX_BUBBLES = Math.max(
   1,
   Math.min(4, parseInt(process.env.GROUP_AI_MAX_BUBBLES || '2', 10) || 2)
 );
+
+// Hinaan yang jelas diarahkan ke Tsukasa. Sengaja dibuat ketat: kata sifat
+// umum seperti "jelek" atau "sampah" baru dihitung bila menempel langsung ke
+// sasaran, supaya obrolan biasa ("menurut kamu film itu jelek?") tidak
+// memicu laporan palsu.
+const MISTREAT_TARGET = '(?:bot|tsukasa|kamu|kau|lu|lo)';
+// Kata hinaan + kata sifat yang jelas merendahkan. Kata sifat umum baru
+// dihitung bila menempel langsung pada sasaran ("kamu jelek", "tsukasa
+// payah"), supaya obrolan biasa ("menurut kamu film itu jelek?") tidak
+// memicu laporan palsu.
+const MISTREAT_LABEL =
+  '(?:bodoh|bego|goblok|tolol|idiot|dongo|anjing|bangsat|brengsek|sampah|jelek|buruk|payah|norak|culun|gak\\s+guna|tidak\\s+berguna)';
+const RE_MISTREAT_A = new RegExp(
+  `\\b(?:dasar|bot|tsukasa|kamu|kau|lu|lo)\\s+(?:itu\\s+)?${MISTREAT_LABEL}\\b`,
+  'i'
+);
+const RE_MISTREAT_B = new RegExp(
+  `\\b${MISTREAT_LABEL}\\b(?:\\s+banget)?(?:\\s+sih)?\\s+${MISTREAT_TARGET}\\b`,
+  'i'
+);
+const RE_MISTREAT_HATE = new RegExp(
+  `\\b(?:aku\\s+)?(?:benci|gak\\s+butuh|nggak\\s+butuh|muak)\\s+(?:sama\\s+)?${MISTREAT_TARGET}\\b`,
+  'i'
+);
+const RE_MISTREAT_KICK = /\b(?:matiin|matikan|hapus|ganti|buang)\s+(?:aja\s+)?(?:bot|tsukasa)\b/i;
 
 function activeRentalOf(jid) {
   const rentals = global.db && global.db.sewa && global.db.sewa.rentals;
@@ -270,6 +296,7 @@ class Router {
     this.animeChannel = animeChannel || null;
     this.groupTools = groupTools || new GroupTools(cfg, store);
     this.afk = new AfkFeature(cfg, store);
+    this.personalMemory = new PersonalMemoryFeature();
     this.verif = new VerifFeature(
       cfg,
       verifStore || new VerifStore(cfg),
@@ -315,6 +342,8 @@ class Router {
     this.groupAiQueues = new Map();
     // Cegah pembaruan ringkasan owner berjalan dobel.
     this.ownerMemoryRefreshing = false;
+    // Throttle laporan "Tsukasa mengadu" per pengirim.
+    this.complaintSeen = new Map();
     kaguya.configure(cfg);
   }
 
@@ -329,6 +358,99 @@ class Router {
     const got = userPart(participant);
     if (!got) return false;
     return this.botJids().some((jid) => userPart(jid) === got);
+  }
+
+  /** Apakah bot di-@mention di pesan ini? */
+  isBotMention(m, content) {
+    const ctx = wa.contextInfoOf(content) || {};
+    let mentions = Array.isArray(ctx.mentionedJid) ? ctx.mentionedJid : [];
+    if (!mentions.length && m && Array.isArray(m.mentionedJid)) mentions = m.mentionedJid;
+    if (!mentions.length) return false;
+    const targets = this.botJids().map(userPart).filter(Boolean);
+    if (!targets.length) return false;
+    return mentions.some((jid) => targets.includes(userPart(jid)));
+  }
+
+  /** Deteksi hinaan/ucapan yang menyakiti Tsukasa. */
+  isMistreating(text) {
+    const t = String(text || '');
+    return (
+      RE_MISTREAT_A.test(t) ||
+      RE_MISTREAT_B.test(t) ||
+      RE_MISTREAT_HATE.test(t) ||
+      RE_MISTREAT_KICK.test(t)
+    );
+  }
+
+  /** JID tujuan laporan: chat pribadi owner yang sudah dikenal, atau nomor owner. */
+  ownerReportJid() {
+    const gist = memory.getOwnerGist();
+    return (
+      gist.sourceChat ||
+      (this.owner && this.owner.jid) ||
+      (this.cfg && this.cfg.ownerJid) ||
+      ''
+    );
+  }
+
+  /**
+   * Kirim laporan ke owner saat ada orang (bukan owner) menghina atau
+   * menyakiti perasaan Tsukasa. Dibatasi per pengirim supaya tidak spam.
+   */
+  async reportMistreatment({ chat, sender, senderName, txt }) {
+    if (String(process.env.OWNER_COMPLAINT || 'true').toLowerCase() === 'false') return;
+    const to = this.ownerReportJid();
+    if (!to) return;
+
+    const key = `${chat}|${sender}`;
+    const now = Date.now();
+    const cooldown = Math.max(
+      60000,
+      (parseInt(process.env.OWNER_COMPLAINT_COOLDOWN_MIN || '15', 10) || 15) * 60000
+    );
+    if (now - (this.complaintSeen.get(key) || 0) < cooldown) return;
+    this.complaintSeen.set(key, now);
+    if (this.complaintSeen.size > 300) {
+      for (const [k, at] of this.complaintSeen) {
+        if (now - at > cooldown) this.complaintSeen.delete(k);
+      }
+    }
+
+    let place = 'Chat pribadi';
+    if (isGroupJid(chat)) {
+      place = 'Grup WhatsApp';
+      try {
+        const meta = await this.sock.groupMetadata(chat);
+        if (meta && meta.subject) place = `Grup *${meta.subject}*`;
+      } catch {
+        /* nama grup tidak wajib */
+      }
+    }
+
+    const detected = emotion.detect(String(txt || ''), { isOwner: false });
+    const mood =
+      detected && detected.mood && detected.mood !== 'netral' ? detected.mood : 'sedih';
+    const excerpt = String(txt || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 240);
+    const who = senderName || jidUser(sender);
+    const number = jidUser(sender);
+
+    const lines = [
+      '*Tsukasa mau ngadu...*',
+      '',
+      `Aku jadi ${mood} gara-gara ini.`,
+      `${place}`,
+      `${who}${number && number !== who ? ` (${number})` : ''} bilang:`,
+      `> ${excerpt}`,
+      '',
+      'Kyouu, aku nggak suka diperlakukan kayak gitu...',
+    ];
+
+    await wa.sendText(to, lines.join('\n')).catch((err) => {
+      log.warn(`[COMPLAINT] gagal kirim laporan: ${shortError(err)}`);
+    });
   }
 
   /**
@@ -510,6 +632,8 @@ class Router {
           '• .afk [alasan] — tandai AFK (.afk off untuk kembali)',
           '• .statistik — statistik aktivitas chat',
           '• .topaktif [jumlah] — leaderboard anggota paling aktif di grup',
+          '• .ingat <fakta> — simpan catatan pribadi (atur lewat chat pribadi)',
+          '• .ingat list / .ingat hapus <nomor> — lihat atau hapus catatan',
           '• .welcome on|off|set|reset|preview — pesan sambutan grup',
           '• .goodbye on|off|set|reset|preview — pesan perpisahan grup',
         ],
@@ -596,6 +720,7 @@ class Router {
           '• .animechannel status|test|news|info|cosplay|check <judul>',
           '• .tsukasa persona tsukasa1|tsukasa2 — pilih persona AI',
           '• .tsukasa mode pro on|off / .hot on|off|status',
+          '• .ingatanku [reset] — lihat atau hapus ringkasan yang aku ingat tentangmu',
           '• .geminikey list|add <key>|remove <key>',
           '• .backup [status|run] — backup sesi WhatsApp',
           '• .audit [jumlah|clear] — audit command owner',
@@ -1395,6 +1520,17 @@ class Router {
         if (await this.groupTools.handleReminder(this.sock, m, bang.rest)) return;
       }
 
+      if (PersonalMemoryFeature.isCommand(bang.cmd)) {
+        await this.personalMemory.handleCommand(this.sock, m, bang.cmd, bang.rest, isOwner);
+        return;
+      }
+
+      if (PersonalMemoryFeature.isOwnerCommand(bang.cmd)) {
+        if (await this.personalMemory.handleOwnerCommand(this.sock, m, bang.cmd, bang.rest, isOwner)) {
+          return;
+        }
+      }
+
       // Alias singkat untuk sistem pengingat yang sama (bukan plugin terpisah).
       if (bang.cmd === 'listingat') {
         if (await this.groupTools.handleReminder(this.sock, m, 'list')) return;
@@ -1737,8 +1873,9 @@ class Router {
     // Plugin pasif Kaguya: jawaban game yang butuh reply (family100, tebak,
     // adu, dll), captcha, menfess, autodl, JPM. Dijalankan sebelum gate mode
     // grup dan sebelum AI, supaya Tsukasa tidak ikut membalas jawaban tersebut
-    // di mode all/reply.
-    if (!bang) {
+    // di mode all/reply. Pesan yang memanggil Tsukasa tidak perlu dicek ke
+    // plugin pasif; ini juga menghemat waktu karena plugin tidak dimuat.
+    if (!bang && !this.reTrig.test(origTxt)) {
       const usedPrefix = /^[.!/]/.test(origTxt) ? origTxt[0] : '.';
       const passiveHandled = await kaguya.dispatchPassive({
         sock: this.sock,
@@ -1764,7 +1901,12 @@ class Router {
 
     const cmd = bang ? bang.cmd : '';
     const isGroup = isGroupJid(chat);
-    const hasTrig = this.reTrig.test(origTxt);
+    // Panggilan dianggap sah bila menyebut trigger, me-reply pesan bot, atau
+    // men-@mention bot. Ini mencegah bot terasa "tidak ke-trigger" padahal
+    // user memanggil lewat mention/reply.
+    const quotedFromBotEarly = this.isQuotedFromBot(wa.contextInfoOf(content));
+    const hasTrig =
+      this.reTrig.test(origTxt) || this.isBotMention(m, content) || quotedFromBotEarly;
     const isTagAllCmd = isCmd && cmd === 'tagall';
     const isRvoCmd = isCmd && cmd === 'rvo';
 
@@ -1777,7 +1919,7 @@ class Router {
     const hasQuoted = q.img || q.aud || q.vid || q.doc || q.sticker || q.text !== '';
     // Di mode `reply`, membalas pesan bot sendiri tetap dilayani tanpa harus
     // menyebut trigger. Ini perilaku lama yang sempat hilang.
-    const quotedFromBot = hasQuoted && this.isQuotedFromBot(qCtx);
+    const quotedFromBot = hasQuoted && quotedFromBotEarly;
     const replyModeReply = groupMode === 'reply' && quotedFromBot;
     if (hasQuoted && !hasTrig && !isCmd) {
       // Chat pribadi: balasan ke pesan apa pun tetap dilayani. Di grup,
@@ -1877,10 +2019,11 @@ class Router {
       txt = userText;
     }
 
-    // Mode balasan grup: call = harus dipanggil trigger; reply = harus reply
-    // ke suatu pesan sekaligus menyebut trigger. Mode all tidak dibatasi.
+    // Mode balasan grup: call = harus dipanggil trigger (atau reply ke pesan
+    // bot / mention bot); reply = harus reply ke suatu pesan sekaligus
+    // menyebut trigger; all tidak dibatasi.
     if (isGroup && !isTagAllCmd) {
-      if (groupMode === 'call' && !hasTrig) return;
+      if (groupMode === 'call' && !hasTrig && !quotedFromBot) return;
       if (groupMode === 'reply') {
         // Wajib berupa balasan/quote, lalu sebut trigger atau balas pesan bot.
         if (!hasQuoted) return;
@@ -1922,6 +2065,17 @@ class Router {
     const senderName =
       memory.getUserName(sender) || String(m.pushName || '').trim() || jidUser(sender);
 
+    // Kalau ada orang selain owner menghina/menyakiti Tsukasa, ia mengadu ke
+    // owner lewat chat pribadi. Di grup hanya dihitung bila pesannya memang
+    // ditujukan ke bot (dipanggil, di-reply, atau di-mention).
+    const directedAtBot = !isGroupJid(chat) || Boolean(hasTrig || quotedFromBot);
+    const mistreat = !isOwner && directedAtBot && this.isMistreating(txt);
+    if (mistreat) {
+      this.reportMistreatment({ chat, sender, senderName, txt }).catch((err) => {
+        log.warn(`[COMPLAINT] gagal lapor: ${shortError(err)}`);
+      });
+    }
+
     if (isGroup) {
       // Di grup, pesan yang datang berdekatan digabung dulu. AI lalu menjawab
       // satu alur percakapan, bukan tiap pesan satu balasan.
@@ -1932,6 +2086,7 @@ class Router {
         sender,
         senderName,
         direct: Boolean(hasTrig || quotedFromBot),
+        mistreat,
       });
       return;
     }
@@ -1944,6 +2099,7 @@ class Router {
       sender,
       senderName,
       ownerCandidates,
+      mistreat,
     });
   }
 
@@ -2021,6 +2177,8 @@ class Router {
         .map((it) => `[${it.senderName || 'User'}${it.isOwner ? ' (owner)' : ''}]: ${it.txt}`)
         .join('\n');
       const ownerPresent = batch.some((it) => it.isOwner);
+      const mistreat = batch.some((it) => it.mistreat);
+      const participantFacts = this.personalMemory.promptForBatch(batch);
       const combined = [
         'Ini percakapan grup WhatsApp. Beberapa pesan terakhir:',
         lines,
@@ -2029,20 +2187,23 @@ class Router {
         'Tanggapi alur dan pesan terakhir yang paling relevan. Jangan membalas tiap baris satu per satu.',
       ].join('\n');
 
-      // Perbarui ringkasan chat pribadi owner di latar belakang. Balasan batch
-      // ini memakai ringkasan yang sudah ada agar tidak menambah jeda.
-      this.refreshOwnerMemory().catch(() => {});
-
-      await this.generateAiReply({
+      // Perbarui ringkasan chat pribadi owner setelah balasan terkirim, supaya
+      // tidak berebut kuota model dengan balasan grup (lebih cepat).
+      const replyResult = await this.generateAiReply({
         chat,
         m: last.m,
         isOwner: last.isOwner,
         txt: combined,
+        historyText: lines,
         sender: last.sender,
         senderName: last.senderName,
         group: true,
         ownerPresent,
+        participantFacts,
+        mistreat,
       });
+      this.refreshOwnerMemory().catch(() => {});
+      return replyResult;
     } finally {
       q.running = false;
       q.lastReplyAt = Date.now();
@@ -2062,6 +2223,9 @@ class Router {
     group = false,
     ownerPresent = false,
     ownerCandidates = [],
+    historyText = '',
+    participantFacts = '',
+    mistreat = false,
   }) {
     const state = this.store.get(chat);
 
@@ -2109,13 +2273,23 @@ class Router {
           '- Jangan menandai/@mention siapa pun dan jangan menebak nama.',
           '- Baris bertanda "(owner)" adalah Kyouu, pemilik bot. Kepadanya boleh lebih akrab, tetapi tetap sopan dan jangan membocorkan chat pribadi.',
           '- Balas singkat, maksimal 2 bubble, dan jangan mengulang yang sudah dijawab orang lain.',
-        ].join('\n')
+          mistreat
+            ? '- Ada peserta yang baru saja menghina/menyakiti perasaanmu. Tunjukkan sedih atau kesal secara wajar, boleh bilang akan mengadu ke Kyouu, tetapi jangan menghina, mengancam, atau membalas kasar.'
+            : '',
+        ]
+          .filter(Boolean)
+          .join('\n')
       : '';
 
     // Ringkasan aman chat pribadi owner + penanda kehadiran owner di grup.
+    // Ringkasan hanya dipakai saat owner benar-benar ikut bicara, supaya isi
+    // chat pribadi tidak ikut terbawa ke obrolan member lain.
     const ownerBridgeOn = String(process.env.OWNER_GROUP_MEMORY || 'true').toLowerCase() !== 'false';
     const groupMeta = group
-      ? { ownerPresent, ownerGist: ownerBridgeOn ? memory.getOwnerGist().text : '' }
+      ? {
+          ownerPresent,
+          ownerGist: ownerBridgeOn && ownerPresent ? memory.getOwnerGist().text : '',
+        }
       : {};
 
     const hist = memory.load(chat);
@@ -2124,6 +2298,13 @@ class Router {
     const ctxTxt = group
       ? memory.buildGroupContext(hist, txt)
       : memory.buildContext(hist, txt, sender);
+
+    // Catatan pribadi: di DM milik lawan bicara, di grup milik peserta batch.
+    const factsPrompt = group ? participantFacts : this.personalMemory.promptForUser(sender);
+    const mistreatPrompt =
+      mistreat && !group
+        ? '## PERLAKUAN TIDAK ENAK\nUser ini baru saja menghina atau menyakiti perasaanmu. Tunjukkan sedih/kesal secara wajar; kamu boleh bilang akan mengadu ke Kyouu, tetapi tetap sopan dan jangan membalas kasar atau mengancam.'
+        : '';
 
     // Tier 2: AI boleh memilih aksi lewat tag [[...]]. Panggilan pertama
     // memakai tool prompt penuh (termasuk izin search).
@@ -2134,7 +2315,7 @@ class Router {
       ctxTxt,
       sender,
       adult,
-      [emotionPrompt, groupPrompt, this.aiTools.systemPrompt({ allowSearch: true })]
+      [emotionPrompt, groupPrompt, factsPrompt, mistreatPrompt, this.aiTools.systemPrompt({ allowSearch: true })]
         .filter(Boolean)
         .join('\n\n'),
       isOwner,
@@ -2164,7 +2345,7 @@ class Router {
         searchCtx,
         sender,
         adult,
-        [emotionPrompt, groupPrompt, this.aiTools.systemPrompt({ allowSearch: false })]
+        [emotionPrompt, groupPrompt, factsPrompt, mistreatPrompt, this.aiTools.systemPrompt({ allowSearch: false })]
           .filter(Boolean)
           .join('\n\n'),
         isOwner,
@@ -2177,8 +2358,13 @@ class Router {
     const reply = String(aiParsed.text || '').trim();
     // AI boleh memecah balasan menjadi beberapa bubble dengan tag [[next]],
     // supaya terasa seperti orang chatting. Simpan riwayat sebagai satu turn.
-    const bubbles = splitChatBubbles(reply, group ? GROUP_AI_MAX_BUBBLES : 4);
-    memory.saveTurn(chat, 'user', txt, senderName);
+    let bubbles = splitChatBubbles(reply, group ? GROUP_AI_MAX_BUBBLES : 4);
+    // Kalau model hanya mengembalikan aksi (mis. reaksi) tanpa teks, tetap
+    // kirim satu balasan pendek supaya panggilan user tidak terasa diabaikan.
+    if (!bubbles.length) bubbles = [group ? 'Oke~' : 'Oke, aku catat ya~'];
+    // Untuk grup, simpan transkrip bersih tanpa pembungkus instruksi supaya
+    // konteks berikutnya tidak kacau.
+    memory.saveTurn(chat, 'user', historyText || txt, senderName);
     // Owner mengobrol di DM: tandai agar ringkasan aman untuk grup diperbarui.
     if (isOwner && !group) memory.markOwnerDm(chat);
     if (bubbles.length) memory.saveTurn(chat, 'assistant', bubbles.join('\n'));

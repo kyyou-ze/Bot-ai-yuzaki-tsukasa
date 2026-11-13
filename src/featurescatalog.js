@@ -179,6 +179,12 @@ const FEATURES = [
     ],
   },
   {
+    key: 'memory',
+    label: 'Ingatan Pribadi',
+    description: 'Simpan fakta pribadi lewat chat pribadi dan lihat apa yang diingat.',
+    commands: ['ingat', 'ingatan', 'catat', 'note', 'notes'],
+  },
+  {
     key: 'moderation',
     label: 'Moderasi & Admin',
     description: 'Peraturan, antilink, antispam, mute, jadwal, dan mode grup.',
@@ -218,6 +224,9 @@ const FEATURE_ALIASES = {
   alat: 'tools',
   tools: 'tools',
   grup: 'tools',
+  memori: 'memory',
+  ingatan: 'memory',
+  memory: 'memory',
 };
 
 const COMMAND_FEATURE = new Map();

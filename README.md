@@ -687,6 +687,47 @@ Matikan fitur ini bila tidak diinginkan:
 OWNER_GROUP_MEMORY=false
 ```
 
+## Catatan Pribadi (`.ingat`)
+
+Fakta yang ditulis sendiri oleh user disimpan per nomor dan hanya dipakai sebagai konteks internal.
+
+```text
+.ingat aku suka kopi
+.ingat aku kerja shift malam
+.ingat list
+.ingat hapus 2
+.ingat hapus all
+```
+
+- Hanya bisa diatur lewat chat pribadi supaya tidak terbaca orang lain di grup.
+- Maksimal 10 catatan per user, masing-masing 160 karakter, duplikat ditolak.
+- Di DM, catatan dipakai agar jawaban nyambung. Di grup, catatan peserta dipakai sebagai latar belakang dan **tidak boleh dibacakan atau diungkit**.
+- Disimpan di `data/memory/_facts.json`.
+- Owner bisa melihat ringkasan ingatan untuk grup lewat `.ingatanku`, dan menghapusnya dengan `.ingatanku reset`.
+
+## Tsukasa Mengadu ke Owner
+
+Kalau ada orang selain owner yang menghina atau menyakiti perasaan Tsukasa, ia mengadu ke chat pribadi owner.
+
+- Di grup, hanya dihitung bila pesannya memang ditujukan ke bot: memanggil `tsukasa`, reply ke pesan bot, atau men-@mention bot.
+- Laporan berisi nama grup, nama/nomor pengirim, kutipan pesan (maksimal 240 karakter), dan suasana hati Tsukasa saat itu.
+- Di grup, Tsukasa tetap menjawab secara wajar: boleh sedih/kesal dan bilang akan mengadu, tetapi tidak menghina atau mengancam balik.
+- Laporan dibatasi satu per pengirim setiap 15 menit agar tidak spam.
+
+```env
+OWNER_COMPLAINT=true
+OWNER_COMPLAINT_COOLDOWN_MIN=15
+```
+
+## Suasana Hati & Cara Memanggil
+
+Suasana hati Tsukasa (senang, sedih, marah, kesal, ngambek, malu, cemburu, lelah, ngantuk, dan lainnya) tidak hanya mengubah nada bicara, tetapi juga cara memanggil orang:
+
+- Saat marah/kesal, ia memakai nama atau "kamu" dengan nada tegas dan tidak memakai panggilan akrab.
+- Saat sedih atau lelah, panggilannya lebih pelan dan singkat.
+- Saat ngambek, kepada owner ia memanggil "Kyouu" dengan nada dingin-dingin menggoda.
+- Saat manja, hanya owner yang dipanggil dengan lembut; orang lain tetap sopan.
+
 ## AI Tool Calling (Tier 2)
 
 Saat chat AI berjalan, model tidak hanya membalas teks. Bot menyisipkan daftar tool ke system prompt, lalu model boleh menutup balasannya dengan tag aksi. Tag tersebut dibuang sebelum pesan dikirim dan sebelum disimpan ke memori, jadi user tidak pernah melihatnya.
@@ -876,12 +917,12 @@ Admin grup (dan owner bot) bisa mengatur kapan Tsukasa membalas di grup masing-m
 - Semua perintah (`.help`, `.stiker`, `.tagall`, dll.) dan fitur tetap berfungsi di mode mana pun.
 - Di mode `reply`, pesan harus berupa balasan/quote ke pesan lain, lalu menyebut `tsukasa` **atau** membalas pesan bot. Quote video/dokumen/sticker/caption juga dihitung sebagai balasan.
 - Di mode `all`, bot membalas semua pesan grup tanpa perlu trigger.
-- Di semua mode, pesan grup yang datang berdekatan (default 2 detik) digabung dulu sebelum AI membalas. Jadi AI menjawab satu alur percakapan, bukan tiap pesan satu balasan, dan balasan tidak saling mendahului.
+- Di semua mode, pesan grup yang datang berdekatan (default 1,2 detik) digabung dulu sebelum AI membalas. Jadi AI menjawab satu alur percakapan, bukan tiap pesan satu balasan, dan balasan tidak saling mendahului.
 - Balasan AI di grup dibatasi maksimal 2 bubble (chat pribadi tetap 4), dan tidak menempelkan `@mention` owner di setiap balasan.
-- Jarak minimal antar balasan bot di grup 10 detik. Pesan yang jelas ditujukan ke bot (dipanggil `tsukasa` atau reply ke pesan bot) tetap dijawab cepat.
+- Jarak minimal antar balasan bot di grup 6 detik. Pesan yang jelas ditujukan ke bot (dipanggil `tsukasa`, reply ke pesan bot, atau mention bot) tetap dijawab cepat.
 - Prompt grup memberi tahu AI bahwa ada beberapa pembicara, jadi ia tidak menganggap percakapan hanya dengan satu orang atau menebak nama.
 
-Atur lewat env bila perlu: `GROUP_AI_WINDOW_MS` (jeda penggabungan pesan, default `2000`), `GROUP_AI_COOLDOWN_MS` (jeda antar balasan, default `10000`), dan `GROUP_AI_MAX_BUBBLES` (default `2`).
+Atur lewat env bila perlu: `GROUP_AI_WINDOW_MS` (jeda penggabungan pesan, default `1200`), `GROUP_AI_COOLDOWN_MS` (jeda antar balasan, default `6000`), dan `GROUP_AI_MAX_BUBBLES` (default `2`).
 
 ### Pesan sambutan & perpisahan per grup
 

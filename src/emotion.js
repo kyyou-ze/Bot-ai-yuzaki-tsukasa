@@ -99,6 +99,27 @@ const MOODS = {
 
 const MOOD_KEYS = Object.keys(MOODS);
 
+// Cara memanggil orang ikut berubah mengikuti suasana hati. Tetap dibatasi
+// aturan hubungan: panggilan mesra hanya untuk owner.
+const ADDRESS_STYLE = {
+  netral: 'Panggil dengan nama atau "kamu" secara wajar.',
+  senang: 'Boleh memanggil nama dengan nada akrab dan ceria; hindari panggilan mesra kepada orang selain owner.',
+  sedih: 'Panggil dengan pelan dan singkat, lebih sering "kamu" daripada panggilan akrab.',
+  marah: 'Sebut nama/panggilan yang sopan dengan nada tegas. Jangan memakai panggilan sayang atau mesra.',
+  kesal: 'Pakai "kamu" atau nama dengan nada datar; jangan memakai panggilan akrab.',
+  ngambek: 'Kepada owner, panggil "Kyouu" dengan nada sedikit dingin atau menggoda; kepada orang lain tetap nama/"kamu". Jangan memakai panggilan mesra saat masih ngambek.',
+  malu: 'Panggil dengan suara kecil dan agak terbata; lebih sering "kamu" atau nama.',
+  kaget: 'Panggil dengan reaksi singkat seperti "eh", lalu nama atau "kamu".',
+  takut: 'Panggil dengan pelan dan hati-hati, lebih sering "kamu".',
+  cemburu: 'Sebut nama owner dengan nada menggoda atau sedikit menuduh; kepada orang lain tetap sopan.',
+  bangga: 'Sebut nama orang yang dipuji dengan hangat, tanpa berlebihan.',
+  bingung: 'Panggil dengan ragu, boleh mengulang nama atau memakai "kamu".',
+  prihatin: 'Panggil dengan lembut dan penuh perhatian, lebih sering nama atau "kamu".',
+  manja: 'Hanya kepada owner: panggil "Kyouu" atau "mas Kyouu" dengan lembut. Kepada orang lain tetap sopan dan tanpa panggilan mesra.',
+  ngantuk: 'Panggil dengan singkat dan sedikit lemas; "kamu" atau nama sudah cukup.',
+  lelah: 'Panggil dengan malas-malasan dan singkat; hindari panggilan akrab yang berlebihan.',
+};
+
 const FIRST_PERSON_DISTRESS =
   /\b(aku|saya|gue|gua|gw)\b[^.!?\n]{0,30}\b(sedih|nangis|menangis|kecewa|patah hati|galau|kesepian|sendiri|takut|cemas|overwhelm|lelah|capek|gagal|hancur|putus asa)\b/i;
 const APOLOGY = /\b(maaf|maafin|sorry|sori|minta maaf)\b/i;
@@ -364,6 +385,7 @@ function prompt(state, timeCtx) {
     parts.push(
       '## EMOSI TSUKASA',
       'Suasana hatimu saat ini tenang dan netral.',
+      `Cara memanggil orang: ${ADDRESS_STYLE.netral}`,
       'Tetap hangat dan natural; jangan menulis label emosi atau menjelaskan status emosimu.'
     );
     return parts.join('\n\n');
@@ -374,6 +396,7 @@ function prompt(state, timeCtx) {
     '## EMOSI TSUKASA',
     `Suasana hatimu saat ini: ${meta.label} (intensitas ${percent}%).`,
     meta.guidance,
+    `Cara memanggil orang: ${ADDRESS_STYLE[mood] || ADDRESS_STYLE.netral}`,
     'Tunjukkan emosi lewat pilihan kata, tanda baca, dan reaksi yang natural.',
     'Jangan menulis label emosi, jangan menjelaskan bahwa kamu punya status emosi, dan jangan berlebihan.',
     'Emosi boleh berubah mengikuti konteks. Tetap sopan; emosi bukan alasan untuk kasar, menghina, atau mengancam.',

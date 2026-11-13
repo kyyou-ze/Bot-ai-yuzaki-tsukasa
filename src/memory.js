@@ -7,9 +7,14 @@ const path = require('path');
 const MAX_TURNS = 8;
 const MEMORY_DIR = path.resolve(process.cwd(), 'data', 'memory');
 const OWNER_GIST_FILE = path.join(MEMORY_DIR, '_owner-gist.json');
+const FACTS_FILE = path.join(MEMORY_DIR, '_facts.json');
+const MAX_FACTS = 10;
+const MAX_FACT_LEN = 160;
 
 const chatHistMap = new Map();
 const userNameMap = new Map();
+// Catatan fakta pribadi per JID. Hanya dipakai sebagai konteks internal.
+const factsMap = new Map();
 
 // Ringkasan aman percakapan pribadi owner. Dipakai supaya Tsukasa tetap
 // terasa dekat dengan owner saat mereka bertemu di grup, tanpa membocorkan
@@ -60,6 +65,20 @@ function loadAll() {
     ownerGist.sourceChat = String(gist.sourceChat || '');
   } catch {
     /* belum ada ringkasan */
+  }
+
+  try {
+    const raw = JSON.parse(fs.readFileSync(FACTS_FILE, 'utf8'));
+    for (const [jid, list] of Object.entries(raw || {})) {
+      if (!Array.isArray(list)) continue;
+      const clean = list
+        .map((v) => String(v || '').trim())
+        .filter(Boolean)
+        .slice(0, MAX_FACTS);
+      if (clean.length) factsMap.set(jid, clean);
+    }
+  } catch {
+    /* belum ada catatan */
   }
 
   let entries = [];
@@ -174,8 +193,9 @@ function buildGroupContext(hist, newUserText) {
   if (hist.length > 0) {
     parts.push('Konteks percakapan grup sebelumnya:');
     for (const t of hist) {
-      const who = t.role === 'user' ? `Peserta${t.name ? ` (${t.name})` : ''}` : 'Tsukasa';
-      parts.push(`${who}: ${t.text}`);
+      // Turn user di grup sudah berupa transkrip berlabel [Nama]: ...,
+      // jadi jangan ditambah prefiks nama lagi.
+      parts.push(t.role === 'assistant' ? `Tsukasa: ${t.text}` : t.text);
     }
     parts.push('');
   }
@@ -274,6 +294,72 @@ function ownerChatHistory() {
   return ownerGist.sourceChat ? load(ownerGist.sourceChat) : [];
 }
 
+// ---------------- Catatan fakta pribadi ----------------
+
+function persistFacts() {
+  try {
+    fs.mkdirSync(MEMORY_DIR, { recursive: true });
+    fs.writeFileSync(FACTS_FILE, JSON.stringify(Object.fromEntries(factsMap), null, 2));
+  } catch (err) {
+    log.error('[MEMORY] gagal simpan catatan:', err.message);
+  }
+}
+
+function cleanFact(text) {
+  return String(text || '')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s"'“”‘’·•-]+|[\s"'“”‘’]+$/g, '')
+    .trim()
+    .slice(0, MAX_FACT_LEN);
+}
+
+/**
+ * Simpan fakta pribadi untuk satu JID. Mengembalikan status agar pemanggil
+ * bisa membedakan duplikat, penuh, dan berhasil.
+ */
+function addFact(jid, text) {
+  const key = String(jid || '').trim();
+  const fact = cleanFact(text);
+  if (!key || !fact) return { ok: false, reason: 'kosong' };
+  const list = factsMap.get(key) || [];
+  if (list.some((v) => v.toLowerCase() === fact.toLowerCase())) {
+    return { ok: false, reason: 'duplikat', fact };
+  }
+  if (list.length >= MAX_FACTS) return { ok: false, reason: 'penuh', fact };
+  list.push(fact);
+  factsMap.set(key, list);
+  persistFacts();
+  return { ok: true, fact, count: list.length };
+}
+
+/** Daftar fakta pribadi (salinan) untuk satu JID. */
+function getFacts(jid) {
+  return (factsMap.get(String(jid || '').trim()) || []).slice();
+}
+
+/** Hapus satu fakta berdasarkan nomor urut 1-based. */
+function removeFact(jid, index) {
+  const key = String(jid || '').trim();
+  const list = factsMap.get(key);
+  if (!list) return '';
+  const i = Number(index) - 1;
+  if (!Number.isInteger(i) || i < 0 || i >= list.length) return '';
+  const [removed] = list.splice(i, 1);
+  if (list.length) factsMap.set(key, list);
+  else factsMap.delete(key);
+  persistFacts();
+  return removed || '';
+}
+
+/** Hapus semua fakta pribadi satu JID. */
+function clearFacts(jid) {
+  const key = String(jid || '').trim();
+  if (!key || !factsMap.has(key)) return false;
+  factsMap.delete(key);
+  persistFacts();
+  return true;
+}
+
 function extractActualUserInput(contextText) {
   const lines = String(contextText || '').split('\n');
   const found = [];
@@ -318,5 +404,9 @@ module.exports = {
   getOwnerGist,
   setOwnerGist,
   ownerChatHistory,
+  addFact,
+  getFacts,
+  removeFact,
+  clearFacts,
   extractActualUserInput,
 };
