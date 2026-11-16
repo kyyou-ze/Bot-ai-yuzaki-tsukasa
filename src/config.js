@@ -128,6 +128,10 @@ function load() {
     tiktokCnKeyword: getenv('TIKTOK_CN_KEYWORD', 'ECN'),
     tiktokHashtag: getenv('TIKTOK_HASHTAG', '#margaecn'),
     tiktokCheckMin: Math.max(1, intEnv(getenv('TIKTOK_CHECK_MIN', '3'), 3)),
+    // Monitor ALYA MD mengecek tiap 30 detik. Bisa diperlambat lewat env.
+    tiktokPollMs: Math.max(10000, intEnv(getenv('TIKTOK_POLL_MS', '30000'), 30000)),
+    // Opsional: ganti kunci api.tikwmapi.com bawaan ALYA MD bila kuotanya habis.
+    tiktokTikwmApiKey: getenv('TIKTOK_TIKWMAPI_KEY', ''),
     tiktokNotifyJid: getenv('TIKTOK_NOTIFY_JID', ''),
     // Opsional: endpoint scraper sendiri. Gunakan placeholder {username} dan
     // {count}, mis. https://api.example.com/tiktok/user/{username}?count={count}

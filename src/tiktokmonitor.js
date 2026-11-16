@@ -1,8 +1,9 @@
 'use strict';
 
+const path = require('path');
 const log = require('./logger');
 const wa = require('./wa');
-const { sleep, downloadBytes, isGroupJid, jidUser } = require('./util');
+const { sleep, downloadBytes, isGroupJid, jidUser, safeReadJson, atomicWriteJson } = require('./util');
 const { shortError } = require('./logfmt');
 const {
   desktopHeaders,
@@ -11,6 +12,8 @@ const {
   isWafError,
   hasConfiguredPostsApi,
   fetchUserPostsApi,
+  fetchTikTokUser,
+  fetchTikwmApiComLatest,
 } = require('./tiktokapi');
 const {
   dayKey,
@@ -22,10 +25,13 @@ const {
 } = require('./verifstore');
 const { fetchProfileEmbed, parseEmbedState, videosFromEmbed } = require('./tiktoklocal');
 
-const START_DELAY_MS = 15000;
-const ACCOUNT_DELAY_MIN_MS = 2000;
-const ACCOUNT_DELAY_MAX_MS = 5000;
+const START_DELAY_MS = 1500;
+// Monitor ALYA MD menunggu 1,5 detik antar akun.
+const ACCOUNT_DELAY_MIN_MS = 1500;
+const ACCOUNT_DELAY_MAX_MS = 1500;
 const CAPTION_MAX = 180;
+const DEFAULT_POLL_MS = 30000;
+const PROFILE_CACHE_MS = 25000;
 // Error yang sama tidak perlu ditulis tiap 3 menit; cukup sekali per 10 menit.
 const ERROR_LOG_EVERY_MS = 10 * 60 * 1000;
 
@@ -419,12 +425,13 @@ async function fetchUserVideos(account, cfg = {}) {
   const tryJinaHtml = () => fetchProfileJinaHtml(unique, cfg);
   const tryHtml = () => fetchProfileHtml(unique, cfg);
 
-  // Mode "auto" (default): lokal dulu, lalu cadangan yang dikonfigurasi.
-  // Mode "local": wajib lokal. Mode "api": langsung API/Jina seperti dulu.
+  // Mode "auto" (default): endpoint ALYA MD (tikwmapi) lebih dulu, lalu
+  // scraper lokal dan cadangan lain. Mode "local": wajib lokal. Mode "api":
+  // langsung API/Jina seperti dulu.
   const mode = String(cfg.tiktokScraperMode || 'auto').toLowerCase();
   const steps = [];
+  if (mode !== 'local' && hasConfiguredPostsApi(cfg)) steps.push(['TikwmAPI', tryApi]);
   if (mode !== 'api') steps.push(['Local', tryLocal]);
-  if (hasConfiguredPostsApi(cfg)) steps.push(['API', tryApi]);
   if (mode !== 'local') {
     steps.push(['Jina', tryJina]);
     steps.push(['Jina HTML', tryJinaHtml]);
@@ -520,16 +527,139 @@ function formatDetectorMessage(video, cfg) {
   return lines.join('\n');
 }
 
+function formatNumberId(value) {
+  return (Number(value) || 0).toLocaleString('id-ID');
+}
+
+/** Daftar hashtag wajib untuk satu grup, diambil dari entri verif grup itu. */
+function requiredHashtagsFor(store, gcId, video, cfg) {
+  const acc = normalizeAccount(video && video.username).toLowerCase();
+  const cn = normalizeCn(video && video.cn);
+  const tags = new Set();
+
+  let entries = [];
+  try {
+    if (store && typeof store.list === 'function') entries = store.list(gcId);
+  } catch {
+    entries = [];
+  }
+  for (const entry of entries) {
+    const byAccount = acc && normalizeAccount(entry.accName).toLowerCase() === acc;
+    const byCn = cn && normalizeCn(entry.cnKeyword) === cn;
+    if (!byAccount && !byCn) continue;
+    const tag = normalizeHashtag(entry.hashtag || '');
+    if (tag) tags.add(tag);
+  }
+
+  // Target hashtag yang diset langsung dari grup lewat .tthashtag on #tag
+  const groupCfg = global.db && global.db.groups && global.db.groups[gcId];
+  if (groupCfg && groupCfg.detectHashtag && Array.isArray(groupCfg.requiredHashtags)) {
+    for (const raw of groupCfg.requiredHashtags) {
+      const tag = normalizeHashtag(raw);
+      if (tag) tags.add(tag);
+    }
+  }
+
+  if (!tags.size) {
+    const fallback = normalizeHashtag((cfg && cfg.tiktokHashtag) || '');
+    if (fallback) tags.add(fallback);
+  }
+  return [...tags];
+}
+
+/** Status hashtag gaya ALYA MD: sesuai target / memakai / tanpa hashtag. */
+function hashtagStatusFor(caption, required) {
+  const found = (String(caption || '').match(/#[\w\u0590-\u05ff]+/g) || []).map((tag) =>
+    tag.toLowerCase()
+  );
+  const wanted = (Array.isArray(required) ? required : []).filter(Boolean);
+  if (wanted.length) {
+    const hit = wanted.filter((tag) => found.includes(String(tag).toLowerCase()));
+    if (hit.length) return `Sesuai Target (${hit.join(', ')})`;
+    return `Tidak Sesuai Target (Target: ${wanted.join(', ')})`;
+  }
+  return found.length ? 'Menggunakan Hashtag' : 'Tanpa Hashtag';
+}
+
+/** Susunan alert real-time yang dipakai ALYA MD. */
+function formatArchiveAlert(video, meta = {}) {
+  const profile = meta.profile || {};
+  const username = normalizeAccount(video && video.username);
+  const nickname = (video && video.nickname) || profile.nickname || '-';
+  const total = Number(profile.videoCount ?? meta.currentCount ?? 0);
+  const diff = Math.max(1, Number(meta.diff) || 1);
+  const followers = Number(profile.followers ?? 0);
+  const likes = Number(profile.hearts ?? profile.heartsCount ?? 0);
+  const groupName = meta.groupName || 'Grup ini';
+  const now = new Date();
+  const clock = new Intl.DateTimeFormat('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(now);
+  const date = new Intl.DateTimeFormat('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(now);
+  const hashtags = String((video && video.caption) || '').match(/#[\w\u0590-\u05ff]+/g) || [];
+  const status = meta.hashtagStatus || '';
+
+  let text = '🔔 *[ NOTIFIKASI TIKTOK REAL-TIME ]* 🔔\n\n';
+  text += `Halo member *${groupName}*! Akun TikTok terverifikasi baru saja mengupload video baru! 🎬🚀\n\n`;
+  text += `👤 *Akun*: @${username}\n`;
+  text += `📛 *Nickname*: ${nickname || '-'}\n`;
+  text += `🎬 *Total Video*: ${total} *(+${diff} video baru)*\n`;
+  text += `👥 *Followers*: ${formatNumberId(followers)}\n`;
+  text += `❤️ *Total Likes*: ${formatNumberId(likes)}\n`;
+  if (video && video.caption) {
+    text += `*Deskripsi*: ${truncate(video.caption, 150)}\n`;
+  }
+  if (meta.checkHashtag) {
+    text += `*Hashtags*: ${
+      hashtags.length ? hashtags.join(' ') : '_(Tidak ada hashtag)_'
+    }\n`;
+    text += `*Status Hashtag*: ${status || (hashtags.length ? 'Menggunakan Hashtag' : 'Tanpa Hashtag')}\n`;
+  }
+  if (!meta.countOnly && video && video.link) {
+    text += `\n🎬 *Link Video Terbaru (VT)*:\n👉 ${video.link}\n`;
+  }
+  text += `\n🔗 *Profil TikTok*:\n👉 https://www.tiktok.com/@${username}\n\n`;
+  text += '━━━━━━━━━━━━━━━━━━━━━\n';
+  text += `📢 *Group Target*: ${groupName}\n`;
+  text += `📅 *Tanggal*: ${date}\n`;
+  text += `⏰ *Waktu*: ${clock} WIB\n\n`;
+  text += '_Notifikasi otomatis TikTok Profile Monitoring_';
+  return text;
+}
+
 class TikTokMonitor {
   constructor(cfg, store, isReady, accountsStore) {
     this.cfg = cfg || {};
     this.store = store;
     this.accountsStore = accountsStore || null;
     this.ready = typeof isReady === 'function' ? isReady : () => Boolean(isReady);
-    this.intervalMs = Math.max(1, Number(this.cfg.tiktokCheckMin) || 3) * 60 * 1000;
+    this.intervalMs = Math.max(
+      10000,
+      Number(this.cfg.tiktokPollMs) || DEFAULT_POLL_MS
+    );
     this.timer = null;
     this.startTimer = null;
     this.ticking = false;
+    this.profileCache = new Map();
+    this.groupNames = new Map();
+    this.countFile = path.join(
+      this.cfg.tiktokDataDir || path.resolve('data/tiktok'),
+      'monitor.json'
+    );
+    const countState = safeReadJson(this.countFile, null);
+    this.countState =
+      countState && typeof countState === 'object' && !Array.isArray(countState)
+        ? countState
+        : {};
     // Akun yang sudah dihapus/rename jangan dilaporkan tiap siklus.
     this.missingAccounts = new Set();
     // Throttle log error per akun supaya panel tidak spam.
@@ -550,6 +680,7 @@ class TikTokMonitor {
       enabled: this.isEnabled(),
       scraper: this.cfg.tiktokScraperMode || 'auto',
       localEnabled: this.cfg.tiktokLocalEnabled !== false,
+      pollSeconds: Math.round(this.intervalMs / 1000),
       lastCheckAt: this.lastCheckAt,
       lastOkAt: this.lastOkAt,
       lastError: this.lastError,
@@ -619,6 +750,18 @@ class TikTokMonitor {
     this.start();
   }
 
+  /** Terapkan ulang interval setelah config diubah dari WhatsApp/panel. */
+  reconfigure() {
+    this.intervalMs = Math.max(
+      10000,
+      Number(this.cfg.tiktokPollMs) || DEFAULT_POLL_MS
+    );
+    if (this.timer || this.startTimer) {
+      this.stop();
+      this.start();
+    }
+  }
+
   start() {
     if (!this.isEnabled()) return;
     const accounts = this.getAccounts();
@@ -630,8 +773,8 @@ class TikTokMonitor {
 
     log.info(
       `[TIKTOK] Detector aktif | ${accounts.length} akun | interval ${Math.round(
-        this.intervalMs / 60000
-      )} menit | scraper ${this.cfg.tiktokScraperMode || 'auto'}` +
+        this.intervalMs / 1000
+      )} detik | scraper ${this.cfg.tiktokScraperMode || 'auto'}` +
         `${this.cfg.tiktokLocalEnabled === false ? ' (lokal off)' : ' (lokal on)'} | ${accounts.join(', ')}`
     );
     this.startTimer = setTimeout(() => {
@@ -670,7 +813,7 @@ class TikTokMonitor {
     try {
       const accounts = this.getAccounts();
       for (let i = 0; i < accounts.length; i += 1) {
-        // Cek satu per satu; beri jeda acak 2-5 detik agar tidak menyerbu WAF.
+        // Cek satu per satu; jeda 1,5 detik seperti monitor ALYA MD.
         if (i > 0) {
           await sleep(
             ACCOUNT_DELAY_MIN_MS +
@@ -702,21 +845,125 @@ class TikTokMonitor {
     }
   }
 
+  countKey(account) {
+    return String(account || '').trim().toLowerCase();
+  }
+
+  getCountInfo(account) {
+    const item = this.countState[this.countKey(account)];
+    return item && typeof item === 'object' ? item : null;
+  }
+
+  setCountInfo(account, patch) {
+    const key = this.countKey(account);
+    if (!key) return;
+    const prev = this.countState[key] && typeof this.countState[key] === 'object'
+      ? this.countState[key]
+      : {};
+    const changed = Object.keys(patch || {}).some((field) => prev[field] !== patch[field]);
+    this.countState[key] = { ...prev, ...patch, updatedAt: Date.now() };
+    if (!changed) return;
+    try {
+      atomicWriteJson(this.countFile, this.countState);
+    } catch (err) {
+      log.warn(`[TIKTOK] gagal menyimpan monitor.json: ${shortError(err)}`);
+    }
+  }
+
+  async getProfile(account) {
+    const key = String(account || '').toLowerCase();
+    const cached = this.profileCache.get(key);
+    if (cached && Date.now() - cached.at < PROFILE_CACHE_MS) return cached.profile;
+    const profile = await fetchTikTokUser(account, this.cfg);
+    this.profileCache.set(key, { at: Date.now(), profile });
+    return profile;
+  }
+
   async checkAccount(account) {
-    const videos = await fetchUserVideos(account, this.cfg);
+    // Monitor ALYA MD memakai profil sebagai sumber utama: videoCount naik
+    // berarti ada upload baru. Daftar video hanya diambil saat itu terjadi,
+    // jadi request jauh lebih hemat daripada scraping daftar tiap tick.
+    let profile = null;
+    try {
+      profile = await this.getProfile(account);
+    } catch (err) {
+      if (err && err.notFound) throw err;
+      log.debug(`[TIKTOK] profil @${account} gagal: ${shortError(err)}`);
+    }
+
     this.missingAccounts.delete(account);
     this.errorLogAt.delete(account);
-    this.clearWafCooldown();
-    this.lastOkAt = Date.now();
-    this.lastError = '';
-    if (!videos.length) return;
 
     const state = this.store.getSeenState(account);
-    const currentIds = videos.map((v) => v.id);
+    const prevInfo = this.getCountInfo(account) || {};
+    const prevCount = Number(prevInfo.lastVideoCount);
+    const count = Number(profile && profile.videoCount);
+    const hasCount = Number.isFinite(count) && count >= 0;
 
-    // Pertama kali berjalan: jangan kirim notifikasi untuk video lama, tapi
-    // simpan video hari ini supaya /siapaup langsung ada isinya.
-    if (!state.initialized) {
+    // Profil tidak tersedia: kembali ke deteksi berbasis ID video.
+    if (!profile) {
+      let videos = [];
+      try {
+        videos = await fetchUserVideos(account, this.cfg);
+      } catch (err) {
+        if (err && err.notFound) throw err;
+        this.logCheckError(account, err);
+        return;
+      }
+      const currentIds = videos.map((v) => v.id);
+      if (!state.initialized) {
+        const today = dayKey(Date.now(), this.cfg.tzOffset);
+        for (const video of videos) {
+          const data = buildVideoData(video, this.cfg);
+          if (dayKey(data.timestamp, this.cfg.tzOffset) === today) {
+            await this.store.recordVideo(data);
+          }
+        }
+        await this.store.markSeen(account, currentIds, true);
+        log.info(`[TIKTOK] ${account} baseline ${videos.length} video`);
+        return;
+      }
+      const fresh = videos
+        .filter((v) => !state.ids.has(v.id))
+        .sort((a, b) => a.createTime - b.createTime);
+      for (const video of fresh) {
+        const data = buildVideoData(video, this.cfg);
+        await this.store.recordVideo(data);
+        await this.notify(data, { diff: fresh.length, currentCount: videos.length });
+        log.info(
+          `[TIKTOK] UP ${data.username} (${data.nickname || '-'}) | ${formatClock(
+            data.timestamp,
+            this.cfg.timezone
+          )}`
+        );
+      }
+      await this.store.markSeen(account, currentIds, true);
+      this.lastOkAt = Date.now();
+      this.lastError = '';
+      this.clearWafCooldown();
+      return;
+    }
+
+    this.lastOkAt = Date.now();
+    this.lastError = '';
+    this.clearWafCooldown();
+    this.missingAccounts.delete(account);
+
+    const statsPatch = {
+      nickname: profile.nickname || null,
+      followers: profile.followers ?? null,
+      likes: profile.hearts ?? profile.heartsCount ?? null,
+    };
+
+    // Pertama kali berjalan: simpan baseline, jangan kirim notifikasi untuk
+    // video lama. Daftar video diambil sekali agar /siapaup langsung terisi.
+    if (!state.initialized || !Number.isFinite(prevCount)) {
+      let videos = [];
+      try {
+        videos = await fetchUserVideos(account, this.cfg);
+      } catch (err) {
+        log.debug(`[TIKTOK] baseline daftar video @${account} gagal: ${shortError(err)}`);
+      }
       const today = dayKey(Date.now(), this.cfg.tzOffset);
       for (const video of videos) {
         const data = buildVideoData(video, this.cfg);
@@ -724,19 +971,122 @@ class TikTokMonitor {
           await this.store.recordVideo(data);
         }
       }
-      await this.store.markSeen(account, currentIds, true);
-      log.info(`[TIKTOK] ${account} baseline ${videos.length} video`);
+      const patch = { ...statsPatch };
+      if (hasCount) patch.lastVideoCount = count;
+      if (videos.length) patch.lastVideoId = videos[0].id;
+      this.setCountInfo(account, patch);
+      await this.store.markSeen(account, videos.map((v) => v.id), true);
+      log.info(
+        `[TIKTOK] ${account} baseline ${videos.length} video` +
+          (hasCount ? ` / ${count} total` : '')
+      );
       return;
     }
 
-    const fresh = videos
+    // Jumlah video turun (video dihapus/di-private): perbarui baseline tanpa
+    // mengirim notifikasi palsu.
+    if (hasCount && count < prevCount) {
+      this.setCountInfo(account, { ...statsPatch, lastVideoCount: count });
+      return;
+    }
+
+    // Tidak ada kenaikan: cukup simpan statistik terbaru.
+    if (!hasCount || count <= prevCount) {
+      this.setCountInfo(account, statsPatch);
+      return;
+    }
+
+    // Ada upload baru. Utamakan endpoint video terbaru (cepat, seperti ALYA
+    // MD), lalu daftar video lengkap bila ID-nya belum terlihat.
+    let videos = [];
+    let latest = null;
+    try {
+      latest = await fetchTikwmApiComLatest(account, this.cfg);
+      if (latest) {
+        videos = normalizeList(
+          [
+            {
+              video_id: latest.id,
+              author: {
+                unique_id: normalizeAccount(account),
+                nickname: profile.nickname,
+              },
+              title: latest.title,
+              create_time: latest.createTime,
+              cover: latest.cover,
+              link: latest.url,
+            },
+          ],
+          account
+        );
+      }
+    } catch (err) {
+      log.debug(`[TIKTOK] tikwmapi latest @${account} gagal: ${shortError(err)}`);
+    }
+
+    let fresh = videos
       .filter((v) => !state.ids.has(v.id))
       .sort((a, b) => a.createTime - b.createTime);
 
+    if (!fresh.length) {
+      try {
+        videos = await fetchUserVideos(account, this.cfg);
+      } catch (err) {
+        log.debug(`[TIKTOK] daftar video baru @${account} gagal: ${shortError(err)}`);
+      }
+      fresh = videos
+        .filter((v) => !state.ids.has(v.id))
+        .sort((a, b) => a.createTime - b.createTime);
+    }
+
+    // Seperti monitor ALYA MD: kalau endpoint video terbaru masih
+    // mengembalikan video yang sama dengan notifikasi sebelumnya, kenaikan
+    // videoCount belum tentu upload baru (cache/lag profil). Perbarui baseline
+    // tanpa mengirim alert palsu.
+    if (
+      !fresh.length &&
+      latest &&
+      prevInfo.lastVideoId &&
+      String(latest.id) === String(prevInfo.lastVideoId)
+    ) {
+      this.setCountInfo(account, { ...statsPatch, lastVideoCount: count });
+      log.debug(
+        `[TIKTOK] ${account} videoCount naik tetapi video terbaru masih ${latest.id}; baseline diperbarui`
+      );
+      return;
+    }
+
+    // Fallback monitor ALYA MD: alert tetap dikirim walau link video belum
+    // tersedia, karena videoCount sudah membuktikan ada upload baru.
+    let countOnly = false;
+    if (!fresh.length) {
+      const username = normalizeAccount(account);
+      fresh = [
+        {
+          id: `count-${count}`,
+          _countOnly: true,
+          username: `@${username}`,
+          nickname: profile.nickname || prevInfo.nickname || '',
+          caption: '',
+          createTime: Math.floor(Date.now() / 1000),
+          cover: '',
+          link: `https://www.tiktok.com/@${username}`,
+        },
+      ];
+      countOnly = true;
+    }
+
+    const diff = Math.max(1, count - prevCount);
     for (const video of fresh) {
       const data = buildVideoData(video, this.cfg);
-      await this.store.recordVideo(data);
-      await this.notify(data);
+      if (!video._countOnly) await this.store.recordVideo(data);
+      await this.notify(data, {
+        profile,
+        diff,
+        currentCount: count,
+        checkHashtag: true,
+        countOnly,
+      });
       log.info(
         `[TIKTOK] UP ${data.username} (${data.nickname || '-'}) | ${formatClock(
           data.timestamp,
@@ -747,10 +1097,38 @@ class TikTokMonitor {
       );
     }
 
-    await this.store.markSeen(account, currentIds, true);
+    const latestReal = videos.find((v) => v && v.id);
+    const patch = {
+      ...statsPatch,
+      lastVideoCount: count,
+      notifiedAt: Date.now(),
+    };
+    if (latestReal && latestReal.id) patch.lastVideoId = latestReal.id;
+    this.setCountInfo(account, patch);
+
+    const realIds = videos.map((v) => v.id).filter(Boolean);
+    await this.store.markSeen(account, realIds, true);
   }
 
-  async notify(video) {
+  async getGroupName(jid) {
+    const key = String(jid || '').trim();
+    if (!key) return '';
+    if (this.groupNames.has(key)) return this.groupNames.get(key);
+    let name = '';
+    try {
+      const sock = typeof wa.getSock === 'function' ? wa.getSock() : null;
+      if (sock && typeof sock.groupMetadata === 'function') {
+        const meta = await sock.groupMetadata(key);
+        name = String((meta && (meta.subject || meta.name)) || '').trim();
+      }
+    } catch {
+      name = '';
+    }
+    this.groupNames.set(key, name);
+    return name;
+  }
+
+  async notify(video, meta = {}) {
     // Hanya grup yang boleh menerima notifikasi, supaya yang lain tahu siapa
     // yang UP. Map: JID grup -> daftar JID peng-verif untuk di-tag.
     const targets = new Map();
@@ -777,26 +1155,47 @@ class TikTokMonitor {
       return;
     }
 
-    const baseText = formatDetectorMessage(video, this.cfg);
+    const profile = meta.profile || null;
     for (const [jid, userMap] of targets) {
+      const groupName = (await this.getGroupName(jid)) || meta.groupName || 'grup ini';
+      const required = requiredHashtagsFor(this.store, jid, video, this.cfg);
+      const hashtagStatus = hashtagStatusFor(video.caption, required);
+      const baseText = formatArchiveAlert(video, {
+        profile,
+        diff: meta.diff,
+        currentCount: meta.currentCount,
+        groupName,
+        checkHashtag: meta.checkHashtag !== false,
+        hashtagStatus,
+        countOnly: Boolean(meta.countOnly),
+      });
+
       const mentions = [...userMap.keys()].filter((u) => !/@lid$/i.test(u));
       const mentionLine = mentions.length
         ? `\n🙋 UP oleh: ${mentions.map((u) => `@${jidUser(u)}`).join(', ')}`
         : '';
       const text = baseText + mentionLine;
+
       try {
-        // Kirim cover sebagai preview supaya notifikasi terlihat seperti post
-        // TikTok, bukan cuma teks. Kalau cover gagal diunduh, fallback teks.
+        // Utamakan avatar profil seperti monitor ALYA MD; kalau gagal pakai
+        // cover video, lalu fallback teks biasa.
+        const imageUrl =
+          (profile &&
+            ((profile.profile && (profile.profile.avatarLarger ||
+              profile.profile.avatarMedium ||
+              profile.profile.avatarThumb)) ||
+              profile.avatar)) ||
+          video.cover;
         let sent = false;
-        if (video.cover) {
+        if (imageUrl) {
           try {
-            const got = await downloadBytes(video.cover, 8 * 1024 * 1024, 20000);
+            const got = await downloadBytes(imageUrl, 8 * 1024 * 1024, 20000);
             if (/^image\//i.test(got.mime || '')) {
               await wa.sendImage(jid, got.data, text, null, got.mime, mentions);
               sent = true;
             }
           } catch (err) {
-            log.debug(`[TIKTOK] cover ${video.id} gagal: ${shortError(err)}`);
+            log.debug(`[TIKTOK] avatar/cover ${video.id} gagal: ${shortError(err)}`);
           }
         }
         if (!sent) await wa.sendText(jid, text, null, mentions);
@@ -812,6 +1211,9 @@ module.exports = {
   fetchUserVideos,
   buildVideoData,
   formatDetectorMessage,
+  formatArchiveAlert,
+  hashtagStatusFor,
+  requiredHashtagsFor,
   captionHasHashtag,
   nicknameMatchesCn,
 };

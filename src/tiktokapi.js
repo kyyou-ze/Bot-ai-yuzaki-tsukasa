@@ -20,6 +20,18 @@ const DEFAULT_API23_URL =
 const DEFAULT_API23_HOST = 'tiktok-api23.p.rapidapi.com';
 const TIKLYDOWN_URL = 'https://api.tiklydown.eu.org/api/download?url={url}';
 
+// ---------- endpoint dari ALYA MD ----------
+// Scraper profil & daftar upload memakai endpoint yang dipakai fitur TikTok
+// ALYA MD. Kunci ini publik di source-nya dan tidak butuh env tambahan.
+const TIKWM_API_BASE = 'https://api.tikwmapi.com';
+const TIKWM_API_KEY = 'f124edb9b3a77fdf420f3b40f19dc773';
+const ARCHIVE_STALK_URL = 'https://api.saipulanuar.eu.org/api/stalk/tiktok';
+const NEXRAY_BASE = 'https://api.nexray.web.id/';
+// Kunci bawaan ALYA MD bisa kehabisan kuota. Setelah 429, jangan panggil
+// endpoint itu tiap akun/tiap tick; beri cooldown supaya monitor tetap cepat.
+const ARCHIVE_QUOTA_COOLDOWN_MS = 10 * 60 * 1000;
+let archivePostsBlockedUntil = 0;
+
 // ---------- proxy rotation ----------
 // Proxy memakai ProxyAgent dari paket undici. Paket undici bersifat opsional:
 // kalau belum terpasang, request tetap jalan langsung tanpa proxy.
@@ -236,6 +248,10 @@ function extractAwemeId(link) {
   return m ? m[1] : '';
 }
 
+function normalizeAccountish(value) {
+  return String(value || '').trim().replace(/^@+/, '');
+}
+
 function firstString(...values) {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) return value.trim();
@@ -386,6 +402,84 @@ async function postsEnsig(cfg, unique) {
   return extractVideoArray(json);
 }
 
+/**
+ * Daftar upload dari api.tikwmapi.com (endpoint ALYA MD). Endpoint yang sama
+ * dipakai monitor untuk mengambil video terbaru, jadi hanya butuh satu sumber
+ * saat scraper lokal/Jina sedang diblokir.
+ */
+async function postsTikwmApiCom(cfg, unique, count = DEFAULT_COUNT) {
+  if (Date.now() < archivePostsBlockedUntil) {
+    throw new Error('tikwmapi: kuota habis, cooldown sementara');
+  }
+  const key = String((cfg && cfg.tiktokTikwmApiKey) || TIKWM_API_KEY).trim();
+  const url =
+    `${TIKWM_API_BASE}/user/posts?unique_id=${encodeURIComponent(unique)}` +
+    `&count=${Math.max(1, Number(count) || DEFAULT_COUNT)}&cursor=0`;
+  const res = await tiktokFetch(
+    url,
+    {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': DESKTOP_UA,
+        'x-tikwmapi-key': key,
+      },
+      redirect: 'follow',
+    },
+    30000,
+    cfg
+  );
+  const text = await res.text().catch(() => '');
+  if (!res.ok) {
+    if (res.status === 429 || /quota|kuota/i.test(text)) {
+      archivePostsBlockedUntil = Date.now() + ARCHIVE_QUOTA_COOLDOWN_MS;
+    }
+    const snippet = text.replace(/\s+/g, ' ').slice(0, 180);
+    throw new Error(`tikwmapi HTTP ${res.status}${snippet ? `: ${snippet}` : ''}`);
+  }
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error('tikwmapi: respons bukan JSON');
+  }
+  if (!json || json.code !== 0) {
+    const msg = (json && (json.msg || json.message)) || 'respons tidak valid';
+    if (/quota|kuota/i.test(msg)) archivePostsBlockedUntil = Date.now() + ARCHIVE_QUOTA_COOLDOWN_MS;
+    throw new Error(`tikwmapi: ${msg}`);
+  }
+  return extractVideoArray(json);
+}
+
+/**
+ * Video terbaru dalam bentuk yang dipakai alert ALYA MD. Mengembalikan null
+ * bila API tidak memberi video, supaya monitor bisa jatuh ke jalur lain.
+ */
+async function fetchTikwmApiComLatest(unique, cfg = {}) {
+  const items = await postsTikwmApiCom(cfg, unique, 1);
+  if (!items.length) return null;
+  const v = items[0] || {};
+  const id = String(v.video_id || v.aweme_id || v.id || '').trim();
+  if (!id) return null;
+  const author = v.author || {};
+  const username = normalizeAccountish(author.unique_id || author.uniqueId || unique);
+  const title = String(v.title || v.desc || v.caption || '').trim();
+  const createTime = Number(v.create_time || v.createTime || 0);
+  const hashtags = (title.match(/#[\w\u0590-\u05ff]+/g) || []).map((tag) => tag.toLowerCase());
+  return {
+    id,
+    title,
+    url: `https://www.tiktok.com/@${username}/video/${id}`,
+    cover: v.cover || v.origin_cover || v.dynamic_cover || null,
+    createTime,
+    takenAt: createTime
+      ? new Date(createTime * 1000).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
+      : null,
+    views: String(v.play_count || 0),
+    likes: String(v.digg_count || 0),
+    hashtags,
+  };
+}
+
 async function postsTikwm(cfg, unique) {
   let lastError = null;
   for (const host of TIKWM_HOSTS) {
@@ -406,7 +500,8 @@ async function postsTikwm(cfg, unique) {
 /** Apakah user sudah mengisi API berbayar/custom untuk daftar upload? */
 function hasConfiguredPostsApi(cfg = {}) {
   return Boolean(
-    cfg.tiktokApiUrl ||
+    TIKWM_API_KEY ||
+      cfg.tiktokApiUrl ||
       cfg.tikhubApiKey ||
       cfg.tiktokApi23Key ||
       cfg.ensigApiUrl
@@ -420,6 +515,7 @@ function hasConfiguredPostsApi(cfg = {}) {
  */
 async function fetchUserPostsApi(unique, cfg = {}) {
   const providers = [
+    ['tikwmapi', postsTikwmApiCom],
     ['custom', postsCustom],
     ['tikhub', postsTikHub],
     ['tiktok-api23', postsApi23],
@@ -444,6 +540,130 @@ async function fetchUserPostsApi(unique, cfg = {}) {
   const err = new Error(errors.join(' | ') || 'gagal mengambil video TikTok');
   err.waf = waf;
   throw err;
+}
+
+// ---------- profil, pencarian, dan tikwm (ALYA MD) ----------
+async function archiveRequestJson(url, cfg, label, extraHeaders = {}, timeoutMs = 10000) {
+  const res = await tiktokFetch(
+    url,
+    {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': DESKTOP_UA,
+        ...extraHeaders,
+      },
+      redirect: 'follow',
+    },
+    timeoutMs,
+    cfg
+  );
+  if (!res.ok) throw new Error(`${label} HTTP ${res.status}`);
+  return res.json().catch(() => {
+    throw new Error(`${label}: respons bukan JSON`);
+  });
+}
+
+/**
+ * Profil TikTok lewat api.saipulanuar.eu.org dengan cadangan nexray. Bentuk
+ * hasilnya sengaja disamakan dengan ALYA MD supaya monitor bisa memakai
+ * videoCount, followers, likes, bio, dan avatar untuk alert.
+ */
+async function fetchTikTokUser(account, cfg = {}) {
+  const username = normalizeAccountish(account);
+  if (!username) throw new Error('username TikTok kosong');
+
+  try {
+    const json = await archiveRequestJson(
+      `${ARCHIVE_STALK_URL}?username=${encodeURIComponent(username)}`,
+      cfg,
+      'stalk TikTok'
+    );
+    if (json && json.status === true && json.result) return json.result;
+  } catch {
+    /* lanjut ke cadangan nexray */
+  }
+
+  const json = await archiveRequestJson(
+    `${NEXRAY_BASE}stalker/tiktok?username=${encodeURIComponent(username)}`,
+    cfg,
+    'nexray stalk TikTok'
+  );
+  if (!json || !json.status || !json.result) {
+    const err = new Error(`akun @${username} tidak ditemukan`);
+    err.notFound = true;
+    throw err;
+  }
+  const r = json.result;
+  const stats = r.stats || {};
+  return {
+    username: r.username || username,
+    nickname: r.name || r.username || username,
+    signature: r.bio || '-',
+    createTime: r.create_time
+      ? new Date(r.create_time * 1000).toLocaleString('id-ID')
+      : '-',
+    verified: r.verified || 'Unknown',
+    privateAccount: r.private === 'Yes' ? 'Private Account' : 'Public Account',
+    followers: stats.raw_followers ?? 0,
+    followings: stats.raw_following ?? 0,
+    hearts: stats.raw_likes ?? 0,
+    heartsCount: stats.raw_likes ?? 0,
+    videoCount: stats.raw_videos ?? 0,
+    diggCount: 0,
+    profile: {
+      avatarLarger: r.avatar || null,
+      avatarMedium: r.avatar || null,
+      avatarThumb: r.avatar || null,
+    },
+  };
+}
+
+/** POST https://www.tikwm.com/api/ persis seperti scraper ALYA MD. */
+async function tikwm(link, cfg = {}) {
+  const res = await tiktokFetch(
+    'https://www.tikwm.com/api/',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        Origin: 'https://www.tikwm.com',
+        Referer: 'https://www.tikwm.com/',
+        'User-Agent': DESKTOP_UA,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: new URLSearchParams({ url: String(link || ''), hd: '1' }),
+    },
+    30000,
+    cfg
+  );
+  const text = await res.text().catch(() => '');
+  if (!res.ok) throw new Error(`tikwm HTTP ${res.status}`);
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error('tikwm: respons bukan JSON');
+  }
+  if (!json || json.code !== 0 || !json.data) {
+    throw new Error(`tikwm: ${(json && (json.msg || json.message)) || 'gagal mengambil data'}`);
+  }
+  return json.data;
+}
+
+/** Pencarian TikTok lewat guaikei.com (fitur pencarian ALYA MD). */
+async function tiktokSearch(keyword, cfg = {}) {
+  const q = String(keyword || '').trim();
+  if (!q) throw new Error('kata kunci kosong');
+  const url =
+    'https://www.guaikei.com/api/tiktok/search?keyword=' +
+    encodeURIComponent(q) +
+    '&sort=0&limit=10';
+  const json = await archiveRequestJson(url, cfg, 'tiktok search', {}, 30000);
+  const results = (json && (json.results || json.data)) || [];
+  if (!Array.isArray(results) || !results.length) {
+    throw new Error('tiktok search: tidak ada hasil');
+  }
+  return results;
 }
 
 // ---------- provider info video (download) ----------
@@ -590,7 +810,12 @@ async function infoJina(cfg, link) {
   return media;
 }
 
-async function infoTikwm(cfg, link) {
+async function infoTikwmPost(cfg, link) {
+  const data = await tikwm(link, cfg);
+  return extractMedia(data);
+}
+
+async function infoTikwmGet(cfg, link) {
   let lastError = null;
   for (const host of TIKWM_HOSTS) {
     try {
@@ -615,11 +840,14 @@ async function fetchVideoInfoApi(link, cfg = {}) {
   // sebelum akhirnya jatuh ke TikWM.
   const providers = [
     ['local', infoLocal],
+    // Scraper ALYA MD: POST tikwm.com/api/ (paling dekat dengan implementasi
+    // archive), lalu provider custom/berbayar sebagai cadangan.
+    ['tikwm', infoTikwmPost],
     ['custom', infoCustom],
     ['tikhub', infoTikHub],
     ['tiktok-api23', infoApi23],
     ['ensig', infoEnsig],
-    ['tikwm', infoTikwm],
+    ['tikwm-get', infoTikwmGet],
     ['tiklydown', infoTiklydown],
     // Fallback terakhir: halaman diambil server Jina, jadi bebas WAF IP panel.
     ['jina', infoJina],
@@ -670,4 +898,9 @@ module.exports = {
   infoJina,
   fetchUserPostsApi,
   fetchVideoInfoApi,
+  postsTikwmApiCom,
+  fetchTikwmApiComLatest,
+  fetchTikTokUser,
+  tikwm,
+  tiktokSearch,
 };

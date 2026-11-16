@@ -29,6 +29,15 @@ let handler = async (m, { sock, text, command, jid, reply, example }) => {
             return reply('Foto grup berhasil diubah.')
         }
 
+        if (command === 'getppgc') {
+            let url = null
+            try {
+                url = await sock.profilePictureUrl(jid, 'image')
+            } catch {}
+            if (!url) return reply('Grup ini belum memasang foto profil.')
+            return sock.sendMessage(jid, { image: { url }, caption: '📷 Foto profil grup ini.' }, { quoted: m })
+        }
+
         // ephemeral
         const value = EPHEMERAL[(text || '').trim().toLowerCase()]
         if (value === undefined) return example('1d | 7d | 90d | off')
@@ -39,7 +48,7 @@ let handler = async (m, { sock, text, command, jid, reply, example }) => {
     }
 }
 
-handler.command = ['setting', 'setnamegc', 'ephemeral', 'setdescgc', 'setppgc']
+handler.command = ['setting', 'setnamegc', 'ephemeral', 'setdescgc', 'setppgc', 'getppgc']
 handler.as = 'setnamegc'
 handler.tags = ['group']
 handler.group = true

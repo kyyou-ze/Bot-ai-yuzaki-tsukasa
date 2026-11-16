@@ -616,13 +616,36 @@ const DEFS = [
   {
     key: 'TIKTOK_CHECK_MIN',
     group: 'tiktok',
-    label: 'Interval cek detector (menit)',
+    label: 'Interval cadangan untuk tampilan status (menit)',
     type: 'int',
     min: 1,
     max: 1440,
     default: 3,
     apply: (cfg, v) => {
       cfg.tiktokCheckMin = v;
+    },
+  },
+  {
+    key: 'TIKTOK_POLL_MS',
+    group: 'tiktok',
+    label: 'Interval monitor TikTok (milidetik, min 10000)',
+    type: 'int',
+    min: 10000,
+    max: 3600000,
+    default: 30000,
+    apply: (cfg, v) => {
+      cfg.tiktokPollMs = v;
+    },
+  },
+  {
+    key: 'TIKTOK_TIKWMAPI_KEY',
+    group: 'tiktok',
+    label: 'Kunci api.tikwmapi.com (opsional)',
+    type: 'string',
+    allowEmpty: true,
+    default: '',
+    apply: (cfg, v) => {
+      cfg.tiktokTikwmApiKey = String(v || '').trim();
     },
   },
   {

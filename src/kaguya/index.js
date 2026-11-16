@@ -913,9 +913,9 @@ function categoryBox(cat, prefix, page = 1) {
   const sliced = pageOf(cat.commands, page);
   const head = `╭─〔 ${upper(cat.label)} 〕`;
   const body = sliced.items.length
-    ? sliced.items.map((cmd) => `│ ${prefix}${cmd}`).join('\n')
-    : '│ (kosong)';
-  return `${head}\n${body}\n╰──────────`;
+    ? sliced.items.map((cmd) => `│ ◦ ${prefix}${cmd}`).join('\n')
+    : '│ ◦ (kosong)';
+  return `${head}${body ? `\n${body}` : ''}\n╰──────────`;
 }
 
 function formatCategory(cat, prefix, page) {
@@ -924,16 +924,19 @@ function formatCategory(cat, prefix, page) {
   return `${categoryBox(cat, prefix, page)}\n\n${footer}`;
 }
 
-function menuHeader({ userName, uptime, prefix, total }) {
+function menuHeader({ userName, uptime, prefix, total, status, mode }) {
   const botName = (configured && configured.botName) || 'Tsukasa';
-  return [
-    `╭─〔 ${botName} 〕`,
-    `│ User: ${userName || '-'}`,
-    `│ Runtime: ${uptime || '-'}`,
-    `│ Prefix: ${prefix || '.'}`,
-    `│ Total Cmd: ${total}`,
-    '╰──────────',
-  ].join('\n');
+  const lines = [
+    `╭─〔 ${upper(botName)} 〕`,
+    `│ Halo, *${userName || 'pengguna'}*`,
+    '│',
+    `│ › Status  : ${status || 'Public'}`,
+    `│ › Mode    : ${mode || 'Private'}`,
+    `│ › Total   : ${total} fitur`,
+    `│ › Runtime : ${uptime || '-'}`,
+    `│ › Prefix  : ${prefix || '.'}`,
+  ];
+  return [...lines, '╰──────────'].join('\n');
 }
 
 function buildMenuPages(features, prefix, header) {
@@ -955,17 +958,23 @@ function buildMenuPages(features, prefix, header) {
   return pages;
 }
 
-function formatMainMenu(features, { prefix, userName, uptime, page }) {
+function formatMainMenu(features, { prefix, userName, uptime, page, status, mode }) {
   const p = prefix || '.';
   const header = menuHeader({
     userName,
     uptime,
     prefix: p,
     total: totalCommands(features),
+    status,
+    mode,
   });
   const pages = buildMenuPages(features, p, header);
   const current = Math.min(pages.length, Math.max(1, Number(page) || 1));
-  const lines = [pages[current - 1], '', `${p}menu <kategori> • ${p}menu all • ${p}menu cari <kata>`];
+  const lines = [
+    pages[current - 1],
+    '',
+    `${p}menu <kategori> • ${p}menu all • ${p}menu cari <kata>`,
+  ];
   if (pages.length > 1) {
     const nav = [];
     if (current > 1) nav.push(`sebelumnya: ${p}menu ${current - 1}`);
@@ -977,12 +986,13 @@ function formatMainMenu(features, { prefix, userName, uptime, page }) {
 
 function formatAllIndex(prefix, features) {
   const lines = [];
-  lines.push(`${features.length} kategori • ${totalCommands(features)} command`);
+  lines.push(`› Total kategori : ${features.length}`);
+  lines.push(`› Total command  : ${totalCommands(features)}`);
   for (const group of groupCategories(features)) {
     lines.push('');
     lines.push(`《 ${upper(group.label)} 》`);
     for (const cat of group.items) {
-      lines.push(`${prefix}menu ${cat.key} — ${cat.label} (${cat.count})`);
+      lines.push(`◦ ${prefix}menu ${cat.key} — ${cat.label} (${cat.count})`);
     }
   }
   return box('INDEKS MENU', lines, [
@@ -1039,16 +1049,17 @@ function formatSearch(query, prefix, features) {
   return box(`CARI: ${oneLine(query, 24)}`, results, footer);
 }
 
-function formatMenu({ category, isOwner, prefix, builtinCategories, userName, uptime }) {
+function formatMenu({ category, isOwner, prefix, builtinCategories, userName, uptime, status, mode }) {
   const raw = String(category || '').trim();
   const key = raw.toLowerCase();
   const p = prefix || '.';
   const catalog = getCatalog();
   const builtins = normalizeBuiltins(builtinCategories);
   const features = unifyFeatures(builtins, catalog.categories);
+  const meta = { status, mode };
 
   if (!raw) {
-    return formatMainMenu(features, { prefix: p, userName, uptime });
+    return formatMainMenu(features, { prefix: p, userName, uptime, ...meta });
   }
 
   if (/^\d{1,3}$/.test(key)) {
@@ -1057,6 +1068,7 @@ function formatMenu({ category, isOwner, prefix, builtinCategories, userName, up
       userName,
       uptime,
       page: Number(key),
+      ...meta,
     });
   }
 

@@ -262,7 +262,7 @@ class TikTokAdminFeature {
         [
           '🎬 *Status Detector TikTok*',
           `Status: ${this.statusLine()} • ${list.length} akun`,
-          `Interval: tiap ${Math.max(1, Number(this.cfg.tiktokCheckMin) || 3)} menit`,
+          `Interval: tiap ${health && health.pollSeconds ? health.pollSeconds : Math.max(1, Number(this.cfg.tiktokCheckMin) || 3) * 60} detik`,
           `Scraper: ${health ? health.scraper : this.cfg.tiktokScraperMode || 'auto'} • lokal ${
             (health ? health.localEnabled : this.cfg.tiktokLocalEnabled !== false) ? 'on' : 'off'
           }`,
@@ -317,10 +317,9 @@ class TikTokAdminFeature {
     await this.reply(
       m,
       on
-        ? `🎬 Detector *diaktifkan*. ${list.length} akun dipantau.\nVideo baru akan dicek tiap ±${Math.max(
-            1,
-            Number(this.cfg.tiktokCheckMin) || 3
-          )} menit.`
+        ? `🎬 Detector *diaktifkan*. ${list.length} akun dipantau.\nVideo baru akan dicek tiap ±${Math.round(
+            (Number(this.cfg.tiktokPollMs) || 30000) / 1000
+          )} detik.`
         : '🎬 Detector *dimatikan*. Tidak ada pengecekan sampai /detector on.'
     );
   }

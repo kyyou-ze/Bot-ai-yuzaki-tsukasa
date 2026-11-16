@@ -201,11 +201,9 @@ async function main() {
       if (cfg.tiktokMonitorEnabled && waReady) tiktokMonitor.start();
       else tiktokMonitor.stop();
     }
-    if (key === 'TIKTOK_CHECK_MIN') {
-      if (cfg.tiktokMonitorEnabled && waReady) {
-        tiktokMonitor.stop();
-        tiktokMonitor.start();
-      }
+    if (key === 'TIKTOK_CHECK_MIN' || key === 'TIKTOK_POLL_MS') {
+      if (cfg.tiktokMonitorEnabled && waReady) tiktokMonitor.reconfigure();
+      else tiktokMonitor.stop();
     }
     if (key === 'AUTO_UPDATE_ENABLED' || key === 'AUTO_UPDATE_CHECK_MIN') {
       if (waReady) updater.reschedule();

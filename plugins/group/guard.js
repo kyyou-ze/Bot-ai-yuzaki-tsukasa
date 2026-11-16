@@ -241,7 +241,13 @@ let handler = async (m, { sock, text, command, prefix, jid, reply }) => {
 
 handler.command = [
   'guard', 'antilink', 'antidelete', 'antiedit', 'antispam', 'antisticker', 'antiswgc', 'antitagsw',
-  'antitoxic', 'antiviewonce', 'autoreply', 'disable', 'enable', 'guardtest', 'notiflevel'
+  'antitoxic', 'antiviewonce', 'autoreply', 'disable', 'enable', 'guardtest', 'notiflevel',
+  // Fitur tambahan guardplus. Ditulis literal supaya terbaca katalog menu
+  // (daftar fitur aslinya tetap diambil dari PLUS_FEATURES).
+  'antivirtex', 'antiforward', 'antitag', 'antipromo', 'antimedia', 'antibot',
+  'antiphishing', 'slowmode', 'antiraid', 'antiasing', 'antipromote',
+  // Fitur ALYA yang dipertahankan: mode admin-only, anti-rejoin, auto sticker.
+  'adminonly', 'antirejoin', 'autosticker'
 ]
 handler.as = 'antilink'
 // tetap bisa dipanggil langsung, tapi tidak ditampilkan di menu (cukup .enable / .disable)
@@ -251,8 +257,10 @@ handler.group = true
 // pengaturan penjaga hanya untuk admin grup (owner otomatis lolos)
 handler.admin = true
 
-// fitur tambahan
-handler.command.push(...PLUS_FEATURES)
+// fitur tambahan (nama tetap sinkron dengan guardplus)
+for (const feature of PLUS_FEATURES) {
+  if (!handler.command.includes(feature)) handler.command.push(feature)
+}
 handler.hide.push(...PLUS_FEATURES)
 
 export default handler

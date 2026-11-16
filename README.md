@@ -32,7 +32,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **AI Tool Calling** — Saat mengobrol, AI bisa memilih aksi sendiri: mengirim sticker sesuai mood, memberi reaksi emoji, membuat gambar, membuat pengingat, atau mencari info terbaru di web. Contoh: AI membalas "wkwk" lalu mengirim sticker `lucu`.
 - **Blue Archive & Pap** — `ba` / `!ba` atau kata kunci terkait, `!pap` / `pap`.
 - **TikTok (scraper lokal + multi-API)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Scraper lokal membaca halaman embed TikTok langsung dari panel; kalau embed kena WAF, bot otomatis pindah ke Jina Reader, TikWM, TikHub, tiktok-api23, Ensig, lalu Jina HTML sebagai fallback terakhir. Batas ukuran bisa dikonfigurasi.
-- **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 3 menit, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Sumber utama scraper lokal (embed) sehingga tidak mudah kena WAF. Akun hasil `/verif` otomatis masuk pantauan; kelola lewat `/addakun`, `/delakun`, `/listakun`, `/detector`. Command verif: `/verif`, `/listverif`, `/unverif`, `/me`, `/siapaup`, `/cekup`, `/history` (tanpa argumen menampilkan semua akun; juga bisa `Tsukasa ...` atau `.verif`).
+- **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 30 detik (gaya monitor ALYA MD), cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Sumber utama `api.tikwmapi.com` + profil `api.saipulanuar.eu.org`, dengan scraper lokal (embed) sebagai cadangan. Akun hasil `/verif` otomatis masuk pantauan; kelola lewat `/addakun`, `/delakun`, `/listakun`, `/detector`. Command verif: `/verif`, `/listverif`, `/unverif`, `/me`, `/siapaup`, `/cekup`, `/history` (tanpa argumen menampilkan semua akun; juga bisa `Tsukasa ...` atau `.verif`).
 - **CN TikTok** — `.cn <nama>` menampilkan tiga contoh CN siap pakai dengan nama memakai huruf bold Unicode (tanpa tanda bintang saat disalin): `` `𝙀𝘾𝙉᭄ ``, `ft 𝙀𝘾𝙉`, dan `〆𝙀𝘾𝙉`. Keyword mengikuti `TIKTOK_CN_KEYWORD`.
 - **Reply & Tag Status** — Di chat pribadi bot tetap membalas walaupun pesanmu adalah reply/quote. Di grup, reply ke pesan bot diproses tanpa trigger hanya pada mode `all`/`reply`; di mode `call` bot tetap diam sampai dipanggil `tsukasa`. Tag status WhatsApp yang menyebut bot terdeteksi dan dibalas di chat terkait.
 - **AnimeKita** — `!anime ...` (new/movie/schedule/list/genre/search/detail/episode/roulette). Episode dengan link Pixeldrain bisa diunduh otomatis.
@@ -46,6 +46,8 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **Mode balasan per grup** — Admin grup bisa memilih `.modegrup all|reply|call`. Default `call`: bot hanya membalas saat dipanggil `tsukasa`.
 - **Kontrol panel dari WhatsApp** — Owner bisa cek status, lihat log, menjalankan `npm install`, cek sintaks, dan restart bot langsung dari chat pribadi dengan `.panel`.
 - **Reliability (Tier 5)** — Backup sesi otomatis, reconnect backoff eksponensial, antrean unduhan global, metrik health (`GET /metrics`), notifikasi error ke owner, dan audit command owner (`.backup`, `.audit`).
+- **Fitur tambahan ALYA MD** — Menu bergaya ALYA (header `Halo, *nama*`, status/mode/runtime, indeks kategori `《 ... 》`), 20+ kuis JSON (brainout, caklontong, heroff/heroml, JKT48, drakor, riddle, what/tebak, whoami), 40 sound effect berbasis ffmpeg, serta alias command ALYA yang diarahkan ke fitur Tsukasa yang sudah ada (`.hadir`, `.gclink`, `.casino`, `.tf`, `.block`, `.groups`, dan lainnya). Detail ada di bagian **Fitur tambahan dari ALYA MD**.
+- **Penjaga grup tambahan** — Selain antilink/antispam/antisticker, tersedia `.adminonly` (hanya admin yang bisa memakai bot), `.antirejoin` (member yang keluar tidak bisa langsung masuk lagi), `.autosticker` (foto/video otomatis jadi sticker), `.antivirtex`, `.antiforward`, `.antipromo`, `.antiphishing`, `.antimedia`, `.antibot`, `.slowmode`, `.antiraid`, `.antiasing`, dan `.antipromote`.
 - **TagAll**, **RVO**, **Welcome**, **Owner features**.
 - **HTTP API** — `GET /`, `GET /healthz`, `GET /help`, `POST/GET /send` dengan `X-API-Key` + rate limit.
 
@@ -80,15 +82,33 @@ Bot ini memakai **arsitektur bridge**: inti bot tetap milik Tsukasa, sedangkan p
 Catatan:
 - Semua fitur tampil sebagai fitur Tsukasa. Tidak ada pemisahan “fitur Tsukasa” dan “fitur Kaguya”.
 - Nama kategori yang sama (`anime`, `sticker`, `tools`) otomatis digabung menjadi satu kategori.
-- `.menu` menampilkan bentuk katalog; `.help` menampilkan panduan dan cara pakai.
+- `.menu` memakai tampilan bergaya ALYA MD: sapaan `Halo, *nama*`, ringkasan `› Status / Mode / Total / Runtime / Prefix`, daftar kategori dengan penanda `◦`, dan indeks `《 GROUP 》` yang dipaginasi. Setelah menu utama, bot mengirim **voice note menu** dari `assets/menu/menu-music.mp3` (bisa dimatikan dengan `MENU_AUDIO=false`).
 - Banner menu berbentuk **kartu preview** (`contextInfo.externalAdReply`) dalam **satu pesan** dengan menu. Gambar besar, judul, dan deskripsi tampil sebagai banner; **URL tidak ditulis** di badan pesan.
-- Gambar diambil dari `MENU_IMAGE_URL` (cadangan: `PROMO_IMAGE_URL`, lalu gambar bawaan). WhatsApp mengunduh gambar langsung dari URL tersebut, jadi URL harus bisa diakses publik (HTTPS).
+- Gambar banner diambil berurutan dari `MENU_IMAGE_PATH` (file lokal, relatif ke root repo atau path `~`), `MENU_IMAGE_URL`, `PROMO_IMAGE_URL`, lalu banner bawaan di `assets/menu/banner-tsukasa.png`. File lokal otomatis diresize dengan `sharp` bila tersedia agar tetap di bawah batas thumbnail WhatsApp.
+- Aset menu/kuis ALYA ada di `assets/menu` (banner, preview video/webp, musik) dan `assets/quiz` (JSON soal). Banner bawaan sudah diganti dengan banner Tsukasa, bukan banner ALYA.
 - `sourceUrl` kartu sengaja dikosongkan agar tidak ada baris link/domain yang ikut tampil. Kalau nanti ingin kartu bisa diklik, isi `sourceUrl` di `src/menubanner.js`.
-- Kalau banner tidak muncul, jalankan `.menu banner` (owner) untuk memeriksa URL gambar yang dipakai.
+- Kalau banner tidak muncul, jalankan `.menu banner` (owner) untuk memeriksa sumber gambar lokal/URL yang dipakai.
 - Command plugin bisa dipakai dengan prefix `.`, `!`, `/`, atau trigger `tsukasa`.
 - Fitur grup yang dimatikan lewat `.fitur off` otomatis hilang dari katalog `.menu` dan `.help`.
 - Database plugin memakai JSON (`global.dbEngine = 'json'`) agar tidak wajib compile SQLite native.
 - Registrasi Kaguya dimatikan; plugin langsung bisa dipakai tanpa `.daftar`.
+
+### Fitur tambahan dari ALYA MD
+
+Beberapa fitur ALYA MD digabung ke arsitektur Tsukasa, bukan ditambahkan sebagai command duplikat:
+
+- **Menu & aset** — Tampilan menu, preview video/webp, musik menu, dan banner diambil dari ALYA lalu banner-nya diganti dengan banner Tsukasa (`assets/menu/banner-tsukasa.png`).
+- **Kuis JSON** — Soal dari `assets/quiz` dipakai oleh engine kuis Tsukasa. Command: `.brainout`, `.caklontong`, `.heroff`, `.heroml`, `.jkt48`, `.drakor`, `.riddle`, `.whatchemistry`, `.whatword`, `.whoami`, `.tebakff`, `.tebakml`, `.tekateki`. Jawab dengan membalas pesan soal; `.hint` dan `.nyerah` juga berlaku untuk kuis.
+- **Sound effect** — 40 efek audio ala ALYA (filter ffmpeg) dikirim sebagai voice note opus lewat ffmpeg/`FFMPEG_PATH`. Contoh: `.bass`, `.nightcore`, `.robot`, `.8d`, `.earrape`, `.chipmunk`, `.deep`, `.slow`, `.echo`, `.reverb`. Daftar lengkap ada di menu kategori `tools`.
+- **Alias ALYA** — Nama command ALYA yang fungsinya sudah ada diarahkan ke command Tsukasa, bukan diduplikasi. Contoh main/RPG: `.hadir` → `.absen`, `.rekapabsen` → `.topabsen`, `.casino` → `.slot`, `.battle` → `.duel`, `.tf`/`.transfer`/`.pay` → transfer bank, `.dino` → `.dinorun`, `.calculator`/`.kalkulator` → `.calc`, `.chess` → `.catur`, `.joke`/`.jok`/`.joks`/`.lucu` → `.jokes`, `.lyric` → `.lirik`, `.kerja` → `.work`. Contoh grup/owner: `.gclink`/`.linkgroup`/`.grouplink` → `.linkgc`, `.add` → `.addmember`, `.setgcname`/`.setgcdesc`/`.setgcpp`, `.groups` → `.listgc`, `.ppgc`/`.getppgroup`/`.getppgc` untuk foto profil grup, `.everyone`/`.totag` → `.tagall`, `.ht` → `.hidetag`, `.setclose`/`.setopen` → `.closegc`/`.opengc`, `.cekbayar`/`.claimprem` → `.cekprem`, `.backupsc`, `.arti`, `.rent`. `.ai <pertanyaan>` memakai LLM yang sama dengan persona Tsukasa.
+- **Tag & jadwal grup** — `.tagall`/`.everyone`/`.totag`, `.hidetag`/`.ht`, `.opengc`/`.closegc`/`.setopen`/`.setclose`, plus `.delclose`/`.delopen` untuk membatalkan jadwal tutup/buka otomatis tanpa mengubah status grup.
+- **Kata-kata** — `.katabucin`/`.bucin` dan `.katagalau`/`.galau`/`.katasedih` mengirim satu kalimat bucin atau galau acak.
+- **Cek kadar (fun)** — `.cekalim`, `.cekcabul`, `.cekpacar`, `.cekpanjang`, `.cektahanlama`: hasil acak yang lucu, target bisa tag/reply/diri sendiri.
+- **Utilitas teks & data** — `.morse <teks>` dan `.dmorse <kode>` (dua arah), `.text2qr`/`.qrtext` (teks/link jadi gambar QR), `.quoted`/`.q` (kirim ulang isi pesan yang di-reply, termasuk media), `.couple`/`.cp` (pasangan acak member grup), `.listbanned` (user banned) dan `.listtoxic` (daftar kata anti-toxic grup).
+- **Info server** — `.disk`, `.ram`, `.run`, `.statistic`, `.server` menampilkan pemakaian disk/RAM, runtime, jumlah user/grup, dan kondisi OS tanpa API eksternal.
+- **Detektor hashtag TikTok** — `.tthashtag`/`.tthastag`/`.detecthashtag`/`.hastag` untuk cek hashtag dari link, atau `.tthashtag on [#tag ...]` / `.tthashtag off` untuk mengatur target hashtag grup. Target ini dipakai juga oleh notifikasi detector TikTok.
+- **Penjaga grup** — `.adminonly`, `.antirejoin`, dan `.autosticker` dijalankan langsung oleh router Tsukasa. Fitur penjaga lain memakai `.enable`/`.disable` atau nama fiturnya langsung, mis. `.antibot on`, `.antiforward on`, `.slowmode 10`, `.antiraid set 8 2`.
+- **Tidak diporting** — Fitur ALYA yang bergantung pada API/key tidak tepercaya atau sudah mati (fake maker, `am`/`amprem`, aktivator premium, `antiporn` berbasis API) sengaja tidak dipasang. Command yang tidak punya padanan dan tidak aman tidak ditambahkan agar tidak ada fitur "menu saja" yang error saat dipakai.
 
 ### Promosi otomatis
 
@@ -97,7 +117,7 @@ Setelah bot terhubung, `src/promo.js` menjadwalkan promosi web + nomor bot ke gr
 - Grup diambil dari `groupFetchAllParticipating()`, lalu dikirim **bergiliran** maksimal `PROMO_MAX_PER_RUN` grup per putaran. Putaran berikutnya melanjutkan dari grup setelahnya, jadi semua grup kebagian tanpa dibom sekaligus.
 - Ada jeda `PROMO_SEND_DELAY_SEC` + jitter acak 0-4 detik antar grup.
 - Jadwal terakhir disimpan di `database/promo.json`, jadi restart/reconnect tidak langsung mengirim promosi lagi.
-- Pesan memakai kartu banner (`externalAdReply`) bila `PROMO_IMAGE_URL` atau `MENU_IMAGE_URL` terisi.
+- Pesan memakai kartu banner (`externalAdReply`) bila `MENU_IMAGE_PATH`, `MENU_IMAGE_URL`, atau `PROMO_IMAGE_URL` terisi.
 - Template bisa diubah lewat `PROMO_MESSAGE` dengan placeholder `{bot}`, `{url}`, `{number}`.
 - Owner bisa cek `.promo`, mematikan sementara `.promo off`, atau mengirim sekarang `.promo now`.
 
@@ -200,6 +220,11 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `HTTP_CORS_ORIGIN` | `*` | Origin yang diizinkan membaca HTTP API. Isi domain landing page untuk membatasi |
 | `PROMO_ENABLED` | `true` | Promosi otomatis web + nomor bot ke grup |
 | `PROMO_URL` | `https://tsukasabot-md.vercel.app` | Link web yang dipromosikan |
+| `MENU_IMAGE_PATH` | `assets/menu/banner-tsukasa.png` | Banner menu dari file lokal (relatif root repo, path absolut, atau `~`). Prioritas di atas URL |
+| `MENU_IMAGE_URL` | - | Banner menu dari URL publik (cadangan kedua) |
+| `PROMO_IMAGE_URL` | - | Thumbnail banner promosi; kosong = ikut `MENU_IMAGE_PATH`/`MENU_IMAGE_URL` |
+| `MENU_AUDIO` | `true` | Kirim voice note menu setelah pesan menu utama (gaya ALYA MD) |
+| `MENU_AUDIO_PATH` | `assets/menu/menu-music.mp3` | File audio menu; dikonversi ke opus/ogg lewat ffmpeg agar tampil sebagai VN |
 | `PROMO_INTERVAL_HOURS` | `6` | Jarak antar promosi otomatis |
 | `PROMO_MAX_PER_RUN` | `20` | Batas grup per putaran; sisanya digilir |
 | `PROMO_SEND_DELAY_SEC` | `8` | Jeda antar grup (ditambah jitter 0-4 detik) |
@@ -224,11 +249,13 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `TIKTOK_ACCOUNTS` | `@rinorstr` | Akun TikTok yang dipantau (pisahkan koma) |
 | `TIKTOK_CN_KEYWORD` | `ECN` | Keyword CN yang dicari di nickname (Unicode dinormalisasi) |
 | `TIKTOK_HASHTAG` | `#margaecn` | Hashtag wajib yang dicek di caption |
-| `TIKTOK_CHECK_MIN` | `3` | Interval cek video baru (menit) |
+| `TIKTOK_CHECK_MIN` | `3` | Interval cadangan untuk tampilan status (menit) |
+| `TIKTOK_POLL_MS` | `30000` | Interval monitor TikTok ala ALYA MD (milidetik, minimum 10000) |
+| `TIKTOK_TIKWMAPI_KEY` | key bawaan ALYA MD | Override kunci `api.tikwmapi.com` bila kuota bawaan habis |
 | `TIKTOK_NOTIFY_JID` | - | JID grup tujuan notifikasi tambahan (bisa diubah dari WhatsApp lewat `/detector setgc`) |
 | `TIKTOK_API_URL` | - | Endpoint scraper sendiri dengan placeholder `{username}` & `{count}` (opsional) |
 | `TIKTOK_API_KEY` | - | API key untuk `TIKTOK_API_URL` (opsional) |
-| `TIKTOK_SCRAPER_MODE` | `auto` | `auto` = scraper lokal dulu lalu fallback; `local` = hanya lokal; `api` = hanya API/Jina |
+| `TIKTOK_SCRAPER_MODE` | `auto` | `auto` = API ALYA MD → lokal → Jina; `local` = hanya lokal; `api` = hanya API/Jina |
 | `TIKTOK_LOCAL_ENABLED` | `true` | Aktifkan scraper TikTok lokal (embed creator, tanpa WAF/API key) |
 | `TIKTOK_LOCAL_TIMEOUT_SEC` | `30` | Timeout request scraper lokal (detik) |
 | `TIKTOK_EMBED_HOSTS` | `https://www.tiktok.com,https://m.tiktok.com` | Host embed yang dicoba bergantian saat salah satu kena WAF/DNS |
@@ -432,7 +459,7 @@ Contoh yang sering dipakai:
 !config set ANIME_DL_CONCURRENCY 1
 !config set ANIME_EP_MAX_MB 190
 !config set TIKTOK_MONITOR_ENABLED on
-!config set TIKTOK_CHECK_MIN 3
+!config set TIKTOK_POLL_MS 30000
 ```
 
 Grup setting yang tersedia: `cosplay`, `news`, `channel`, `moderation`, `rate`, `anime`, `tiktok`, `update`. Gunakan `!config list` untuk melihat key lengkapnya.
@@ -440,7 +467,7 @@ Grup setting yang tersedia: `cosplay`, `news`, `channel`, `moderation`, `rate`, 
 Catatan:
 - Perintah ini **khusus owner**. Admin grup tetap memakai perintah grup seperti `!antilink`, `!antispam`, `!jadwal`, `!mute`, dan `!resetwarn`.
 - Nilai dari chat disimpan terpisah dari `.env`. Jika ingin kembali ke isi `.env`, gunakan `!config reset KEY`.
-- Mengubah `ANIME_CHANNEL_ENABLED`, `ANIME_CHANNEL_INTERVAL_MIN`, `ANIME_CHANNEL_JID`, `TIKTOK_MONITOR_ENABLED`, dan `TIKTOK_CHECK_MIN` langsung diterapkan ke scheduler yang sedang berjalan.
+- Mengubah `ANIME_CHANNEL_ENABLED`, `ANIME_CHANNEL_INTERVAL_MIN`, `ANIME_CHANNEL_JID`, `TIKTOK_MONITOR_ENABLED`, `TIKTOK_CHECK_MIN`, dan `TIKTOK_POLL_MS` langsung diterapkan ke scheduler yang sedang berjalan.
 
 ## Auto-update GitHub ke Pterodactyl
 
@@ -770,33 +797,49 @@ AI_TOOLS_SEARCH=true
 
 ## Detector TikTok & Verif ACC
 
-Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTOK_CHECK_MIN` menit. Akun dicek satu per satu dengan jeda acak 2-5 detik.
+Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTOK_POLL_MS` (default 30 detik, gaya monitor ALYA MD). Akun dicek satu per satu dengan jeda 1,5 detik. Deteksi memakai dua jalur: daftar video terbaru dan kenaikan `videoCount` profil, jadi upload baru tetap terdeteksi walau endpoint daftar video sedang kena kuota/WAF.
 
-**Scraper lokal (utama).** Bot membaca `https://www.tiktok.com/embed/@username` langsung dari server panel. Halaman embed ini di-render oleh TikTok dan berisi JSON lengkap (nickname, bio, caption, cover, URL video), jadi **lebih jarang terkena WAF** daripada halaman profil biasa, tanpa API key dan tanpa signature. Ini membuat detector tetap jalan walau halaman profil biasa diblokir. Kalau `www.tiktok.com` sedang kena WAF/DNS dari IP panel, bot otomatis mencoba host cadangan `m.tiktok.com` (atur urutannya lewat `TIKTOK_EMBED_HOSTS`) sebelum pindah ke sumber lain. Atur lewat `TIKTOK_SCRAPER_MODE`:
+**Scraper ALYA MD (utama).** Daftar upload diambil dari `api.tikwmapi.com/user/posts` dengan header `x-tikwmapi-key` (bisa diganti lewat `TIKTOK_TIKWMAPI_KEY`). Profil diambil dari `api.saipulanuar.eu.org/api/stalk/tiktok` dengan cadangan `api.nexray.web.id`, dipakai untuk statistik alert (followers, likes, total video) dan deteksi kenaikan jumlah video. Kalau kuota `api.tikwmapi.com` habis (HTTP 429), endpoint itu diistirahatkan 10 menit lalu rantai cadangan dipakai. Atur lewat `TIKTOK_SCRAPER_MODE`:
 
-- `auto` (default): scraper lokal dulu; kalau gagal, lanjut ke API/Jina yang dikonfigurasi.
+- `auto` (default): API ALYA MD → scraper lokal → Jina → HTML.
 - `local`: hanya scraper lokal (paling hemat kuota). Kalau embed benar-benar diblokir WAF, bot tetap memakai Jina sebagai cadangan darurat agar detector tidak mati.
 - `api`: lewati scraper lokal dan pakai rantai API/Jina seperti konfigurasi lama.
 
-Cadangan bila scraper lokal gagal: endpoint custom/TikHub/tiktok-api23/Ensig (kalau diisi) → Jina Reader (markdown) → Jina HTML (embed) → TikWM → scraping profil langsung. Kalau semua sumber kena 403/WAF, bot berhenti selama `TIKTOK_WAF_COOLDOWN_MIN` menit dan hanya menulis satu log `[TIKTOK] WAF block, retry 10 menit`. Untuk tiap video baru, bot mengecek:
+Cadangan: custom/TikHub/tiktok-api23/Ensig (kalau diisi) → TikWM `www.tikwm.com/api/user/posts` → Jina Reader (markdown) → Jina HTML (embed) → scraping profil langsung. Kalau semua sumber kena 403/WAF, bot berhenti selama `TIKTOK_WAF_COOLDOWN_MIN` menit dan hanya menulis satu log `[TIKTOK] WAF block, retry 10 menit`. Untuk tiap video baru, bot mengecek:
 
-- Caption mengandung hashtag `TIKTOK_HASHTAG` (default `#margaecn`, case-insensitive).
+- Caption mengandung hashtag target grup (`#margaecn` default, case-insensitive).
 - Nickname/display name akun mengandung `TIKTOK_CN_KEYWORD` (default `ECN`). Huruf Unicode seperti `𝙀𝘾𝙉`, `〆𝙀𝘾𝙉`, dan `ft 𝙀𝘾𝙉` otomatis dinormalisasi jadi `ECN` sebelum dicocokkan.
 
-Notifikasi otomatis dikirim **hanya ke grup** yang sudah memverifikasi ACC terkait (plus grup tambahan dari `TIKTOK_NOTIFY_JID`/`/detector setgc`). Bot mencoba mengirim cover video sebagai gambar preview; kalau cover gagal diunduh, notifikasi jatuh ke teks biasa. Nama peng-verif di-tag memakai nomor WhatsApp-nya. Formatnya:
+Notifikasi otomatis dikirim **hanya ke grup** yang sudah memverifikasi ACC terkait (plus grup tambahan dari `TIKTOK_NOTIFY_JID`/`/detector setgc`). Format alert mengikuti monitor ALYA MD: avatar profil sebagai gambar, statistik akun, status hashtag, link video, dan nama grup tujuan. Kalau avatar/cover gagal diunduh, notifikasi jatuh ke teks biasa. Nama peng-verif di-tag memakai nomor WhatsApp-nya. Contoh:
 
 ```text
-🎬 Tsukasa Detector
-👤 UP: @rinorstr (Rinor ECN)
-ACC: ECN
-📌 #margaecn - Ada ✅
-📌 CN ECN - Cocok ✅
-📝 Caption: ...
-🔗 https://www.tiktok.com/@rinorstr/video/...
+🔔 [ NOTIFIKASI TIKTOK REAL-TIME ] 🔔
+
+Halo member *Nama Grup*! Akun TikTok terverifikasi baru saja mengupload video baru! 🎬🚀
+
+👤 Akun: @rinorstr
+📛 Nickname: Rinor ECN
+🎬 Total Video: 120 (+1 video baru)
+👥 Followers: 12.345
+❤️ Total Likes: 98.765
+*Deskripsi*: ...
+*Hashtags*: #margaecn
+*Status Hashtag*: Sesuai Target (#margaecn)
+
+🎬 Link Video Terbaru (VT):
+👉 https://www.tiktok.com/@rinorstr/video/...
+
+🔗 Profil TikTok:
+👉 https://www.tiktok.com/@rinorstr
+
+━━━━━━━━━━━━━━━━━━━━━
+📢 Group Target: Nama Grup
+📅 Tanggal: 15 November 2026
+⏰ Waktu: 10.00.00 WIB
 🙋 UP oleh: @62812xxxxxxx
 ```
 
-Kalau caption tidak memuat hashtag, statusnya `❎` dan bot menambahkan peringatan agar uploader melengkapi hashtag tersebut.
+Kalau caption tidak memuat hashtag target, status hashtag menunjukkan `Tidak Sesuai Target`/`Tanpa Hashtag`.
 
 Command verif (bisa ` / `, `.`, `!`, atau diawali `Tsukasa`):
 
@@ -838,6 +881,8 @@ Tanpa edit `.env` dan tanpa restart:
 `/addakun` di grup tidak perlu admin karena dasarnya sama dengan `/verif`. Di chat pribadi, hanya owner yang bisa menambah pantauan. `/delakun` di grup khusus admin grup/owner dan hanya menghapus verifikasi grup tersebut; akun tetap dipantau jika masih terverifikasi di grup lain. Saat startup, semua akun yang pernah diverifikasi disinkronkan otomatis ke daftar pantauan.
 
 `/detector setgc` menyimpan `TIKTOK_NOTIFY_JID` dan langsung berlaku tanpa restart. Notifikasi tetap dikirim ke grup yang punya akun terverifikasi; grup tambahan ini berguna kalau ingin semua laporan UP masuk ke satu grup pantauan.
+
+Target hashtag grup bisa diatur langsung dari WhatsApp lewat `.tthashtag on #preset #alightmotion` dan dimatikan dengan `.tthashtag off`. `.tthashtag <link tiktok>` menampilkan hashtag dari video tertentu. Target dari grup ini dipakai detector saat menandai apakah caption video baru sudah memakai hashtag yang diminta, dan tidak menimpa target per-akun hasil `/verif`.
 
 Daftar akun disimpan di `data/tiktok/accounts.json`. Selama file itu belum punya daftar akun, bot memakai `TIKTOK_ACCOUNTS` dari `.env`. Begitu ada `/addakun`, `/verif`, atau `/delakun`, daftar di file JSON yang menjadi acuan.
 
@@ -955,7 +1000,7 @@ Admin grup (dan owner) bisa mengubah pesan sambutan saat anggota baru masuk dan 
 ```
 
 - Template boleh **multi-baris**: kirim pesan dengan Enter/Shift+Enter setelah `.welcome set`, atau tulis `\n` di tengah teks.
-- Di atas pesan sambutan/perpisahan ada blok bergaya menu (`╭─〔 Tsukasa 〕 ... ╰──────────`). Banner memakai kartu `externalAdReply` dengan gambar dari `MENU_IMAGE_URL` / `PROMO_IMAGE_URL`; URL tidak ditulis ke badan pesan.
+- Di atas pesan sambutan/perpisahan ada blok bergaya menu (`╭─〔 Tsukasa 〕 ... ╰──────────`). Banner memakai kartu `externalAdReply` dengan gambar dari `MENU_IMAGE_PATH` / `MENU_IMAGE_URL` / `PROMO_IMAGE_URL`; URL tidak ditulis ke badan pesan.
 - Placeholder: `{mentions}` (tag semua peserta), `{user}`/`{name}` (nama), `{group}` (nama grup), `{count}` (jumlah peserta).
 - Template default bisa diatur lewat env `WELCOME_TEXT` / `GOODBYE_TEXT`; override per grup menang atas default.
 - Perubahan langsung berlaku tanpa restart karena disimpan di `tsukasa_state.json`.

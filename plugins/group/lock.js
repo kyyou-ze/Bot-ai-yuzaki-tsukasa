@@ -70,6 +70,21 @@ for (const [jid, g] of Object.entries(global.db?.groups || {})) {
 
 let handler = async (m, { sock, text, command, jid, reply }) => {
     migrateTimers()
+
+    // delclose / delopen: batalkan jadwal otomatis tanpa mengubah status grup.
+    if (command === 'delclose' || command === 'delopen') {
+        const action = command === 'delopen' ? 'open' : 'close'
+        const timer = getTimer(jid)
+        if (!timer || timer.action !== action) {
+            return reply(action === 'open' ? 'Tidak ada jadwal buka otomatis untuk grup ini.' : 'Tidak ada jadwal tutup otomatis untuk grup ini.')
+        }
+        clearTimeout(timers.get(jid))
+        timers.delete(jid)
+        setTimer(jid, null)
+        saveTimers()
+        return reply(action === 'open' ? '🗓️ Jadwal buka otomatis dibatalkan.' : '🗓️ Jadwal tutup otomatis dibatalkan.')
+    }
+
     const open = command === 'opengc'
     const ms = parseDuration(text)
 
@@ -100,7 +115,7 @@ let handler = async (m, { sock, text, command, jid, reply }) => {
     return reply(`${open ? '🔓 Grup dibuka' : '🔒 Grup ditutup'} selama ${label(ms)}.\nOtomatis ${next === 'open' ? 'dibuka' : 'ditutup'} lagi: ${formatWib(at)}`)
 }
 
-handler.command = ['lock', 'opengc', 'closegc']
+handler.command = ['lock', 'opengc', 'closegc', 'delclose', 'delopen']
 handler.as = 'opengc'
 handler.tags = ['group']
 handler.group = true

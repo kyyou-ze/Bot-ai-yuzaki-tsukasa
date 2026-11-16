@@ -91,6 +91,7 @@ function helpMessage() {
     '!config set ANIME_EP_MAX_MB 190',
     '!config set TIKTOK_MONITOR_ENABLED on|off',
     '!config set TIKTOK_CHECK_MIN 3',
+    '!config set TIKTOK_POLL_MS 30000',
     '',
     '*Tampilan*',
     '!config set MENU_IMAGE_URL https://contoh.com/banner.jpg',

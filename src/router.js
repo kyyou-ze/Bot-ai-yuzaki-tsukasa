@@ -35,6 +35,7 @@ const emotion = require('./emotion');
 const memory = require('./memory');
 const wa = require('./wa');
 const menuBanner = require('./menubanner');
+const menuAudio = require('./menuaudio');
 const { isGroupJid, jidUser, formatDateTime, splitChatBubbles } = require('./util');
 
 // ── Gerbang sewa ──────────────────────────────────────────────────────────
@@ -918,6 +919,16 @@ class Router {
 
   async handleGroupParticipantsUpdate(ev) {
     try {
+      const action = String(ev?.action || '').toLowerCase();
+      if (action === 'add' || action === 'remove') {
+        const guardplus = await import('../lib/group/guardplus.js');
+        if (action === 'remove') await guardplus.plusLeave(this.sock, ev);
+        else await guardplus.plusJoin(this.sock, ev);
+      }
+    } catch (err) {
+      log.error('[GUARDPLUS] update peserta:', err.message);
+    }
+    try {
       await this.welcome.handle(this.sock, ev);
     } catch (err) {
       log.error('[WELCOME] error:', err.message);
@@ -1041,6 +1052,30 @@ class Router {
       return;
     }
 
+    // Mode admin-only (fitur ALYA): hanya admin grup dan owner yang dilayani.
+    // Owner sudah lolos di atas; member biasa diabaikan tanpa spam balasan.
+    if (isGroupJid(chat) && global.db?.groups?.[chat]?.adminonly?.on && !isOwner) {
+      const isGroupAdmin = await this.peraturan
+        .isAdmin(this.sock, chat, sender)
+        .catch(() => false);
+      if (!isGroupAdmin) {
+        if (isCmd) {
+          this.adminOnlyNoticeAt = this.adminOnlyNoticeAt || new Map();
+          const last = this.adminOnlyNoticeAt.get(chat) || 0;
+          if (Date.now() - last > 5 * 60 * 1000) {
+            this.adminOnlyNoticeAt.set(chat, Date.now());
+            if (this.adminOnlyNoticeAt.size > 500) {
+              this.adminOnlyNoticeAt.delete(this.adminOnlyNoticeAt.keys().next().value);
+            }
+            await wa
+              .sendText(chat, '🔒 Grup ini memakai mode *admin-only*. Hanya admin grup yang bisa memakai bot.', m)
+              .catch(() => {});
+          }
+        }
+        return;
+      }
+    }
+
     // AFK: cabut status saat user aktif kembali, dan beri tahu jika ada
     // member AFK yang di-mention/di-reply. Command .afk/.back dikecualikan.
     if (!(isCmd && AfkFeature.isCommand(cmdName))) {
@@ -1052,6 +1087,26 @@ class Router {
     // tetapi teks berawalan "!" yang bukan perintah tetap ikut dimoderasi.
     if (!knownCmd && !isOwner && isGroupJid(chat) && !kaguya.hasCommand(cmdName)) {
       if (await this.guard.handleMessage(this.sock, m, content, origTxt)) return;
+    }
+
+    // Auto sticker (fitur ALYA): foto/video member otomatis jadi sticker.
+    // Hanya untuk pesan biasa tanpa caption perintah, supaya `.sticker`
+    // tidak menghasilkan dua sticker.
+    if (!isCmd && isGroupJid(chat) && global.db?.groups?.[chat]?.autosticker?.on) {
+      const mtype = wa.contentTypeOf(content);
+      if (mtype === 'imageMessage' || mtype === 'videoMessage') {
+        try {
+          const guardplus = await import('../lib/group/guardplus.js');
+          await guardplus.autoSticker(this.sock, {
+            chat,
+            type: mtype,
+            quoted: m,
+            download: () => wa.downloadMedia(m),
+          });
+        } catch (err) {
+          log.error('[AUTOSTICKER]', err.message);
+        }
+      }
     }
 
     // Perintah verif/UP dan kelola akun detector (bisa tanpa trigger di grup).
@@ -1321,7 +1376,12 @@ class Router {
         return;
       }
 
-      if (bang.cmd === 'help' || bang.cmd === 'menu') {
+      if (
+        bang.cmd === 'help' ||
+        bang.cmd === 'menu' ||
+        bang.cmd === 'allmenu' ||
+        bang.cmd === 'livemenu'
+      ) {
         const usedPrefix = /^[.!/]/.test(origTxt) ? origTxt[0] : '.';
         const builtinCategories = featureList()
           .filter((f) => !isGroupJid(chat) || this.store.isFeatureEnabled(chat, f.key))
@@ -1335,7 +1395,7 @@ class Router {
           }))
           .filter((f) => f.commands.length);
 
-        if (bang.cmd === 'menu') {
+        if (bang.cmd === 'menu' || bang.cmd === 'allmenu' || bang.cmd === 'livemenu') {
           // Diagnostik banner: `.menu banner` (khusus owner). Pesan ini juga
           // membawa kartu banner supaya hasilnya bisa langsung dilihat.
           if (isOwner && /^banner$/i.test(String(bang.rest || '').trim())) {
@@ -1354,8 +1414,9 @@ class Router {
             };
             const lines = ['╭─〔 TES BANNER 〕'];
             lines.push(`│ Mode   : ${i.mode || 'externalAdReply'}`);
-            lines.push(`│ Gambar : ${i.thumbnailUrl ? 'siap' : 'kosong'}`);
+            lines.push(`│ Gambar : ${i.thumbnailUrl || i.imageUrl ? 'siap' : 'kosong'}`);
             if (i.thumbnailUrl) lines.push(`│ URL    : ${short(i.thumbnailUrl, 60)}`);
+            else if (i.imageUrl) lines.push(`│ Sumber : ${short(i.imageUrl, 60)}`);
             if (i.linkUrl) lines.push(`│ Link   : ${short(i.linkUrl, 60)}`);
             if (i.error) lines.push(`│ Error  : ${i.error}`);
             lines.push('╰──────────');
@@ -1363,7 +1424,7 @@ class Router {
             lines.push(
               report.ok
                 ? 'Banner siap. Kartu di pesan ini dikirim lewat externalAdReply; URL tidak ditulis di badan menu.'
-                : 'Banner belum siap. Isi MENU_IMAGE_URL dengan direct URL gambar (https).'
+                : 'Banner belum siap. Isi MENU_IMAGE_PATH (file lokal) atau MENU_IMAGE_URL (https).'
             );
             await wa.sendText(chat, lines.join('\n'), m, undefined, sample);
             return;
@@ -1377,6 +1438,8 @@ class Router {
             userName:
               memory.getUserName(sender) || String(m.pushName || '').trim() || jidUser(sender),
             uptime: this.formatUptime(process.uptime()),
+            status: (this.cfg && this.cfg.mode) || 'Public',
+            mode: isGroupJid(chat) ? 'Group' : 'Private',
           });
 
           let menuText =
@@ -1408,6 +1471,13 @@ class Router {
           }
 
           await wa.sendText(chat, menuText, m, undefined, banner);
+
+          // Menu utama diikuti voice note singkat (gaya ALYA MD). Bisa
+          // dimatikan lewat MENU_AUDIO=false atau ganti file lewat
+          // MENU_AUDIO_PATH. Kegagalan audio tidak menggagalkan menu.
+          if (!String(bang.rest || '').trim()) {
+            await menuAudio.sendMenuAudio(this.sock, chat, m).catch(() => false);
+          }
           return;
         }
 
