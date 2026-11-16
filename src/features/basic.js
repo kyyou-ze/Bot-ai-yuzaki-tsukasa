@@ -287,7 +287,7 @@ class WelcomeHandler {
     try {
       const content = { text: body, mentions };
       if (preview) content.contextInfo = { externalAdReply: preview };
-      await sock.sendMessage(chat, content);
+      await wa.sendMessage(chat, content);
       log.info(
         `[GREETING] ${kind} ${mentions.length} peserta di ${chat} (${conf.custom ? 'custom' : 'default'})`
       );
@@ -394,7 +394,7 @@ class WelcomeHandler {
       const preview = await this.banner(kind, group);
       const content = { text: body, mentions: [actor] };
       if (preview) content.contextInfo = { externalAdReply: preview };
-      await sock.sendMessage(chat, content);
+      await wa.sendMessage(chat, content);
       return true;
     }
 

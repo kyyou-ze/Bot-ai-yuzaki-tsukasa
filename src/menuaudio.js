@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const wa = require('./wa');
 
 const DEFAULT_PATH = 'assets/menu/menu-music.mp3';
 const MAX_BYTES = 16 * 1024 * 1024;
@@ -162,10 +163,10 @@ async function sendMenuAudio(sock, jid, quoted) {
   }
 
   try {
-    await sock.sendMessage(
+    await wa.sendMessage(
       jid,
       { audio, mimetype, ptt, ...(ptt ? {} : { fileName: path.basename(file) }) },
-      quoted ? { quoted } : undefined
+      quoted || null
     );
     return true;
   } catch (err) {

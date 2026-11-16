@@ -30,7 +30,57 @@ const NEXRAY_BASE = 'https://api.nexray.web.id/';
 // Kunci bawaan ALYA MD bisa kehabisan kuota. Setelah 429, jangan panggil
 // endpoint itu tiap akun/tiap tick; beri cooldown supaya monitor tetap cepat.
 const ARCHIVE_QUOTA_COOLDOWN_MS = 10 * 60 * 1000;
+const ARCHIVE_QUOTA_COOLDOWN_MAX_MS = 60 * 60 * 1000;
+const PROVIDER_COOLDOWN_MS = 10 * 60 * 1000;
+const PROVIDER_COOLDOWN_MAX_MS = 60 * 60 * 1000;
 let archivePostsBlockedUntil = 0;
+let archiveQuotaStrikes = 0;
+const providerBlockedUntil = new Map();
+const providerStrikes = new Map();
+
+/** Deteksi error kuota/rate-limit supaya tidak dianggap error fatal. */
+function isRateLimitError(err) {
+  if (!err) return false;
+  if (err.rateLimited) return true;
+  if (Number(err.status) === 429) return true;
+  return /kuota|quota|rate.?limit|too many requests|limit exceeded|cooldown sementara/i.test(
+    String(err.message || err)
+  );
+}
+
+function providerBlocked(name, now = Date.now()) {
+  return (providerBlockedUntil.get(name) || 0) > now;
+}
+
+function blockProvider(name, ms = PROVIDER_COOLDOWN_MS) {
+  const strikes = (providerStrikes.get(name) || 0) + 1;
+  providerStrikes.set(name, strikes);
+  const wait = Math.min(
+    PROVIDER_COOLDOWN_MAX_MS,
+    Math.max(ms, ms * 2 ** Math.min(3, strikes - 1))
+  );
+  providerBlockedUntil.set(name, Date.now() + wait);
+  return wait;
+}
+
+function clearProviderBlock(name) {
+  providerBlockedUntil.delete(name);
+  providerStrikes.delete(name);
+}
+
+function isArchivePostsBlocked(now = Date.now()) {
+  return archivePostsBlockedUntil > now;
+}
+
+function blockArchivePosts(ms = ARCHIVE_QUOTA_COOLDOWN_MS) {
+  archiveQuotaStrikes += 1;
+  const wait = Math.min(
+    ARCHIVE_QUOTA_COOLDOWN_MAX_MS,
+    Math.max(ms, ms * 2 ** Math.min(3, archiveQuotaStrikes - 1))
+  );
+  archivePostsBlockedUntil = Date.now() + wait;
+  return wait;
+}
 
 // ---------- proxy rotation ----------
 // Proxy memakai ProxyAgent dari paket undici. Paket undici bersifat opsional:
@@ -408,8 +458,10 @@ async function postsEnsig(cfg, unique) {
  * saat scraper lokal/Jina sedang diblokir.
  */
 async function postsTikwmApiCom(cfg, unique, count = DEFAULT_COUNT) {
-  if (Date.now() < archivePostsBlockedUntil) {
-    throw new Error('tikwmapi: kuota habis, cooldown sementara');
+  if (isArchivePostsBlocked()) {
+    const err = new Error('tikwmapi: kuota habis, tunggu cooldown');
+    err.rateLimited = true;
+    throw err;
   }
   const key = String((cfg && cfg.tiktokTikwmApiKey) || TIKWM_API_KEY).trim();
   const url =
@@ -431,10 +483,12 @@ async function postsTikwmApiCom(cfg, unique, count = DEFAULT_COUNT) {
   const text = await res.text().catch(() => '');
   if (!res.ok) {
     if (res.status === 429 || /quota|kuota/i.test(text)) {
-      archivePostsBlockedUntil = Date.now() + ARCHIVE_QUOTA_COOLDOWN_MS;
+      blockArchivePosts();
     }
     const snippet = text.replace(/\s+/g, ' ').slice(0, 180);
-    throw new Error(`tikwmapi HTTP ${res.status}${snippet ? `: ${snippet}` : ''}`);
+    const err = new Error(`tikwmapi HTTP ${res.status}${snippet ? `: ${snippet}` : ''}`);
+    if (res.status === 429) err.status = 429;
+    throw err;
   }
   let json;
   try {
@@ -444,9 +498,12 @@ async function postsTikwmApiCom(cfg, unique, count = DEFAULT_COUNT) {
   }
   if (!json || json.code !== 0) {
     const msg = (json && (json.msg || json.message)) || 'respons tidak valid';
-    if (/quota|kuota/i.test(msg)) archivePostsBlockedUntil = Date.now() + ARCHIVE_QUOTA_COOLDOWN_MS;
-    throw new Error(`tikwmapi: ${msg}`);
+    if (/quota|kuota|limit/i.test(msg)) blockArchivePosts();
+    const err = new Error(`tikwmapi: ${msg}`);
+    if (/quota|kuota|limit/i.test(msg)) err.rateLimited = true;
+    throw err;
   }
+  archiveQuotaStrikes = 0;
   return extractVideoArray(json);
 }
 
@@ -499,8 +556,12 @@ async function postsTikwm(cfg, unique) {
 
 /** Apakah user sudah mengisi API berbayar/custom untuk daftar upload? */
 function hasConfiguredPostsApi(cfg = {}) {
+  // Jangan hitung kunci bawaan tikwmapi: kunci publik itu sering kehabisan
+  // kuota dan justru membuat monitor mengirim request sia-sia tiap tick.
+  // Tanpa konfigurasi eksplisit, archive hanya dipakai sebagai cadangan
+  // setelah scraper lokal/Jina gagal.
   return Boolean(
-    TIKWM_API_KEY ||
+    String((cfg && cfg.tiktokTikwmApiKey) || '').trim() ||
       cfg.tiktokApiUrl ||
       cfg.tikhubApiKey ||
       cfg.tiktokApi23Key ||
@@ -511,10 +572,11 @@ function hasConfiguredPostsApi(cfg = {}) {
 /**
  * Ambil daftar upload dari beberapa API. Provider yang tidak dikonfigurasi
  * (mengembalikan null) dilewati. Error 403/WAF di satu provider tidak
- * menghentikan provider berikutnya.
+ * menghentikan provider berikutnya. Provider yang kena kuota/429 dilewati
+ * selama cooldown supaya tidak membanjiri API dan memicu blokir.
  */
 async function fetchUserPostsApi(unique, cfg = {}) {
-  const providers = [
+  const allProviders = [
     ['tikwmapi', postsTikwmApiCom],
     ['custom', postsCustom],
     ['tikhub', postsTikHub],
@@ -522,23 +584,39 @@ async function fetchUserPostsApi(unique, cfg = {}) {
     ['ensig', postsEnsig],
     ['tikwm', postsTikwm],
   ];
+  const providers = allProviders.filter(([name]) => !providerBlocked(name));
+
+  if (!providers.length) {
+    const err = new Error('semua sumber daftar video sedang cooldown');
+    err.rateLimited = true;
+    throw err;
+  }
 
   const errors = [];
   let waf = false;
+  let limited = 0;
 
   for (const [name, fn] of providers) {
     try {
       const items = await fn(cfg, unique);
       if (items === null) continue;
+      clearProviderBlock(name);
       return { items, provider: name };
     } catch (err) {
       if (isWafError(err)) waf = true;
+      if (isRateLimitError(err)) {
+        limited += 1;
+        blockProvider(name);
+      }
       errors.push(`${name}: ${err.message}`);
     }
   }
 
   const err = new Error(errors.join(' | ') || 'gagal mengambil video TikTok');
   err.waf = waf;
+  // Semua provider yang dicoba kena kuota/rate-limit: jangan diperlakukan
+  // sebagai error fatal oleh monitor.
+  if (limited && limited === providers.length) err.rateLimited = true;
   throw err;
 }
 
@@ -572,27 +650,46 @@ async function fetchTikTokUser(account, cfg = {}) {
   const username = normalizeAccountish(account);
   if (!username) throw new Error('username TikTok kosong');
 
-  try {
-    const json = await archiveRequestJson(
-      `${ARCHIVE_STALK_URL}?username=${encodeURIComponent(username)}`,
-      cfg,
-      'stalk TikTok'
-    );
-    if (json && json.status === true && json.result) return json.result;
-  } catch {
-    /* lanjut ke cadangan nexray */
+  if (!providerBlocked('saipulanuar')) {
+    try {
+      const json = await archiveRequestJson(
+        `${ARCHIVE_STALK_URL}?username=${encodeURIComponent(username)}`,
+        cfg,
+        'stalk TikTok'
+      );
+      if (json && json.status === true && json.result) {
+        clearProviderBlock('saipulanuar');
+        return json.result;
+      }
+    } catch (err) {
+      if (isRateLimitError(err)) blockProvider('saipulanuar');
+      /* lanjut ke cadangan nexray */
+    }
   }
 
-  const json = await archiveRequestJson(
-    `${NEXRAY_BASE}stalker/tiktok?username=${encodeURIComponent(username)}`,
-    cfg,
-    'nexray stalk TikTok'
-  );
+  if (providerBlocked('nexray')) {
+    const err = new Error('profil TikTok: semua sumber sedang cooldown');
+    err.rateLimited = true;
+    throw err;
+  }
+
+  let json;
+  try {
+    json = await archiveRequestJson(
+      `${NEXRAY_BASE}stalker/tiktok?username=${encodeURIComponent(username)}`,
+      cfg,
+      'nexray stalk TikTok'
+    );
+  } catch (err) {
+    if (isRateLimitError(err)) blockProvider('nexray');
+    throw err;
+  }
   if (!json || !json.status || !json.result) {
     const err = new Error(`akun @${username} tidak ditemukan`);
     err.notFound = true;
     throw err;
   }
+  clearProviderBlock('nexray');
   const r = json.result;
   const stats = r.stats || {};
   return {
@@ -891,6 +988,8 @@ module.exports = {
   readViaJina,
   fillTemplate,
   isWafError,
+  isRateLimitError,
+  isArchivePostsBlocked,
   hasConfiguredPostsApi,
   extractVideoArray,
   extractMedia,

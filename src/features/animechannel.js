@@ -462,7 +462,7 @@ Aturan:
 
     if (!mode) {
       try {
-        await sock.sendMessage(jid, { text: caption });
+        await wa.sendText(jid, caption);
         mode = 'text';
       } catch (err) {
         log.warn('[ANIME] Kirim teks gagal, coba raw newsletter:', err.message);
@@ -487,11 +487,7 @@ Aturan:
           timeoutMs: 20000,
         });
         const cap = i === 0 ? caption : `📸 Foto ${i + 1}/${total}`;
-        await sock.sendMessage(jid, {
-          image: got.data,
-          caption: cap,
-          mimetype: got.mime,
-        });
+        await wa.sendImage(jid, got.data, cap, null, got.mime);
         sent += 1;
       } catch (err) {
         log.warn(`[ANIME] Gambar ${i + 1}/${total} gagal:`, err.message);
@@ -516,7 +512,12 @@ Aturan:
       attrs: { to: jid, id, type: 'text' },
       content: [{ tag: 'plaintext', attrs: {}, content: bytes }],
     };
-    await sock.query(node);
+    await wa.setPresence('composing', jid);
+    try {
+      await sock.query(node);
+    } finally {
+      await wa.setPresence('paused', jid);
+    }
   }
 
   async _cosplayUrls() {

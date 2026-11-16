@@ -128,8 +128,8 @@ function load() {
     tiktokCnKeyword: getenv('TIKTOK_CN_KEYWORD', 'ECN'),
     tiktokHashtag: getenv('TIKTOK_HASHTAG', '#margaecn'),
     tiktokCheckMin: Math.max(1, intEnv(getenv('TIKTOK_CHECK_MIN', '3'), 3)),
-    // Monitor ALYA MD mengecek tiap 30 detik. Bisa diperlambat lewat env.
-    tiktokPollMs: Math.max(10000, intEnv(getenv('TIKTOK_POLL_MS', '30000'), 30000)),
+    // Monitor memeriksa tiap 60 detik agar tidak cepat kena rate-limit.
+    tiktokPollMs: Math.max(15000, intEnv(getenv('TIKTOK_POLL_MS', '60000'), 60000)),
     // Opsional: ganti kunci api.tikwmapi.com bawaan ALYA MD bila kuotanya habis.
     tiktokTikwmApiKey: getenv('TIKTOK_TIKWMAPI_KEY', ''),
     tiktokNotifyJid: getenv('TIKTOK_NOTIFY_JID', ''),
@@ -320,9 +320,30 @@ function load() {
       Math.min(10, intEnv(getenv('DOWNLOAD_QUEUE_CONCURRENCY', '2'), 2))
     ),
     healthAlertEnabled: boolEnv(getenv('HEALTH_ALERT_ENABLED', 'true'), true),
+    // Mode pasif: bot tetap terhubung untuk menerima perintah, tetapi tidak
+    // mengirim promosi, reminder, notifikasi TikTok, atau alert error sendiri.
+    passiveMode: boolEnv(getenv('BOT_PASSIVE_MODE', getenv('QUIET_MODE', 'false')), false),
+    // Presence: auto = online hanya saat mengirim/mengetik lalu offline;
+    // offline = jangan pernah menandai online; online = perilaku lama.
+    presenceMode: String(getenv('PRESENCE_MODE', 'auto') || 'auto').toLowerCase(),
+    presenceIdleOfflineSec: Math.max(
+      3,
+      intEnv(getenv('PRESENCE_IDLE_OFFLINE_SEC', '8'), 8)
+    ),
+    // Auto-read: tandai pesan masuk sudah dibaca (centang biru). Default hidup.
+    autoRead: boolEnv(getenv('AUTO_READ', 'true'), true),
     healthAlertCooldownSec: Math.max(
       10,
       intEnv(getenv('HEALTH_ALERT_COOLDOWN_SEC', '120'), 120)
+    ),
+    // Batasi alert per tag dan per jam supaya nomor owner/bot tidak dicurigai spam.
+    healthAlertTagCooldownSec: Math.max(
+      60,
+      intEnv(getenv('HEALTH_ALERT_TAG_COOLDOWN_SEC', '900'), 900)
+    ),
+    healthAlertMaxPerHour: Math.max(
+      1,
+      intEnv(getenv('HEALTH_ALERT_MAX_PER_HOUR', '6'), 6)
     ),
     auditLogEnabled: boolEnv(getenv('AUDIT_LOG_ENABLED', 'true'), true),
     auditLogPath: path.resolve(getenv('AUDIT_LOG_PATH', 'database/audit.log')),

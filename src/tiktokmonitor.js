@@ -10,6 +10,8 @@ const {
   tiktokFetch,
   readViaJina,
   isWafError,
+  isRateLimitError,
+  isArchivePostsBlocked,
   hasConfiguredPostsApi,
   fetchUserPostsApi,
   fetchTikTokUser,
@@ -30,10 +32,22 @@ const START_DELAY_MS = 1500;
 const ACCOUNT_DELAY_MIN_MS = 1500;
 const ACCOUNT_DELAY_MAX_MS = 1500;
 const CAPTION_MAX = 180;
-const DEFAULT_POLL_MS = 30000;
-const PROFILE_CACHE_MS = 25000;
+const DEFAULT_POLL_MS = 60000;
+// Profil (videoCount/avatar) dari API pihak ketiga di-cache 5 menit supaya
+// tidak membanjiri layanan gratis dan tidak cepat kena kuota.
+const PROFILE_CACHE_MS = 5 * 60 * 1000;
 // Error yang sama tidak perlu ditulis tiap 3 menit; cukup sekali per 10 menit.
 const ERROR_LOG_EVERY_MS = 10 * 60 * 1000;
+// Backoff per akun saat semua sumber gagal/kuota: 2 menit, naik maksimal 30.
+const ACCOUNT_BACKOFF_BASE_MS = 2 * 60 * 1000;
+const ACCOUNT_BACKOFF_MAX_MS = 30 * 60 * 1000;
+// Semua sumber kena kuota: istirahat 10 menit, jangan coba tiap tick.
+const QUOTA_COOLDOWN_MS = 10 * 60 * 1000;
+// Jeda antar notifikasi grup supaya tidak dikira spam oleh WhatsApp.
+const NOTIFY_GAP_MIN_MS = 1500;
+const NOTIFY_GAP_MAX_MS = 3500;
+// Batas notifikasi per siklus. Sisanya ditunda ke siklus berikutnya.
+const MAX_NOTIFY_PER_TICK = 4;
 
 function truncate(value, max) {
   const s = String(value || '').replace(/\s+/g, ' ').trim();
@@ -670,6 +684,15 @@ class TikTokMonitor {
     this.wafLogged = false;
     this.wafCooldownMs =
       Math.max(1, Number(this.cfg.tiktokWafCooldownMin) || 10) * 60 * 1000;
+    // Cooldown kuota/rate-limit: semua provider sedang diblokir sementara.
+    this.quotaUntil = 0;
+    this.quotaLogged = false;
+    // Backoff per akun supaya akun bermasalah tidak dicoba tiap tick.
+    this.accountBackoff = new Map();
+    this.backoffStrikes = new Map();
+    // Penanda notifikasi yang sudah terkirim (video:grup) agar tidak dobel.
+    this.notified = new Set();
+    this.notifyCount = 0;
     this.lastCheckAt = 0;
     this.lastOkAt = 0;
     this.lastError = '';
@@ -684,7 +707,7 @@ class TikTokMonitor {
       lastCheckAt: this.lastCheckAt,
       lastOkAt: this.lastOkAt,
       lastError: this.lastError,
-      cooldownUntil: this.wafUntil,
+      cooldownUntil: Math.max(this.wafUntil || 0, this.quotaUntil || 0) || 0,
       accounts: this.getAccounts().length,
     };
   }
@@ -699,6 +722,19 @@ class TikTokMonitor {
     }
   }
 
+  enterQuotaCooldown(err) {
+    this.quotaUntil = Date.now() + QUOTA_COOLDOWN_MS;
+    this.lastError = shortError(err) || 'kuota/rate limit TikTok';
+    if (!this.quotaLogged) {
+      log.warn(
+        `[TIKTOK] kuota/rate limit semua sumber, istirahat ${Math.round(
+          QUOTA_COOLDOWN_MS / 60000
+        )} menit (tidak dikirim ke owner)`
+      );
+      this.quotaLogged = true;
+    }
+  }
+
   clearWafCooldown() {
     this.wafUntil = 0;
     this.wafLogged = false;
@@ -707,6 +743,8 @@ class TikTokMonitor {
   logCheckError(account, err) {
     const now = Date.now();
     this.lastError = shortError(err);
+    // Kuota/rate-limit bukan error fatal: jangan memicu notifikasi owner.
+    if (isRateLimitError(err)) return;
     const last = this.errorLogAt.get(account) || 0;
     if (now - last < ERROR_LOG_EVERY_MS) return;
     this.errorLogAt.set(account, now);
@@ -802,14 +840,20 @@ class TikTokMonitor {
     if (!this.isEnabled()) return;
     if (!this.ready()) return;
     if (this.ticking) return;
-    if (Date.now() < this.wafUntil) return;
+    const now = Date.now();
+    if (now < this.wafUntil || now < this.quotaUntil) return;
     if (this.wafUntil) {
       // Cooldown selesai: coba lagi dan izinkan satu log baru kalau masih WAF.
       this.wafUntil = 0;
       this.wafLogged = false;
     }
+    if (this.quotaUntil) {
+      this.quotaUntil = 0;
+      this.quotaLogged = false;
+    }
     this.ticking = true;
-    this.lastCheckAt = Date.now();
+    this.lastCheckAt = now;
+    this.notifyCount = 0;
     try {
       const accounts = this.getAccounts();
       for (let i = 0; i < accounts.length; i += 1) {
@@ -820,11 +864,13 @@ class TikTokMonitor {
               Math.floor(Math.random() * (ACCOUNT_DELAY_MAX_MS - ACCOUNT_DELAY_MIN_MS + 1))
           );
         }
-        if (Date.now() < this.wafUntil) break;
+        if (Date.now() < this.wafUntil || Date.now() < this.quotaUntil) break;
 
         const account = accounts[i];
+        if (this.isAccountBackedOff(account)) continue;
         try {
           await this.checkAccount(account);
+          this.clearAccountBackoff(account);
         } catch (err) {
           if (err && err.waf) {
             this.enterWafCooldown();
@@ -837,12 +883,41 @@ class TikTokMonitor {
             }
             continue;
           }
+          if (isRateLimitError(err)) {
+            this.enterQuotaCooldown(err);
+            break;
+          }
+          this.backoffAccount(account, err);
           this.logCheckError(account, err);
         }
       }
     } finally {
       this.ticking = false;
     }
+  }
+
+  isAccountBackedOff(account) {
+    const until = this.accountBackoff.get(account) || 0;
+    if (!until) return false;
+    if (until > Date.now()) return true;
+    this.accountBackoff.delete(account);
+    return false;
+  }
+
+  backoffAccount(account, err) {
+    const strikes = (this.backoffStrikes.get(account) || 0) + 1;
+    this.backoffStrikes.set(account, strikes);
+    const wait = Math.min(
+      ACCOUNT_BACKOFF_MAX_MS,
+      ACCOUNT_BACKOFF_BASE_MS * 2 ** Math.min(4, strikes - 1)
+    );
+    this.accountBackoff.set(account, Date.now() + wait);
+    log.debug(`[TIKTOK] ${account} backoff ${Math.round(wait / 1000)}s: ${shortError(err)}`);
+  }
+
+  clearAccountBackoff(account) {
+    this.accountBackoff.delete(account);
+    this.backoffStrikes.delete(account);
   }
 
   countKey(account) {
@@ -888,6 +963,7 @@ class TikTokMonitor {
       profile = await this.getProfile(account);
     } catch (err) {
       if (err && err.notFound) throw err;
+      // Kuota/rate-limit profil bukan error fatal: lanjut ke deteksi ID video.
       log.debug(`[TIKTOK] profil @${account} gagal: ${shortError(err)}`);
     }
 
@@ -907,6 +983,10 @@ class TikTokMonitor {
         videos = await fetchUserVideos(account, this.cfg);
       } catch (err) {
         if (err && err.notFound) throw err;
+        if (isRateLimitError(err)) {
+          this.lastError = shortError(err);
+          throw err;
+        }
         this.logCheckError(account, err);
         return;
       }
@@ -1000,28 +1080,30 @@ class TikTokMonitor {
     // MD), lalu daftar video lengkap bila ID-nya belum terlihat.
     let videos = [];
     let latest = null;
-    try {
-      latest = await fetchTikwmApiComLatest(account, this.cfg);
-      if (latest) {
-        videos = normalizeList(
-          [
-            {
-              video_id: latest.id,
-              author: {
-                unique_id: normalizeAccount(account),
-                nickname: profile.nickname,
+    if (!isArchivePostsBlocked()) {
+      try {
+        latest = await fetchTikwmApiComLatest(account, this.cfg);
+        if (latest) {
+          videos = normalizeList(
+            [
+              {
+                video_id: latest.id,
+                author: {
+                  unique_id: normalizeAccount(account),
+                  nickname: profile.nickname,
+                },
+                title: latest.title,
+                create_time: latest.createTime,
+                cover: latest.cover,
+                link: latest.url,
               },
-              title: latest.title,
-              create_time: latest.createTime,
-              cover: latest.cover,
-              link: latest.url,
-            },
-          ],
-          account
-        );
+            ],
+            account
+          );
+        }
+      } catch (err) {
+        log.debug(`[TIKTOK] tikwmapi latest @${account} gagal: ${shortError(err)}`);
       }
-    } catch (err) {
-      log.debug(`[TIKTOK] tikwmapi latest @${account} gagal: ${shortError(err)}`);
     }
 
     let fresh = videos
@@ -1129,6 +1211,11 @@ class TikTokMonitor {
   }
 
   async notify(video, meta = {}) {
+    // Mode pasif: tetap catat history, tetapi jangan kirim notifikasi otomatis.
+    if (this.cfg.passiveMode) {
+      log.info(`[TIKTOK] ${video.username} UP | notifikasi dimatikan (BOT_PASSIVE_MODE)`);
+      return;
+    }
     // Hanya grup yang boleh menerima notifikasi, supaya yang lain tahu siapa
     // yang UP. Map: JID grup -> daftar JID peng-verif untuk di-tag.
     const targets = new Map();
@@ -1156,7 +1243,24 @@ class TikTokMonitor {
     }
 
     const profile = meta.profile || null;
+    let attempted = 0;
     for (const [jid, userMap] of targets) {
+      const dedupeKey = `${video.id}:${jid}`;
+      if (this.notified.has(dedupeKey)) continue;
+      if (this.notifyCount >= MAX_NOTIFY_PER_TICK) {
+        log.warn(
+          `[TIKTOK] batas ${MAX_NOTIFY_PER_TICK} notifikasi per siklus tercapai, sisanya ditunda`
+        );
+        break;
+      }
+      // Jeda antar grup supaya pengiriman tidak terlihat seperti spam.
+      if (attempted > 0) {
+        await sleep(
+          NOTIFY_GAP_MIN_MS +
+            Math.floor(Math.random() * (NOTIFY_GAP_MAX_MS - NOTIFY_GAP_MIN_MS + 1))
+        );
+      }
+      attempted += 1;
       const groupName = (await this.getGroupName(jid)) || meta.groupName || 'grup ini';
       const required = requiredHashtagsFor(this.store, jid, video, this.cfg);
       const hashtagStatus = hashtagStatusFor(video.caption, required);
@@ -1199,9 +1303,25 @@ class TikTokMonitor {
           }
         }
         if (!sent) await wa.sendText(jid, text, null, mentions);
+        this.rememberNotified(dedupeKey);
+        this.notifyCount += 1;
       } catch (err) {
-        log.error(`[TIKTOK] notif ke ${jid} gagal: ${shortError(err)}`);
+        // Jangan log.error: kegagalan kirim bisa memicu alert owner berulang
+        // dan justru menambah risiko pembatasan WhatsApp.
+        log.warn(`[TIKTOK] notif ke ${jid} gagal: ${shortError(err)}`);
       }
+    }
+  }
+
+  rememberNotified(key) {
+    this.notified.add(key);
+    if (this.notified.size <= 1000) return;
+    // Set hanya menyimpan penanda terbaru; 400 entri pertama dibuang.
+    const drop = this.notified.size - 600;
+    let i = 0;
+    for (const item of this.notified) {
+      this.notified.delete(item);
+      if (++i >= drop) break;
     }
   }
 }

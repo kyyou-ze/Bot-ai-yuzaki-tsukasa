@@ -32,7 +32,7 @@ Asisten WhatsApp berkarakter **Tsukasa**: chat AI berpersona (Gemini), jawab gam
 - **AI Tool Calling** — Saat mengobrol, AI bisa memilih aksi sendiri: mengirim sticker sesuai mood, memberi reaksi emoji, membuat gambar, membuat pengingat, atau mencari info terbaru di web. Contoh: AI membalas "wkwk" lalu mengirim sticker `lucu`.
 - **Blue Archive & Pap** — `ba` / `!ba` atau kata kunci terkait, `!pap` / `pap`.
 - **TikTok (scraper lokal + multi-API)** — Kirim link TikTok (vt/vm/m/www) otomatis terunduh (video/slide + audio link). Scraper lokal membaca halaman embed TikTok langsung dari panel; kalau embed kena WAF, bot otomatis pindah ke Jina Reader, TikWM, TikHub, tiktok-api23, Ensig, lalu Jina HTML sebagai fallback terakhir. Batas ukuran bisa dikonfigurasi.
-- **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 30 detik (gaya monitor ALYA MD), cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Sumber utama `api.tikwmapi.com` + profil `api.saipulanuar.eu.org`, dengan scraper lokal (embed) sebagai cadangan. Akun hasil `/verif` otomatis masuk pantauan; kelola lewat `/addakun`, `/delakun`, `/listakun`, `/detector`. Command verif: `/verif`, `/listverif`, `/unverif`, `/me`, `/siapaup`, `/cekup`, `/history` (tanpa argumen menampilkan semua akun; juga bisa `Tsukasa ...` atau `.verif`).
+- **Detector TikTok + Verif ACC** — Pantau video baru dari daftar akun tiap 60 detik, cek hashtag `#margaecn` & CN `ECN`, lalu kirim notifikasi siapa yang UP. Scraper lokal (embed) + Jina jadi sumber utama; API `api.tikwmapi.com` hanya cadangan saat scraper gagal (atau bila `TIKTOK_TIKWMAPI_KEY` diisi). Profil `api.saipulanuar.eu.org` dengan cadangan `api.nexray.web.id` dipakai untuk statistik. Akun hasil `/verif` otomatis masuk pantauan; kelola lewat `/addakun`, `/delakun`, `/listakun`, `/detector`. Command verif: `/verif`, `/listverif`, `/unverif`, `/me`, `/siapaup`, `/cekup`, `/history` (tanpa argumen menampilkan semua akun; juga bisa `Tsukasa ...` atau `.verif`).
 - **CN TikTok** — `.cn <nama>` menampilkan tiga contoh CN siap pakai dengan nama memakai huruf bold Unicode (tanpa tanda bintang saat disalin): `` `𝙀𝘾𝙉᭄ ``, `ft 𝙀𝘾𝙉`, dan `〆𝙀𝘾𝙉`. Keyword mengikuti `TIKTOK_CN_KEYWORD`.
 - **Reply & Tag Status** — Di chat pribadi bot tetap membalas walaupun pesanmu adalah reply/quote. Di grup, reply ke pesan bot diproses tanpa trigger hanya pada mode `all`/`reply`; di mode `call` bot tetap diam sampai dipanggil `tsukasa`. Tag status WhatsApp yang menyebut bot terdeteksi dan dibalas di chat terkait.
 - **AnimeKita** — `!anime ...` (new/movie/schedule/list/genre/search/detail/episode/roulette). Episode dengan link Pixeldrain bisa diunduh otomatis.
@@ -228,6 +228,15 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `PROMO_INTERVAL_HOURS` | `6` | Jarak antar promosi otomatis |
 | `PROMO_MAX_PER_RUN` | `20` | Batas grup per putaran; sisanya digilir |
 | `PROMO_SEND_DELAY_SEC` | `8` | Jeda antar grup (ditambah jitter 0-4 detik) |
+| `PRESENCE_MODE` | `auto` | `auto` = online hanya saat mengetik/mengirim pesan lalu kembali offline; `offline` = tidak pernah online; `online` = selalu online |
+| `PRESENCE_IDLE_OFFLINE_SEC` | `8` | Jeda setelah aktivitas terakhir sebelum status dikembalikan offline (minimum 3) |
+| `AUTO_READ` | `true` | Tandai pesan masuk sudah dibaca (centang biru). Status/story dan channel dilewati |
+| `TYPING_MAX_MS` | `1500` | Durasi maksimal animasi mengetik sebelum setiap pesan keluar (teks, media, poll, sticker) |
+| `BOT_PASSIVE_MODE` | `false` | `true` = bot hanya membalas perintah/panggilan; promo, reminder, notifikasi TikTok, dan alert error otomatis dimatikan |
+| `HEALTH_ALERT_ENABLED` | `true` | Kirim notifikasi error ke owner |
+| `HEALTH_ALERT_COOLDOWN_SEC` | `120` | Jeda minimum antar alert apa pun |
+| `HEALTH_ALERT_TAG_COOLDOWN_SEC` | `900` | Jeda minimum alert untuk tag yang sama |
+| `HEALTH_ALERT_MAX_PER_HOUR` | `6` | Batas jumlah alert per jam |
 | `GEMINI_API_KEYS` / `GEMINI_API_KEY` | - | API key Gemini (bisa koma) — wajib |
 | `GEMINI_TEXT_MODEL` | `gemini-3.5-flash-lite` | Model chat |
 | `ELEVENLABS_API_KEY` / `ELEVENLABS_VOICE_ID` | - | Untuk fitur VN TTS |
@@ -250,8 +259,8 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `TIKTOK_CN_KEYWORD` | `ECN` | Keyword CN yang dicari di nickname (Unicode dinormalisasi) |
 | `TIKTOK_HASHTAG` | `#margaecn` | Hashtag wajib yang dicek di caption |
 | `TIKTOK_CHECK_MIN` | `3` | Interval cadangan untuk tampilan status (menit) |
-| `TIKTOK_POLL_MS` | `30000` | Interval monitor TikTok ala ALYA MD (milidetik, minimum 10000) |
-| `TIKTOK_TIKWMAPI_KEY` | key bawaan ALYA MD | Override kunci `api.tikwmapi.com` bila kuota bawaan habis |
+| `TIKTOK_POLL_MS` | `60000` | Interval monitor TikTok (milidetik, minimum 15000) |
+| `TIKTOK_TIKWMAPI_KEY` | - | Kunci `api.tikwmapi.com` sendiri (opsional; kunci bawaan sering habis kuota) |
 | `TIKTOK_NOTIFY_JID` | - | JID grup tujuan notifikasi tambahan (bisa diubah dari WhatsApp lewat `/detector setgc`) |
 | `TIKTOK_API_URL` | - | Endpoint scraper sendiri dengan placeholder `{username}` & `{count}` (opsional) |
 | `TIKTOK_API_KEY` | - | API key untuk `TIKTOK_API_URL` (opsional) |
@@ -459,7 +468,7 @@ Contoh yang sering dipakai:
 !config set ANIME_DL_CONCURRENCY 1
 !config set ANIME_EP_MAX_MB 190
 !config set TIKTOK_MONITOR_ENABLED on
-!config set TIKTOK_POLL_MS 30000
+!config set TIKTOK_POLL_MS 60000
 ```
 
 Grup setting yang tersedia: `cosplay`, `news`, `channel`, `moderation`, `rate`, `anime`, `tiktok`, `update`. Gunakan `!config list` untuk melihat key lengkapnya.
@@ -797,9 +806,9 @@ AI_TOOLS_SEARCH=true
 
 ## Detector TikTok & Verif ACC
 
-Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTOK_POLL_MS` (default 30 detik, gaya monitor ALYA MD). Akun dicek satu per satu dengan jeda 1,5 detik. Deteksi memakai dua jalur: daftar video terbaru dan kenaikan `videoCount` profil, jadi upload baru tetap terdeteksi walau endpoint daftar video sedang kena kuota/WAF.
+Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTOK_POLL_MS` (default 60 detik). Akun dicek satu per satu dengan jeda 1,5 detik. Profil pihak ketiga di-cache 5 menit agar tidak membanjiri layanan gratis. Deteksi memakai dua jalur: kenaikan `videoCount` profil dan daftar video terbaru, jadi upload baru tetap terdeteksi walau endpoint daftar video sedang kena kuota/WAF.
 
-**Scraper ALYA MD (utama).** Daftar upload diambil dari `api.tikwmapi.com/user/posts` dengan header `x-tikwmapi-key` (bisa diganti lewat `TIKTOK_TIKWMAPI_KEY`). Profil diambil dari `api.saipulanuar.eu.org/api/stalk/tiktok` dengan cadangan `api.nexray.web.id`, dipakai untuk statistik alert (followers, likes, total video) dan deteksi kenaikan jumlah video. Kalau kuota `api.tikwmapi.com` habis (HTTP 429), endpoint itu diistirahatkan 10 menit lalu rantai cadangan dipakai. Atur lewat `TIKTOK_SCRAPER_MODE`:
+**Scraper ALYA MD (cadangan).** Daftar upload dari `api.tikwmapi.com/user/posts` hanya dipakai kalau scraper lokal/Jina gagal, kecuali `TIKTOK_TIKWMAPI_KEY` diisi. Profil diambil dari `api.saipulanuar.eu.org/api/stalk/tiktok` dengan cadangan `api.nexray.web.id`, dipakai untuk statistik alert dan deteksi kenaikan jumlah video. Kalau kuota/429, provider diistirahatkan 10–60 menit, error tidak dikirim ke owner, dan monitor otomatis pindah ke scraper lokal. Atur lewat `TIKTOK_SCRAPER_MODE`:
 
 - `auto` (default): API ALYA MD → scraper lokal → Jina → HTML.
 - `local`: hanya scraper lokal (paling hemat kuota). Kalau embed benar-benar diblokir WAF, bot tetap memakai Jina sebagai cadangan darurat agar detector tidak mati.
@@ -1088,7 +1097,10 @@ Bot menjaga sesi dan koneksi WhatsApp tetap sehat tanpa intervensi manual.
 - **Pemulihan sesi logout** — saat WhatsApp mencabut sesi (401), folder sesi lama dipindahkan ke `session.loggedout-<waktu>` lalu bot masuk alur pairing baru (QR atau `PAIRING_NUMBER`) tanpa restart manual. Dibatasi 5 pemulihan per 10 menit; setelah itu bot berhenti agar tidak menjadi loop. Matikan dengan `SESSION_RESET_ON_LOGOUT=false`.
 - **Antrean unduhan** — unduhan HTTP (`downloadBytes`) dan media WhatsApp (`downloadMedia`) melewati antrean global dengan batas `DOWNLOAD_QUEUE_CONCURRENCY`. Ini mencegah RAM/bandwidth habis saat banyak permintaan berat bersamaan.
 - **Metrik & health** — `.health`, `.status`, dan `GET /metrics` menampilkan jumlah pesan, command, error, reconnect, antrean unduhan, serta status backup. `GET /metrics` mengembalikan JSON.
-- **Notifikasi error owner** — setiap log level `error` dicatat ke metrik dan dikirim ke owner lewat WhatsApp, dibatasi `HEALTH_ALERT_COOLDOWN_SEC` agar tidak spam. Matikan dengan `HEALTH_ALERT_ENABLED=false`.
+- **Notifikasi error owner** — setiap log level `error` dicatat ke metrik dan dikirim ke owner lewat WhatsApp. Alert dibatasi `HEALTH_ALERT_COOLDOWN_SEC`, satu alert per tag per `HEALTH_ALERT_TAG_COOLDOWN_SEC`, dan maksimal `HEALTH_ALERT_MAX_PER_HOUR` per jam. Error kuota/rate-limit/429 tidak dikirim ke WhatsApp. Matikan dengan `HEALTH_ALERT_ENABLED=false` atau `BOT_PASSIVE_MODE=true`.
+- **Presence hemat risiko** — dengan `PRESENCE_MODE=auto` (default), nomor bot tidak tampil online terus-menerus. Status hanya aktif sebentar saat bot mengetik/mengirim, lalu kembali offline setelah `PRESENCE_IDLE_OFFLINE_SEC`. Semua kegiatan otomatis tetap berjalan. Gunakan `offline` untuk tidak pernah menampilkan presence, atau `online` untuk perilaku lama.
+- **Animasi mengetik** — semua pesan keluar (teks, gambar, video, audio/VN, dokumen, sticker, poll) mengirim status `composing` lebih dulu, lalu `paused`. Durasi maksimal diatur `TYPING_MAX_MS` (default 1500 ms).
+- **Auto-read** — `AUTO_READ=true` (default) menandai pesan masuk sebagai sudah dibaca (centang biru). Status/story, channel, dan pesan dari bot sendiri dilewati. Bisa dimatikan lewat `.set AUTO_READ false`.
 - **Audit command owner** — command yang dijalankan owner ditulis ke `AUDIT_LOG_PATH` dalam format JSONL dan dirotasi saat melewati `AUDIT_LOG_MAX_BYTES`. Argumen command sensitif (`config`, `geminikey`, `set`, dll.) otomatis disamarkan. Lihat dengan `.audit [jumlah]`, bersihkan dengan `.audit clear`.
 
 Semua pengaturan di atas juga bisa diubah lewat chat:
@@ -1099,6 +1111,27 @@ Semua pengaturan di atas juga bisa diubah lewat chat:
 .set DOWNLOAD_QUEUE_CONCURRENCY 2
 .set HEALTH_ALERT_ENABLED off
 ```
+
+### Anti-spam WhatsApp
+
+Kalau nomor bot pernah kena pembatasan spam, aktifkan pengaturan aman berikut:
+
+```text
+PRESENCE_MODE=auto
+PRESENCE_IDLE_OFFLINE_SEC=8
+AUTO_READ=true
+TYPING_MAX_MS=1500
+TIKTOK_POLL_MS=60000
+HEALTH_ALERT_TAG_COOLDOWN_SEC=900
+HEALTH_ALERT_MAX_PER_HOUR=6
+BOT_PASSIVE_MODE=false
+```
+
+- `BOT_PASSIVE_MODE=false` tetap menjalankan semua kegiatan normal. Set `true` hanya saat ingin bot benar-benar diam (hanya membalas perintah).
+- Monitor TikTok kini memakai jeda 60 detik, cache profil 5 menit, backoff per akun, dan jeda acak 1,5–3,5 detik antar notifikasi grup.
+- Notifikasi TikTok dibatasi maksimal 4 per putaran dan dideduplikasi per video+grup.
+- Error kuota/rate-limit tidak dikirim ke owner, sehingga tidak memicu pesan berulang.
+- Saat pembatasan masih aktif, sebaiknya hentikan promosi/notifikasi massal 24–72 jam dan uji lewat chat pribadi sebelum grup.
 
 ## HTTP API
 

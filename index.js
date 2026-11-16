@@ -116,6 +116,10 @@ async function main() {
   const updater = new Updater(cfg, {
     appDir: __dirname,
     notify: async (text) => {
+      if (cfg.passiveMode) {
+        log.info(`[UPDATE] ${String(text || '').split('\n')[0]}`);
+        return;
+      }
       const to = ownerTarget(cfg);
       if (!to) return;
       try {
@@ -146,20 +150,44 @@ async function main() {
   const audit = new AuditLog(cfg);
   const promo = new Promo(cfg);
   downloadQueue.setConcurrency(cfg.downloadQueueConcurrency);
+  // Mode pasif: tetap menerima pesan, tetapi tidak mengirim apa pun kecuali
+  // membalas perintah/panggilan. Semua pengirim otomatis dimatikan.
+  const passive = Boolean(cfg.passiveMode);
 
   // Error hook: catat metrik dan kirim notifikasi ke owner dengan cooldown.
   let lastAlertAt = 0;
   let alertInFlight = false;
+  let alertWindowStart = Date.now();
+  let alertWindowCount = 0;
+  const alertTagAt = new Map();
+  // Error kuota/rate-limit bukan masalah yang perlu dilaporkan ke WhatsApp.
+  // Melaporkannya berulang justru berisiko membuat nomor bot kena batasan spam.
+  const ALERT_QUIET_RE =
+    /(kuota|quota|rate.?limit|too many requests|\b429\b|cooldown sementara|waf block)/i;
   log.setErrorHook(({ tag, message }) => {
     metrics.recordError(message, { tag });
     if (isTransientWaError(tag, message)) return;
+    if (ALERT_QUIET_RE.test(String(message || ''))) return;
+    if (passive) return;
     if (!cfg.healthAlertEnabled || alertInFlight || !waReady) return;
     const cooldownMs = Math.max(10, Number(cfg.healthAlertCooldownSec) || 120) * 1000;
     const now = Date.now();
     if (now - lastAlertAt < cooldownMs) return;
+    const tagKey = String(tag || 'APP').toUpperCase();
+    const tagCooldownMs =
+      Math.max(60, Number(cfg.healthAlertTagCooldownSec) || 900) * 1000;
+    if (now - (alertTagAt.get(tagKey) || 0) < tagCooldownMs) return;
+    const maxPerHour = Math.max(1, Number(cfg.healthAlertMaxPerHour) || 6);
+    if (now - alertWindowStart >= 60 * 60 * 1000) {
+      alertWindowStart = now;
+      alertWindowCount = 0;
+    }
+    if (alertWindowCount >= maxPerHour) return;
     const to = ownerTarget(cfg);
     if (!to) return;
     lastAlertAt = now;
+    alertWindowCount += 1;
+    alertTagAt.set(tagKey, now);
     alertInFlight = true;
     const { formatDateTime } = require('./src/util');
     const text = [
@@ -187,7 +215,7 @@ async function main() {
   // Terapkan perubahan !config ke layanan yang sedang berjalan.
   settings.setHook((key) => {
     if (key === 'ANIME_CHANNEL_ENABLED') {
-      if (cfg.animeChannel.enabled && waReady) animeChannel.start();
+      if (cfg.animeChannel.enabled && waReady && !passive) animeChannel.start();
       else animeChannel.stop();
     }
     if (key === 'ANIME_CHANNEL_JID' || key === 'ANIME_CHANNEL_INVITE') {
@@ -288,7 +316,9 @@ async function main() {
       browser: ['Ubuntu', 'Chrome', '22.04.4'],
       syncFullHistory: false,
       generateHighQualityLinkPreview: false,
-      markOnlineOnConnect: true,
+      // Jangan tandai online saat connect. Presence hanya muncul sebentar saat
+      // bot mengetik/mengirim pesan, lalu kembali offline (PRESENCE_MODE=auto).
+      markOnlineOnConnect: String(cfg.presenceMode || 'auto').toLowerCase() === 'online',
       getMessage: async (key) => messageCache.get(key),
       // Baileys v7: pulihkan sesi yang rusak dan simpan pesan terbaru
       // otomatis supaya retry dari penerima bisa dilayani.
@@ -389,17 +419,29 @@ async function main() {
           reconnectTimer = null;
         }
         log.info(`[WA] Terhubung | ${cfg.botName} siap menerima pesan`);
+        // Pastikan status tidak "online" terus-menerus. Bot tetap menerima
+        // pesan; presence hanya aktif saat membalas.
+        if (String(cfg.presenceMode || 'auto').toLowerCase() !== 'online') {
+          setTimeout(() => {
+            if (typeof wa.goOfflineNow === 'function') wa.goOfflineNow();
+          }, 2000);
+        }
         // Backup pertama setelah sesi benar-benar ada (mis. setelah pairing).
         if (cfg.sessionBackupEnabled && !backup.last) {
           backup.runNow().catch(() => {});
         }
-        animeChannel.start();
-        reminders.start();
-        groupTools.start();
+        if (!passive) {
+          animeChannel.start();
+          reminders.start();
+          groupTools.start();
+        }
+        // Moderasi grup tetap aktif karena hanya bereaksi pada pelanggaran.
         groupGuard.start();
+        // Monitor TikTok tetap jalan agar /siapaup & history tetap terisi;
+        // mode pasif hanya mematikan pengiriman notifikasinya.
         tiktokMonitor.start();
         updater.start();
-        promo.start();
+        if (!passive) promo.start();
       }
 
       if (connection === 'connecting') {
@@ -508,6 +550,19 @@ async function main() {
         wa.rememberJids(msg.key);
         // Simpan pesan masuk agar bisa dipakai saat ada retry/quote.
         messageCache.put(msg.key, msg.message);
+        // AUTO_READ: tandai pesan masuk sudah dibaca (centang biru).
+        // Status/story dan channel dilewati; jangan await supaya pemrosesan
+        // command tidak tertahan oleh read receipt.
+        const readJid = String(msg.key.remoteJid || '');
+        if (
+          cfg.autoRead &&
+          !msg.key.fromMe &&
+          readJid &&
+          readJid !== 'status@broadcast' &&
+          !readJid.endsWith('@newsletter')
+        ) {
+          wa.markRead([msg.key]).catch(() => {});
+        }
         const chatKey = msg.key.remoteJid || msg.key.id || 'unknown';
         messageQueue.push(chatKey, () => router.handleMessage(msg));
       }

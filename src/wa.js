@@ -8,6 +8,94 @@ const { messageCache } = require('./messagecache');
 const { downloadQueue } = require('./downloadqueue');
 const { lidMap, lidOf, pnOf } = require('./lidmap');
 
+// ---------- presence ----------
+// Tujuan: nomor tidak tampil "online" terus-menerus. Presence hanya dikirim
+// saat bot benar-benar mengetik/mengirim pesan, lalu dikembalikan ke offline.
+let offlineTimer = null;
+
+function presenceMode() {
+  return String(process.env.PRESENCE_MODE || 'auto').toLowerCase();
+}
+
+function cancelPresenceOffline() {
+  if (offlineTimer) {
+    clearTimeout(offlineTimer);
+    offlineTimer = null;
+  }
+}
+
+function goOfflineNow() {
+  cancelPresenceOffline();
+  try {
+    if (sock && typeof sock.sendPresenceUpdate === 'function') {
+      sock.sendPresenceUpdate('unavailable').catch(() => {});
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function schedulePresenceOffline() {
+  if (presenceMode() === 'online') return;
+  if (presenceMode() === 'offline') {
+    goOfflineNow();
+    return;
+  }
+  const sec = Math.max(3, Number(process.env.PRESENCE_IDLE_OFFLINE_SEC) || 8);
+  cancelPresenceOffline();
+  offlineTimer = setTimeout(() => {
+    offlineTimer = null;
+    goOfflineNow();
+  }, sec * 1000);
+  if (typeof offlineTimer.unref === 'function') offlineTimer.unref();
+}
+
+/** JID yang dipakai untuk presence: nomor asli bila LID sudah dipetakan. */
+function presenceJid(jid) {
+  const base = destJid(jid);
+  return lidMap.getPn(base) || base;
+}
+
+async function setPresence(state, jid) {
+  if (presenceMode() === 'offline') return false;
+  try {
+    if (sock && typeof sock.sendPresenceUpdate === 'function') {
+      await sock.sendPresenceUpdate(state, presenceJid(jid));
+      return true;
+    }
+  } catch {
+    /* presence bersifat best-effort */
+  }
+  return false;
+}
+
+/**
+ * Perkiraan durasi "mengetik" berdasarkan panjang teks/caption. Pesan media
+ * tanpa caption tetap menampilkan animasi singkat supaya semua balasan punya
+ * indikator mengetik.
+ */
+function typingDelayFor(content) {
+  if (!content || content.react || content.delete) return 0;
+  const maxDelay = Math.max(0, Number(process.env.TYPING_MAX_MS) || 1500);
+  if (maxDelay <= 0) return 0;
+  const text = String(content.text || content.caption || '');
+  if (!text) return Math.min(maxDelay, 500);
+  const minDelay = Math.min(500, maxDelay);
+  return Math.min(maxDelay, Math.max(minDelay, Math.ceil(text.length / 120) * 200));
+}
+
+async function markRead(keys) {
+  if (!sock || typeof sock.readMessages !== 'function') return false;
+  const list = (Array.isArray(keys) ? keys : [keys]).filter(Boolean);
+  if (!list.length) return false;
+  try {
+    await sock.readMessages(list);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Pino menulis JSON per baris. Alihkan semuanya ke logger aplikasi supaya
 // output panel tetap satu format: [waktu] [LEVEL] [TAG] pesan.
 function forwardBaileysLine(raw) {
@@ -182,17 +270,32 @@ async function downloadQuoted(quoted, chatJid, senderJid) {
 }
 
 async function sendMessage(jid, content, quoted) {
+  cancelPresenceOffline();
   const to = await resolveSendJid(jid);
   const opts = quoted ? { quoted: retargetQuoted(quoted, to) } : {};
-  const res = await sock.sendMessage(to, content, opts);
-  // Simpan pesan keluar supaya Baileys bisa menyajikannya ulang saat
-  // penerima meminta retry (mencegah "Menunggu pesan ini...").
+  // Semua pesan keluar (teks, media, poll, sticker) diberi animasi mengetik
+  // sebelum dikirim. Reaksi dan hapus pesan tidak perlu indikator mengetik.
+  const typing = Boolean(content && !content.react && !content.delete);
+  let composing = false;
   try {
-    if (res && res.key && res.message) messageCache.put(res.key, res.message);
-  } catch {
-    /* cache bersifat best-effort */
+    if (typing) {
+      composing = await setPresence('composing', to);
+      const delay = presenceMode() === 'offline' ? 0 : typingDelayFor(content);
+      if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+    }
+    const res = await sock.sendMessage(to, content, opts);
+    // Simpan pesan keluar supaya Baileys bisa menyajikannya ulang saat
+    // penerima meminta retry (mencegah "Menunggu pesan ini...").
+    try {
+      if (res && res.key && res.message) messageCache.put(res.key, res.message);
+    } catch {
+      /* cache bersifat best-effort */
+    }
+    return res;
+  } finally {
+    if (composing) await setPresence('paused', to);
+    schedulePresenceOffline();
   }
-  return res;
 }
 
 /**
@@ -283,21 +386,7 @@ function retargetQuoted(quoted, target) {
 }
 
 async function sendText(jid, text, quoted, mentions, linkPreview) {
-  const base = destJid(jid);
-  // Presence ke JID LID sering diabaikan; pakai nomor asli bila sudah diketahui.
-  const to = lidMap.getPn(base) || base;
   const str = String(text);
-  try {
-    await sock.sendPresenceUpdate('composing', to);
-    // Delay dipangkas: sebelumnya bisa sampai 8 detik per pesan dan membuat
-    // bot terasa hang, apalagi saat banyak chat masuk bersamaan.
-    const maxDelay = Math.max(0, Number(process.env.TYPING_MAX_MS) || 1500);
-    const minDelay = Math.min(250, maxDelay);
-    const delay = Math.min(maxDelay, Math.max(minDelay, Math.ceil(str.length / 120) * 200));
-    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
-  } catch {
-    /* ignore */
-  }
   const content = { text: str };
   if (mentions && mentions.length) content.mentions = mentions;
   if (linkPreview) {
@@ -312,13 +401,7 @@ async function sendText(jid, text, quoted, mentions, linkPreview) {
       content.linkPreview = linkPreview;
     }
   }
-  const res = await sendMessage(jid, content, quoted);
-  try {
-    await sock.sendPresenceUpdate('paused', to);
-  } catch {
-    /* ignore */
-  }
-  return res;
+  return sendMessage(jid, content, quoted);
 }
 
 /**
@@ -431,6 +514,10 @@ module.exports = {
   destJid,
   isJidGroup: isJidGroupSafe,
   isGroupJid,
+  goOfflineNow,
+  schedulePresenceOffline,
+  setPresence,
+  markRead,
 };
 
 function isJidGroupSafe(jid) {

@@ -628,11 +628,11 @@ const DEFS = [
   {
     key: 'TIKTOK_POLL_MS',
     group: 'tiktok',
-    label: 'Interval monitor TikTok (milidetik, min 10000)',
+    label: 'Interval monitor TikTok (milidetik, min 15000)',
     type: 'int',
-    min: 10000,
+    min: 15000,
     max: 3600000,
-    default: 30000,
+    default: 60000,
     apply: (cfg, v) => {
       cfg.tiktokPollMs = v;
     },
@@ -1020,6 +1020,16 @@ const DEFS = [
     default: 2,
     apply: (cfg, v) => {
       cfg.downloadQueueConcurrency = v;
+    },
+  },
+  {
+    key: 'AUTO_READ',
+    group: 'reliability',
+    label: 'Tandai pesan masuk sudah dibaca (centang biru)',
+    type: 'bool',
+    default: true,
+    apply: (cfg, v) => {
+      cfg.autoRead = v;
     },
   },
   {
