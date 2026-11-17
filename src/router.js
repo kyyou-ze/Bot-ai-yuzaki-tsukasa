@@ -1499,32 +1499,23 @@ class Router {
             }
           }
 
-          // Versi ringkas dikirim lebih dulu: kalau menu panjang/banner ditolak
-          // WA, user tetap melihat teks menu, bukan hanya suara.
-          const shortMenu = [
-            `*${(this.cfg && this.cfg.botName) || 'Tsukasa'} — MENU*`,
-            `Total ${menuText.length} karakter.`,
-            '',
-            `${usedPrefix}menu all — indeks kategori`,
-            `${usedPrefix}menu <kategori> — daftar command`,
-            `${usedPrefix}menu cari <kata> — cari command`,
-            `${usedPrefix}help <command> — cara pakai`,
-            '',
-            'Kategori: ai, anime, sticker, download, fun, rpg, group, owner, tools, verif.',
-          ].join('\n');
-          await wa.sendText(chat, shortMenu, m).catch((e) =>
-            console.error('[MENU] gagal kirim versi ringkas:', e && e.message)
-          );
-
+          // Batas pesan WA dihitung per byte UTF-8, bukan per karakter. Emoji
+          // dan bingkai ╭─╮ memakai 3-4 byte, jadi menu 3.700 karakter bisa
+          // berbesar 5.000+ byte dan ditolak. sendLongText memecahnya aman.
+          // Banner ditempel ke potongan pertama supaya menyatu dengan menu;
+          // thumbnail sudah diperkecil oleh menubanner.buildMenuPreview.
           try {
-            await wa.sendText(chat, menuText, m, undefined, banner);
-            console.log('[MENU] terkirim');
+            await wa.sendLongText(chat, menuText, m, { linkPreview: banner });
+            console.log(`[MENU] terkirim (${Buffer.byteLength(menuText)} byte, banner ${banner ? 'ada' : 'tidak ada'})`);
           } catch (err) {
-            // Banner/teks panjang kadang ditolak WA. Kirim ulang tanpa banner
-            // supaya menu tetap tampil (voice note tidak jadi satu-satunya output).
-            console.error('[MENU] gagal kirim teks/banner, coba tanpa banner:', err && err.message);
-            await wa.sendText(chat, menuText, m);
-            console.log('[MENU] terkirim tanpa banner');
+            console.error('[MENU] gagal kirim teks:', err && err.message);
+            await wa
+              .sendText(
+                chat,
+                `⚠️ Menu gagal dikirim. Coba ${usedPrefix}menu <kategori> atau ${usedPrefix}menu all.`,
+                m
+              )
+              .catch(() => {});
           }
 
           // Voice note dikirim paling akhir, setelah teks menu. Jadi teks tetap
@@ -1535,7 +1526,7 @@ class Router {
           return;
         }
 
-        await wa.sendText(
+        await wa.sendLongText(
           chat,
           kaguya.formatHelp({ query: bang.rest, prefix: usedPrefix, builtinCategories }),
           m

@@ -3,7 +3,7 @@
 const { Writable } = require('stream');
 const pino = require('pino');
 const log = require('./logger');
-const { destJid, isGroupJid } = require('./util');
+const { destJid, isGroupJid, splitTextByBytes } = require('./util');
 const { messageCache } = require('./messagecache');
 const { downloadQueue } = require('./downloadqueue');
 const { lidMap, lidOf, pnOf } = require('./lidmap');
@@ -425,6 +425,99 @@ async function sendText(jid, text, quoted, mentions, linkPreview) {
 }
 
 /**
+ * Kirim teks panjang dengan aman.
+ *
+ * WhatsApp menolak satu pesan yang melebihi batas byte UTF-8. Teks dipecah
+ * lebih dulu (lihat util.splitTextByBytes), lalu tiap potongan dikirim
+ * berurutan. Potongan pertama tetap membalas pesan user; potongan berikutnya
+ * diberi penanda "(2/3)" agar jelas masih lanjutan.
+ *
+ * `options.linkPreview` ditempelkan ke potongan PERTAMA, jadi banner menyatu
+ * dengan teks menu. Kalau kartu ditolak, potongan yang sama dikirim ulang
+ * tanpa kartu — isi menu tetap sampai.
+ */
+async function sendLongText(jid, text, quoted, options = {}) {
+  const wantsCard = Boolean(options.linkPreview);
+  const requested = Math.max(256, Number(options.maxBytes) || 3000);
+  // Potongan pertama memikul thumbnail, jadi dibuat lebih pendek.
+  const maxBytes = wantsCard ? Math.min(requested, 3600) : requested;
+  const chunks = splitTextByBytes(text, maxBytes, { marker: options.marker ?? '↳ ' });
+  if (!chunks.length) return [];
+
+  const results = [];
+  const failures = [];
+
+  for (let i = 0; i < chunks.length; i += 1) {
+    const chunk = chunks[i];
+    const part = `${i + 1}/${chunks.length}`;
+    const replyTo = i === 0 ? quoted : undefined;
+    const card = i === 0 ? options.linkPreview : undefined;
+    let result = null;
+    let lastError = null;
+
+    // 1. Upaya utama: teks + kartu (potongan pertama) + reply.
+    try {
+      result = await sendText(jid, chunk, replyTo, options.mentions, card);
+    } catch (err) {
+      lastError = err;
+      if (card) {
+        log.warn('WA', `kartu pada potongan ${part} ditolak, coba tanpa kartu: ${err && err.message}`);
+        try {
+          result = await sendText(jid, chunk, replyTo, options.mentions);
+          lastError = null;
+        } catch (err2) {
+          lastError = err2;
+        }
+      }
+    }
+
+    // 2. Tanpa reply (mengatasi quote lintas-chat/LID).
+    if (!result) {
+      try {
+        result = await sendText(jid, chunk, undefined, options.mentions);
+        lastError = null;
+      } catch (err2) {
+        lastError = err2;
+      }
+    }
+
+    // 3. Upaya terakhir: pecah lebih kecil bila masalahnya ukuran pesan.
+    if (!result) {
+      const smaller = splitTextByBytes(chunk, Math.floor(maxBytes / 2), {
+        marker: '',
+        numbered: false,
+      });
+      for (const piece of smaller) {
+        try {
+          results.push(await sendText(jid, piece, undefined, options.mentions));
+          lastError = null;
+        } catch (err3) {
+          lastError = err3;
+          log.error('WA', `potongan kecil ${part} gagal: ${err3 && err3.message}`);
+        }
+      }
+    } else {
+      results.push(result);
+    }
+
+    if (lastError) failures.push({ part, error: lastError });
+    if (i < chunks.length - 1) {
+      // Jeda kecil menjaga urutan bubble di WhatsApp.
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+  }
+
+  if (failures.length) {
+    const err = new Error(
+      `${failures.length}/${chunks.length} potongan teks gagal dikirim: ${failures[0].error && failures[0].error.message}`
+    );
+    err.failures = failures;
+    throw err;
+  }
+  return results;
+}
+
+/**
  * Unggah gambar ke server WhatsApp sebagai thumbnail link preview berkualitas
  * tinggi. Di Android, `jpegThumbnail` saja sering tidak dirender — WhatsApp
  * butuh `highQualityThumbnail` (media yang sudah di-upload) agar kartu gambar
@@ -524,6 +617,7 @@ module.exports = {
   resolveSendJid,
   sendMessage,
   sendText,
+  sendLongText,
   buildLinkThumbnail,
   sendImage,
   sendVideo,

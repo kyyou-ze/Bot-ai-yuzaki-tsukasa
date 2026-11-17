@@ -26,6 +26,12 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 const MAX_THUMBNAIL_BYTES = 900 * 1024;
 const THUMBNAIL_WIDTH = 960;
 
+// Thumbnail yang ditempel langsung ke pesan teks menu (externalAdReply)
+// dikirim inline sebagai byte protobuf. Gambar besar membuat pesan ditolak,
+// jadi kartu menu diperkecil dulu: kartunya tetap tampil, teks tetap terkirim.
+const MENU_THUMBNAIL_WIDTH = 360;
+const MENU_THUMBNAIL_QUALITY = 70;
+
 function expandPath(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -161,12 +167,32 @@ async function firstAdReply(opts = {}) {
   return null;
 }
 
+/** Perkecil thumbnail kartu menu agar aman ditempel ke pesan teks. */
+async function compactMenuThumbnail(buffer) {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) return buffer;
+  const sharp = getSharp();
+  if (!sharp) return buffer;
+  try {
+    return await sharp(buffer)
+      .resize({ width: MENU_THUMBNAIL_WIDTH, withoutEnlargement: true })
+      .jpeg({ quality: MENU_THUMBNAIL_QUALITY, mozjpeg: true })
+      .toBuffer();
+  } catch {
+    return buffer;
+  }
+}
+
 /**
- * Banner menu utama.
+ * Banner menu utama. Thumbnail diperkecil supaya kartu bisa menyatu dengan
+ * teks menu tanpa membuat pesan ditolak WhatsApp.
  * @returns {Promise<null | { title: string, body: string, thumbnail?: Buffer, thumbnailUrl?: string, mediaType: number, renderLargerThumbnail: boolean, sourceUrl?: string }>}
  */
 async function buildMenuPreview(opts) {
-  return firstAdReply(opts || {});
+  const ad = await firstAdReply(opts || {});
+  if (ad && Buffer.isBuffer(ad.thumbnail)) {
+    ad.thumbnail = await compactMenuThumbnail(ad.thumbnail);
+  }
+  return ad;
 }
 
 /**

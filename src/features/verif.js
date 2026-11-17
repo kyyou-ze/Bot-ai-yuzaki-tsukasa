@@ -1,6 +1,7 @@
 'use strict';
 
 const wa = require('../wa');
+const log = require('../logger');
 const menuBanner = require('../menubanner');
 const { isGroupJid, jidUser, onlyDigits } = require('../util');
 const {
@@ -245,7 +246,20 @@ class VerifFeature {
   }
 
   reply(m, text, linkPreview) {
-    return wa.sendText(m.key.remoteJid, text, m, undefined, linkPreview).catch(() => {});
+    return wa
+      .sendText(m.key.remoteJid, text, m, undefined, linkPreview)
+      .catch((err) => {
+        log.warn('[VERIF] gagal kirim balasan:', err && err.message);
+        return null;
+      });
+  }
+
+  /** Balasan panjang dipecah per byte UTF-8 supaya tidak ditolak WhatsApp. */
+  replyLong(m, text) {
+    return wa.sendLongText(m.key.remoteJid, text, m).catch((err) => {
+      log.error('[VERIF] gagal kirim balasan panjang:', err && err.message);
+      return null;
+    });
   }
 
   /** Ambil profil TikTok dengan cache; monitor yang sudah berjalan dipakai dulu. */
@@ -755,7 +769,15 @@ class VerifFeature {
       Boolean
     );
 
-    let entries = this.store.entriesForUser(candidates);
+    // Satu akun TikTok bisa terverif di beberapa grup. Tanpa deduplikasi,
+    // `.me` mengulang blok profil yang sama dan teksnya membengkak.
+    const seenAccounts = new Set();
+    let entries = this.store.entriesForUser(candidates).filter((entry) => {
+      const key = accountKey(entry.accName);
+      if (!key || seenAccounts.has(key)) return false;
+      seenAccounts.add(key);
+      return true;
+    });
     if (!entries.length) {
       await this.reply(
         m,
@@ -834,7 +856,22 @@ class VerifFeature {
       }
     }
 
-    await this.reply(m, text, card);
+    // Teks profil dikirim lebih dulu dan dipecah per byte UTF-8. Kartu avatar
+    // menyusul terpisah: bila unduh/unggah gambar gagal, data `.me` tetap tampil.
+    const sent = await this.replyLong(m, text);
+    if (!sent) {
+      await this.reply(m, `⚠️ Profil gagal dikirim. Coba ${this.cfg.botPrefix || '.'}me <nama_akun>.`);
+    }
+
+    if (card) {
+      const cardCaption =
+        entries.length === 1
+          ? `🎵 Profil ${displayAccount(cardEntry.accName)}`
+          : `🎵 ${entries.length} akun TikTok tertaut`;
+      await wa
+        .sendText(m.key.remoteJid, cardCaption, m, undefined, card)
+        .catch((err) => log.warn('[VERIF] kartu profil gagal dikirim:', err && err.message));
+    }
   }
 
   async handleList(m) {

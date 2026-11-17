@@ -321,6 +321,110 @@ function randomPick(arr) {
 }
 
 /**
+ * Pecah teks panjang menjadi potongan yang aman dikirim ke WhatsApp.
+ *
+ * Batasnya dihitung dalam BYTE UTF-8, bukan jumlah karakter. Simbol bingkai
+ * (╭, ─, ╰, ◦) dan emoji memakai 3-4 byte, sehingga teks 3.700 karakter bisa
+ * berisi 5.000+ byte dan ditolak WA meskipun jumlah karakternya terlihat aman.
+ *
+ * Potongan dibuat di batas baris. Satu kotak kategori (╭ ... ╰) dijaga tetap
+ * utuh bila muat. Baris yang tetap terlalu panjang dipecah per code point
+ * supaya emoji/surat pasangan tidak terbelah.
+ *
+ * @param {string} text
+ * @param {number} maxBytes batas byte per potongan (default 3000, aman < 4096)
+ * @param {{ marker?: string, numbered?: boolean }} options
+ * @returns {string[]}
+ */
+function splitTextByBytes(text, maxBytes = 3000, options = {}) {
+  const raw = String(text ?? '').replace(/\r\n?/g, '\n');
+  if (!raw.trim()) return [];
+
+  const limit = Math.max(256, Math.floor(Number(maxBytes) || 3000));
+  const marker = String(options.marker ?? '');
+  const numbered = options.numbered !== false;
+  const byteLen = (value) => Buffer.byteLength(value, 'utf8');
+  // Sisihkan ruang untuk penanda lanjutan dan label (1/9).
+  const reserve = byteLen(marker) + 16;
+  const usable = Math.max(64, limit - reserve);
+
+  // Gabungkan baris ╭ ... ╰ jadi satu atom agar kotak tidak terpotong.
+  const lines = raw.split('\n');
+  const atoms = [];
+  for (let i = 0; i < lines.length; ) {
+    const line = lines[i];
+    if (/^\s*╭/.test(line)) {
+      const block = [line];
+      let j = i + 1;
+      for (; j < lines.length; j += 1) {
+        block.push(lines[j]);
+        if (/^\s*╰/.test(lines[j])) {
+          j += 1;
+          break;
+        }
+      }
+      atoms.push(block.join('\n'));
+      i = j;
+    } else {
+      atoms.push(line);
+      i += 1;
+    }
+  }
+
+  const chunks = [];
+  let buffer = [];
+  let used = 0;
+
+  const flush = () => {
+    if (!buffer.length) return;
+    chunks.push(buffer.join('\n'));
+    buffer = [];
+    used = 0;
+  };
+  const append = (value) => {
+    const need = (buffer.length ? 1 : 0) + byteLen(value);
+    if (used + need > usable) flush();
+    buffer.push(value);
+    used = byteLen(buffer.join('\n'));
+  };
+  const splitLongLine = (line) => {
+    let part = '';
+    let bytes = 0;
+    for (const ch of Array.from(line)) {
+      const size = byteLen(ch);
+      if (bytes + size > usable) {
+        chunks.push(part);
+        part = '';
+        bytes = 0;
+      }
+      part += ch;
+      bytes += size;
+    }
+    if (part) chunks.push(part);
+  };
+
+  for (const atom of atoms) {
+    if (byteLen(atom) <= usable) {
+      append(atom);
+      continue;
+    }
+    flush();
+    for (const line of atom.split('\n')) {
+      if (byteLen(line) <= usable) append(line);
+      else splitLongLine(line);
+    }
+  }
+  flush();
+
+  if (chunks.length <= 1) return chunks;
+  const total = chunks.length;
+  return chunks.map((chunk, index) => {
+    const label = numbered ? `(${index + 1}/${total})\n` : '';
+    return `${index === 0 ? '' : marker}${label}${chunk}`;
+  });
+}
+
+/**
  * Pecah balasan AI menjadi beberapa bubble chat. AI menandai jeda bubble
  * dengan tag [[next]]. Kelebihan bubble digabung ke bubble terakhir supaya
  * bot tidak membanjiri chat.
@@ -370,5 +474,6 @@ module.exports = {
   publicPath,
   fileExists,
   randomPick,
+  splitTextByBytes,
   splitChatBubbles,
 };
