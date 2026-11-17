@@ -1405,6 +1405,7 @@ class Router {
         bang.cmd === 'livemenu'
       ) {
         const usedPrefix = /^[.!/]/.test(origTxt) ? origTxt[0] : '.';
+        log.info(`[MENU] dismiss=${bang.cmd} rest=${String(bang.rest || '').slice(0, 40)} chat=${chat}`);
         const builtinCategories = featureList()
           .filter((f) => !isGroupJid(chat) || this.store.isFeatureEnabled(chat, f.key))
           .map((f) => ({
@@ -1467,6 +1468,7 @@ class Router {
           let menuText =
             menu ||
             `Kategori *${String(bang.rest || '').trim()}* tidak ditemukan.\nCoba ${usedPrefix}menu atau ${usedPrefix}menu all.`;
+          log.info(`[MENU] disusun ${menuText.length} karakter`);
 
           // Status sewa grup ditampilkan di menu supaya bedanya kelihatan.
           if (isGroupJid(chat)) {
@@ -1498,11 +1500,13 @@ class Router {
 
           try {
             await wa.sendText(chat, menuText, m, undefined, banner);
+            log.info('[MENU] terkirim');
           } catch (err) {
             // Banner/teks panjang kadang ditolak WA. Kirim ulang tanpa banner
             // supaya menu tetap tampil (voice note tidak jadi satu-satunya output).
             console.error('[MENU] gagal kirim teks/banner, coba tanpa banner:', err && err.message);
             await wa.sendText(chat, menuText, m);
+            log.info('[MENU] terkirim tanpa banner');
           }
 
           // Menu utama diikuti voice note singkat (gaya ALYA MD). Bisa
