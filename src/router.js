@@ -1486,17 +1486,9 @@ class Router {
 
           // Banner hanya untuk menu utama. Kartu banner ditempel lewat
           // externalAdReply supaya URL tidak perlu tampil di badan pesan.
-          let banner = null;
-          if (!String(bang.rest || '').trim()) {
-            try {
-              banner = await menuBanner.buildMenuPreview({
-                title: (this.cfg && this.cfg.botName) || 'Tsukasa',
-                description: 'Sticker, unduhan, game grup, dan moderasi.',
-              });
-            } catch (err) {
-              console.error('[MENU] banner gagal dibangun:', err && err.message);
-            }
-          }
+          // Banner externalAdReply sering membuat WA menyembunyikan teks menu
+          // (pesan terkirim tapi tidak tampil). Menu dikirim sebagai teks polos.
+          const banner = null;
 
           // Versi ringkas dikirim lebih dulu: kalau menu panjang/banner ditolak
           // WA, user tetap melihat teks menu, bukan hanya suara.
@@ -1526,10 +1518,13 @@ class Router {
             console.log('[MENU] terkirim tanpa banner');
           }
 
-          // Menu utama diikuti voice note singkat (gaya ALYA MD). Bisa
-          // dimatikan lewat MENU_AUDIO=false atau ganti file lewat
-          // MENU_AUDIO_PATH. Kegagalan audio tidak menggagalkan menu.
-          if (!String(bang.rest || '').trim()) {
+          // Voice note menu sengaja tidak dikirim lagi: sering jadi satu-satunya
+          // yang tampil saat teks menu tertahan WA. Aktifkan manual lewat
+          // MENU_AUDIO_FORCE=true kalau benar-benar menginginkannya.
+          if (
+            String(process.env.MENU_AUDIO_FORCE || '').toLowerCase() === 'true' &&
+            !String(bang.rest || '').trim()
+          ) {
             await menuAudio.sendMenuAudio(this.sock, chat, m).catch(() => false);
           }
           return;
