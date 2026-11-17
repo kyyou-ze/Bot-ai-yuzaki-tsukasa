@@ -82,7 +82,7 @@ Bot ini memakai **arsitektur bridge**: inti bot tetap milik Tsukasa, sedangkan p
 Catatan:
 - Semua fitur tampil sebagai fitur Tsukasa. Tidak ada pemisahan “fitur Tsukasa” dan “fitur Kaguya”.
 - Nama kategori yang sama (`anime`, `sticker`, `tools`) otomatis digabung menjadi satu kategori.
-- `.menu` memakai tampilan bergaya ALYA MD: sapaan `Halo, *nama*`, ringkasan `› Status / Mode / Total / Runtime / Prefix`, daftar kategori dengan penanda `◦`, dan indeks `《 GROUP 》` yang dipaginasi. Setelah menu utama, bot mengirim **voice note menu** dari `assets/menu/menu-music.mp3` (bisa dimatikan dengan `MENU_AUDIO=false`).
+- `.menu` memakai tampilan bergaya ALYA MD: sapaan `Halo, *nama*`, ringkasan `› Status / Mode / Total / Runtime / Prefix`, daftar kategori dengan penanda `◦`, dan indeks `《 GROUP 》` yang dipaginasi. Voice note menu dari `assets/menu/menu-music.mp3` **default mati**; aktifkan dengan `MENU_AUDIO=true` kalau mau.
 - Banner menu berbentuk **kartu preview** (`contextInfo.externalAdReply`) dalam **satu pesan** dengan menu. Gambar besar, judul, dan deskripsi tampil sebagai banner; **URL tidak ditulis** di badan pesan.
 - Gambar banner diambil berurutan dari `MENU_IMAGE_PATH` (file lokal, relatif ke root repo atau path `~`), `MENU_IMAGE_URL`, `PROMO_IMAGE_URL`, lalu banner bawaan di `assets/menu/banner-tsukasa.png`. File lokal otomatis diresize dengan `sharp` bila tersedia agar tetap di bawah batas thumbnail WhatsApp.
 - Aset menu/kuis ALYA ada di `assets/menu` (banner, preview video/webp, musik) dan `assets/quiz` (JSON soal). Banner bawaan sudah diganti dengan banner Tsukasa, bukan banner ALYA.
@@ -224,7 +224,7 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `MENU_IMAGE_PATH` | `assets/menu/banner-tsukasa.png` | Banner menu dari file lokal (relatif root repo, path absolut, atau `~`). Prioritas di atas URL |
 | `MENU_IMAGE_URL` | - | Banner menu dari URL publik (cadangan kedua) |
 | `PROMO_IMAGE_URL` | - | Thumbnail banner promosi; kosong = ikut `MENU_IMAGE_PATH`/`MENU_IMAGE_URL` |
-| `MENU_AUDIO` | `true` | Kirim voice note menu setelah pesan menu utama (gaya ALYA MD) |
+| `MENU_AUDIO` | `false` | Kirim voice note menu setelah pesan menu utama (default mati supaya teks menu tidak tertutup) |
 | `MENU_AUDIO_PATH` | `assets/menu/menu-music.mp3` | File audio menu; dikonversi ke opus/ogg lewat ffmpeg agar tampil sebagai VN |
 | `PROMO_INTERVAL_HOURS` | `6` | Jarak antar promosi otomatis |
 | `PROMO_MAX_PER_RUN` | `20` | Batas grup per putaran; sisanya digilir |

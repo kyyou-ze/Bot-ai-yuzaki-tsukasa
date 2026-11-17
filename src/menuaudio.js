@@ -19,7 +19,7 @@ let cache = null;
 let convertBroken = false;
 
 function enabled() {
-  const raw = String(process.env.MENU_AUDIO ?? 'true').trim().toLowerCase();
+  const raw = String(process.env.MENU_AUDIO ?? 'false').trim().toLowerCase();
   return !['0', 'false', 'off', 'no', 'nonaktif', 'mati'].includes(raw);
 }
 

@@ -1486,10 +1486,14 @@ class Router {
           // externalAdReply supaya URL tidak perlu tampil di badan pesan.
           let banner = null;
           if (!String(bang.rest || '').trim()) {
-            banner = await menuBanner.buildMenuPreview({
-              title: (this.cfg && this.cfg.botName) || 'Tsukasa',
-              description: 'Sticker, unduhan, game grup, dan moderasi.',
-            });
+            try {
+              banner = await menuBanner.buildMenuPreview({
+                title: (this.cfg && this.cfg.botName) || 'Tsukasa',
+                description: 'Sticker, unduhan, game grup, dan moderasi.',
+              });
+            } catch (err) {
+              console.error('[MENU] banner gagal dibangun:', err && err.message);
+            }
           }
 
           try {
