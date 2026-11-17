@@ -11,6 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { messageCache } = require('../messagecache');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const PLUGINS_DIR = path.join(ROOT, 'plugins');
@@ -20,6 +21,90 @@ let configured = null;
 let runtimePromise = null;
 let catalogCache = null;
 const moduleCache = new Map();
+
+let baileysModule = null;
+function baileysLib() {
+  if (!baileysModule) baileysModule = require('@whiskeysockets/baileys');
+  return baileysModule;
+}
+
+// Logger minimal untuk downloadMediaMessage; Baileys hanya memakainya saat
+// meminta pengirim mengunggah ulang media.
+const silentLogger = {
+  level: 'silent',
+  fatal() {},
+  error() {},
+  warn() {},
+  info() {},
+  debug() {},
+  trace() {},
+  child() {
+    return silentLogger;
+  },
+};
+
+/**
+ * Quoted media kadang dikirim WhatsApp tanpa `url`/`directPath` (mis. balasan
+ * foto sekali lihat), sehingga `m.quoted.download()` gagal dengan
+ * "No valid media URL or directPath present in message".
+ *
+ * Pesan masuk asli sudah disimpan di `messageCache` berdasarkan id. Kalau
+ * unduhan langsung gagal, ambil pesan asli itu lalu unduh ulang dari sana.
+ * Dipasang untuk semua plugin, bukan hanya hidetag.
+ */
+function wrapMediaDownload(sock, target, info) {
+  if (!target || typeof target.download !== 'function' || target.__safeMediaDownload) return;
+  const original = target.download.bind(target);
+  target.__safeMediaDownload = true;
+  target.download = async () => {
+    try {
+      return await original();
+    } catch (err) {
+      const id = String((info && info.id) || '');
+      const cached = id ? messageCache.get(id) : null;
+      const downloadMediaMessage = baileysLib().downloadMediaMessage;
+      if (!cached || typeof downloadMediaMessage !== 'function') throw err;
+
+      const chat = (info && info.chat) || '';
+      const message = {
+        key: {
+          remoteJid: chat,
+          id,
+          fromMe: Boolean(info && info.fromMe),
+          ...((info && info.participant) || chat.endsWith('@g.us')
+            ? { participant: (info && info.participant) || chat }
+            : {}),
+        },
+        message: cached,
+      };
+      const buffer = await downloadMediaMessage(message, 'buffer', {}, {
+        logger: silentLogger,
+        reuploadRequest: (msg) => sock.updateMediaMessage(msg),
+      });
+      if (!buffer || !buffer.length) throw err;
+      return buffer;
+    }
+  };
+}
+
+/** Pasang fallback unduhan pada pesan utama dan pesan yang di-quote. */
+function installMediaFallback(sock, m, raw) {
+  if (!m) return;
+  wrapMediaDownload(sock, m, {
+    id: (raw && raw.key && raw.key.id) || m.id,
+    chat: m.chat,
+    participant: m.senderRaw,
+    fromMe: raw && raw.key ? raw.key.fromMe : m.fromMe,
+  });
+  if (m.quoted) {
+    wrapMediaDownload(sock, m.quoted, {
+      id: m.quoted.id,
+      chat: m.quoted.chat,
+      participant: m.quoted.senderRaw || m.quoted.sender,
+      fromMe: m.quoted.fromMe,
+    });
+  }
+}
 
 const CATEGORY_META = {
   anime: { icon: '🍥', label: 'Anime' },
@@ -509,6 +594,7 @@ async function dispatch({
       continue;
     }
     if (!m) continue;
+    installMediaFallback(sock, m, raw);
 
     const groupMetadata = await getGroupMeta(sock, chat);
     const text = String(rest || '');
@@ -656,6 +742,7 @@ async function dispatchPassive({
     return false;
   }
   if (!m) return false;
+  installMediaFallback(sock, m, raw);
 
   // Metadata grup hanya diambil kalau ada plugin pasif yang memang butuh
   // status admin, supaya pesan biasa tidak memicu request tambahan.
