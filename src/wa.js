@@ -177,6 +177,26 @@ function getSock() {
   return sock;
 }
 
+/**
+ * Nomor WhatsApp bot dalam bentuk digit (mis. "6283..."). Sumber utama adalah
+ * identitas socket yang sedang login, jadi landing page bisa mendeteksi nomor
+ * secara otomatis tanpa konfigurasi manual.
+ */
+function botNumber() {
+  try {
+    const user = sock && sock.user;
+    const raw = user && (user.id || user.jid || user.lid);
+    const digits = String(raw || '')
+      .split('@')[0]
+      .split(':')[0]
+      .replace(/\D+/g, '');
+    if (digits) return digits;
+  } catch {
+    /* socket belum siap */
+  }
+  return '';
+}
+
 function contentOf(messageOrMessageLike) {
   if (!messageOrMessageLike) return null;
   const normalizeMessageContent = getBaileysFn('normalizeMessageContent');
@@ -487,6 +507,7 @@ module.exports = {
   getBaileys,
   setSock,
   getSock,
+  botNumber,
   contentOf,
   contentTypeOf,
   contextInfoOf,

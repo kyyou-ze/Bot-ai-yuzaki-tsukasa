@@ -99,6 +99,21 @@ class HttpApi {
     return this.catalogCounts;
   }
 
+  botNumber() {
+    // Utamakan identitas socket yang sedang login; kalau WhatsApp belum
+    // terhubung, pakai PAIRING_NUMBER dari konfigurasi sebagai cadangan.
+    let number = '';
+    try {
+      number = wa.botNumber();
+    } catch {
+      /* abaikan */
+    }
+    if (!number && this.cfg && this.cfg.pairingNumber) {
+      number = String(this.cfg.pairingNumber).replace(/\D+/g, '');
+    }
+    return number;
+  }
+
   publicStatus() {
     const snap = metrics.snapshot();
     const counts = this.catalogStats();
@@ -106,6 +121,7 @@ class HttpApi {
       ok: true,
       bot: (this.cfg && this.cfg.botName) || 'Tsukasa',
       version: VERSION,
+      botNumber: this.botNumber(),
       uptimeSec: Math.floor(process.uptime()),
       waReady: Boolean(this.isReady()),
       categories: counts.categories,
