@@ -920,7 +920,7 @@ const CATEGORY_GROUPS = [
 const MENU_PAGE_SIZE = 60;
 // Batas aman satu pesan menu. Kalau katalog lebih panjang, menu dipecah
 // menjadi beberapa halaman agar tetap nyaman dibaca di WhatsApp.
-const MENU_MESSAGE_LIMIT = 55000;
+const MENU_MESSAGE_LIMIT = 4000;
 
 function upper(value) {
   return String(value || '').toUpperCase();

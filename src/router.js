@@ -1492,7 +1492,14 @@ class Router {
             });
           }
 
-          await wa.sendText(chat, menuText, m, undefined, banner);
+          try {
+            await wa.sendText(chat, menuText, m, undefined, banner);
+          } catch (err) {
+            // Banner/teks panjang kadang ditolak WA. Kirim ulang tanpa banner
+            // supaya menu tetap tampil (voice note tidak jadi satu-satunya output).
+            console.error('[MENU] gagal kirim teks/banner, coba tanpa banner:', err && err.message);
+            await wa.sendText(chat, menuText, m);
+          }
 
           // Menu utama diikuti voice note singkat (gaya ALYA MD). Bisa
           // dimatikan lewat MENU_AUDIO=false atau ganti file lewat
