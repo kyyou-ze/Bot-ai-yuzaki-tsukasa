@@ -751,6 +751,16 @@ class TikTokMonitor {
     this.lastError = shortError(err);
     // Kuota/rate-limit bukan error fatal: jangan memicu notifikasi owner.
     if (isRateLimitError(err)) return;
+    // WAF/Cloudflare (403 + halaman challenge) juga bukan gangguan nyata pada
+    // akun yang dipantau. Cukup catat sekali di log internal, jangan spam owner.
+    if (err && err.waf) {
+      const lastWaf = this.errorLogAt.get(`waf:${account}`) || 0;
+      if (now - lastWaf >= ERROR_LOG_EVERY_MS) {
+        this.errorLogAt.set(`waf:${account}`, now);
+        log.debug(`[TIKTOK] ${account} kena WAF/Cloudflare: ${shortError(err)}`);
+      }
+      return;
+    }
     // Key/langganan provider ditolak sudah dilaporkan sekali oleh tiktokapi;
     // tidak perlu dihitung sebagai error berulang.
     if (err && err.auth) return;

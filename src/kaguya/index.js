@@ -365,6 +365,22 @@ async function ensureRuntime() {
       try {
         const db = await import(pathToFileURL(path.join(LIB_DIR, 'db', 'database.js')).href);
         if (!global.db) db.initDatabase();
+        // Simpan data tertunda saat proses berhenti (termasuk `.panel restart
+        // force`). Tanpa ini perubahan beberapa detik terakhir bisa hilang
+        // karena penulisan JSON/SQLite memang di-debounce.
+        if (typeof db.flushAllSync === 'function') {
+          global.__flushDb = () => {
+            try {
+              db.flushAllSync();
+            } catch {
+              /* best-effort saat shutdown */
+            }
+          };
+          if (!global.__flushDbHooked) {
+            global.__flushDbHooked = true;
+            process.on('exit', () => global.__flushDb && global.__flushDb());
+          }
+        }
       } catch (err) {
         console.error('[KAGUYA] database gagal dimuat:', err && err.message);
         throw err;

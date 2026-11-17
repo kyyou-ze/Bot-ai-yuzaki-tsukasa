@@ -163,7 +163,7 @@ async function main() {
   // Error kuota/rate-limit bukan masalah yang perlu dilaporkan ke WhatsApp.
   // Melaporkannya berulang justru berisiko membuat nomor bot kena batasan spam.
   const ALERT_QUIET_RE =
-    /(kuota|quota|rate.?limit|too many requests|\b429\b|cooldown sementara|waf block)/i;
+    /(kuota|quota|rate.?limit|too many requests|\b429\b|cooldown sementara|waf block|just a moment|slardarClientWAF|cloudflare|performing security verification)/i;
   log.setErrorHook(({ tag, message }) => {
     metrics.recordError(message, { tag });
     if (isTransientWaError(tag, message)) return;
@@ -612,6 +612,13 @@ async function main() {
     } catch {
       /* ignore */
     }
+    if (typeof global.__flushDb === 'function') {
+      try {
+        global.__flushDb();
+      } catch {
+        /* best-effort saat shutdown */
+      }
+    }
     process.exit(0);
   });
 
@@ -629,6 +636,13 @@ async function main() {
       wa.getSock()?.end?.(undefined);
     } catch {
       /* ignore */
+    }
+    if (typeof global.__flushDb === 'function') {
+      try {
+        global.__flushDb();
+      } catch {
+        /* best-effort saat shutdown */
+      }
     }
     process.exit(0);
   });

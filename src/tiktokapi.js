@@ -618,7 +618,9 @@ async function fetchUserPostsApi(unique, cfg = {}) {
     ['tikhub', postsTikHub],
     ['tiktok-api23', postsApi23],
     ['ensig', postsEnsig],
-    ['tikwm', postsTikwm],
+    // www.tikwm.com publik sengaja tidak dipakai lagi: hampir selalu diblok
+    // Cloudflare ("Just a moment...") sehingga hanya menghasilkan 403 dan
+    // alert palsu. Endpoint tikwmapi di atas tetap jadi sumber utama.
   ];
   const providers = allProviders.filter(([name]) => !providerBlocked(name));
 

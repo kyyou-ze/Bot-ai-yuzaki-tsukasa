@@ -393,6 +393,13 @@ class PanelFeature {
           'Panel harus dikonfigurasi auto-restart, jika tidak bot tetap mati dan harus dinyalakan manual.'
       );
       log.warn('[PANEL] owner meminta restart paksa (exit)');
+      if (typeof global.__flushDb === 'function') {
+        try {
+          global.__flushDb();
+        } catch {
+          /* best-effort */
+        }
+      }
       const timer = setTimeout(() => process.exit(1), 2000);
       if (timer.unref) timer.unref();
       return;

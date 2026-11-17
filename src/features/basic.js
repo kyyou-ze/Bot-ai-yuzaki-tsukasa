@@ -14,6 +14,36 @@ function digitsOf(jid) {
   return onlyDigits(jidUser(jid));
 }
 
+/**
+ * Owner tambahan dari database dan `global.owners`, dibaca ulang setiap
+ * pengecekan. Dengan begitu `.addowner` langsung berlaku tanpa restart dan
+ * tidak hilang walau DB dimuat setelah OwnerDetector dibuat.
+ */
+function runtimeOwnerDigits() {
+  const out = new Set();
+  try {
+    const lists = [global.db && global.db.owners, global.owners];
+    for (const list of lists) {
+      if (!Array.isArray(list)) continue;
+      for (const item of list) {
+        const n = onlyDigits(item);
+        if (n) out.add(n);
+      }
+    }
+  } catch {
+    /* global belum siap */
+  }
+  return out;
+}
+
+function runtimeOwnerLids() {
+  try {
+    return new Set((Array.isArray(global.lidowners) ? global.lidowners : []).map(String));
+  } catch {
+    return new Set();
+  }
+}
+
 class OwnerDetector {
   constructor() {
     this.jid = '';
@@ -57,6 +87,20 @@ class OwnerDetector {
     if (this.lid && (s === this.lid || c === this.lid)) return true;
     for (const j of this.extras) {
       if (s === j || c === j) return true;
+    }
+
+    // Owner tambahan (.addowner) bisa bertambah saat bot berjalan.
+    const runtime = runtimeOwnerDigits();
+    if (runtime.size) {
+      const sd = digitsOf(s);
+      const cd = digitsOf(c);
+      if ((sd && runtime.has(sd)) || (cd && runtime.has(cd))) return true;
+    }
+    const lids = runtimeOwnerLids();
+    if (lids.size) {
+      const su = jidUser(s);
+      const cu = jidUser(c);
+      if (lids.has(su) || lids.has(cu)) return true;
     }
     return false;
   }

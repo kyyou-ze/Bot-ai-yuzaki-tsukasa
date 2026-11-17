@@ -42,12 +42,15 @@ let handler = async (m, ctx) => {
     if (command === 'addowner') {
         if (getOwners().map(digits).includes(phone)) return reply(`+${phone} sudah menjadi owner.`)
         addDbOwner(phone)
+        // Paksa simpan sekarang supaya tidak hilang kalau bot langsung restart.
+        try { global.__flushDb?.() } catch {}
         return reply(`✅ +${phone} sekarang owner.\nAktif tanpa restart dan tersimpan di database.`, mention)
     }
 
     // delowner
     if (configOwners().includes(phone)) return reply(`+${phone} owner utama dari config.js. Hapus lewat config.js, bukan lewat command.`)
     if (!delDbOwner(phone)) return reply(`+${phone} bukan owner tambahan.`)
+    try { global.__flushDb?.() } catch {}
 
     // cabut juga LID yang sudah tersimpan, kalau tidak dia tetap dikenali sebagai owner sampai restart
     const lids = new Set([target.endsWith('@lid') ? userOf(target) : null])
