@@ -410,7 +410,7 @@ async function sendText(jid, text, quoted, mentions, linkPreview) {
   const content = { text: str };
   if (mentions && mentions.length) content.mentions = mentions;
   if (linkPreview) {
-    if (linkPreview.thumbnailUrl) {
+    if (linkPreview.thumbnailUrl || Buffer.isBuffer(linkPreview.thumbnail)) {
       // Kartu banner: gambar besar + judul/deskripsi ditempel lewat
       // externalAdReply, jadi URL tidak perlu (dan tidak boleh) tampil di teks.
       content.contextInfo = { externalAdReply: linkPreview };

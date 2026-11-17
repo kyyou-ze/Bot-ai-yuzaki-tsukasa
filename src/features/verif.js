@@ -1,6 +1,7 @@
 'use strict';
 
 const wa = require('../wa');
+const menuBanner = require('../menubanner');
 const { isGroupJid, jidUser, onlyDigits } = require('../util');
 const {
   normalizeAccount,
@@ -78,6 +79,157 @@ function senderLink(m) {
   };
 }
 
+// ───────────────── kartu profil gaya ALYA MD ─────────────────
+
+// Profil dari API pihak ketiga di-cache 5 menit supaya `.me` tidak membanjiri
+// layanan gratis. Kegagalan disimpan sebentar agar tidak menembak terus.
+const PROFILE_CACHE_MS = 5 * 60 * 1000;
+const PROFILE_FAIL_MS = 60 * 1000;
+const PROFILE_TIMEOUT_MS = 12000;
+const AVATAR_TIMEOUT_MS = 8000;
+const AVATAR_MAX_BYTES = 900 * 1024;
+const profileCache = new Map();
+const numberFormatter = new Intl.NumberFormat('en-US');
+const BULAN = [
+  'Januari',
+  'Februari',
+  'Maret',
+  'April',
+  'Mei',
+  'Juni',
+  'Juli',
+  'Agustus',
+  'September',
+  'Oktober',
+  'November',
+  'Desember',
+];
+
+function withTimeout(promise, ms, fallback = null) {
+  return new Promise((resolve) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      resolve(fallback);
+    }, ms);
+    if (typeof timer.unref === 'function') timer.unref();
+    Promise.resolve(promise).then(
+      (value) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(fallback);
+      }
+    );
+  });
+}
+
+function formatNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? numberFormatter.format(n) : '0';
+}
+
+function shorten(value, max = 280) {
+  const s = String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!s) return '-';
+  return s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s;
+}
+
+/** Bingkai teks profil ALYA MD. */
+function frame(title, lines, icon = '✦') {
+  const body = (lines || []).map((line) => `│ ${line}`);
+  return [`╭─✦ ${icon} *${title}*`, ...body, '╰─────✦'].join('\n');
+}
+
+function verifiedLabel(value) {
+  if (value === true) return 'Ya ✅';
+  if (value === false) return 'Tidak ❌';
+  const s = String(value ?? '').trim();
+  if (!s) return '-';
+  if (/^(true|yes|ya|verified)$/i.test(s)) return 'Ya ✅';
+  if (/^(false|no|tidak|unverified)$/i.test(s)) return 'Tidak ❌';
+  return s;
+}
+
+function privacyLabel(value) {
+  if (value === true) return 'Private Account 🔒';
+  if (value === false) return 'Public Account 🌐';
+  const s = String(value ?? '').trim();
+  if (!s) return '-';
+  if (/private|terkunci|pribadi/i.test(s)) return 'Private Account 🔒';
+  if (/public|umum/i.test(s)) return 'Public Account 🌐';
+  return s;
+}
+
+/** createTime dari API bisa berupa detik, milidetik, atau teks siap pakai. */
+function createTimeLabel(value, timezone) {
+  if (value === null || value === undefined || value === '') return '-';
+  if (typeof value === 'string' && !/^\d+$/.test(value.trim())) return value.trim() || '-';
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return String(value).trim() || '-';
+  const date = new Date(n > 1e12 ? n : n * 1000);
+  if (Number.isNaN(date.getTime())) return '-';
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone || 'Asia/Jakarta',
+      day: 'numeric',
+      month: 'numeric',
+      year: 'numeric',
+    }).formatToParts(date);
+    const pick = (type) => Number(parts.find((p) => p.type === type)?.value || 0);
+    const day = pick('day');
+    const month = pick('month');
+    const year = pick('year');
+    if (!day || !month || !year) return date.toISOString().slice(0, 10);
+    return `${day} ${BULAN[month - 1] || month} ${year}`;
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
+function avatarUrlOf(profile) {
+  const p = (profile && profile.profile) || {};
+  return (
+    p.avatarLarger ||
+    p.avatarMedium ||
+    p.avatarThumb ||
+    (profile && profile.avatar) ||
+    ''
+  );
+}
+
+async function fetchAvatar(url) {
+  if (!url || !/^https?:\/\//i.test(String(url))) return null;
+  return withTimeout(
+    (async () => {
+      const res = await fetch(String(url), {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+          Referer: 'https://www.tiktok.com/',
+        },
+      });
+      if (!res || !res.ok) return null;
+      const length = Number(res.headers.get('content-length') || 0);
+      if (length > AVATAR_MAX_BYTES) return null;
+      const buffer = Buffer.from(await res.arrayBuffer());
+      if (!buffer.length || buffer.length > AVATAR_MAX_BYTES) return null;
+      return buffer;
+    })(),
+    AVATAR_TIMEOUT_MS,
+    null
+  );
+}
+
 class VerifFeature {
   constructor(cfg, store, monitor, accounts) {
     this.cfg = cfg || {};
@@ -92,8 +244,127 @@ class VerifFeature {
     return COMMANDS.has(String(name || '').toLowerCase());
   }
 
-  reply(m, text) {
-    return wa.sendText(m.key.remoteJid, text, m).catch(() => {});
+  reply(m, text, linkPreview) {
+    return wa.sendText(m.key.remoteJid, text, m, undefined, linkPreview).catch(() => {});
+  }
+
+  /** Ambil profil TikTok dengan cache; monitor yang sudah berjalan dipakai dulu. */
+  async fetchProfile(account) {
+    const key = accountKey(account);
+    const cached = profileCache.get(key);
+    const ttl = cached && cached.profile ? PROFILE_CACHE_MS : PROFILE_FAIL_MS;
+    if (cached && Date.now() - cached.at < ttl) return cached.profile;
+
+    let profile = null;
+    try {
+      if (this.monitor && typeof this.monitor.getProfile === 'function') {
+        profile = await withTimeout(this.monitor.getProfile(account), PROFILE_TIMEOUT_MS, null);
+      } else {
+        const { fetchTikTokUser } = require('../tiktokapi');
+        profile = await withTimeout(fetchTikTokUser(account, this.cfg), PROFILE_TIMEOUT_MS, null);
+      }
+    } catch {
+      profile = null;
+    }
+
+    profileCache.set(key, { at: Date.now(), profile: profile || null });
+    if (profileCache.size > 200) profileCache.delete(profileCache.keys().next().value);
+    return profile || null;
+  }
+
+  /** Satu blok profil: kartu ALYA MD + data monitoring Tsukasa. */
+  renderProfile(entry, profile, videos, hashtag, cn) {
+    const acc = normalizeAccount(entry.accName);
+    const blocks = [];
+
+    if (profile) {
+      blocks.push(
+        frame(
+          'TIKTOK',
+          [
+            `👤 *Username*: ${displayAccount(profile.username || acc)}`,
+            `📛 *Nickname*: ${shorten(profile.nickname, 80)}`,
+            `☑️ *Verified*: ${verifiedLabel(profile.verified)}`,
+            `🔐 *Account*: ${privacyLabel(profile.privateAccount)}`,
+            `🪪 *Nama WA*: ${shorten(entry.userName, 80)}`,
+            `📢 *Grup*: ${displayGroup(entry)}`,
+            `📅 *Dibuat*: ${createTimeLabel(profile.createTime, this.timezone)}`,
+          ],
+          '🎵'
+        )
+      );
+      const digg = Number(profile.diggCount);
+      blocks.push(
+        frame(
+          'STATISTIK',
+          [
+            `👥 *Followers*: ${formatNumber(profile.followers)}`,
+            `👤 *Following*: ${formatNumber(profile.followings ?? profile.following)}`,
+            `❤️ *Likes*: ${formatNumber(profile.hearts ?? profile.heartsCount ?? profile.likes)}`,
+            `🎬 *Videos*: ${formatNumber(profile.videoCount)}`,
+            ...(Number.isFinite(digg) && digg > 0 ? [`👍 *Digg*: ${formatNumber(digg)}`] : []),
+          ],
+          '📊'
+        )
+      );
+      blocks.push(
+        frame('BIO', [shorten(profile.signature || profile.bio || '-', 280)], '💬')
+      );
+    } else {
+      blocks.push(
+        frame(
+          'TIKTOK',
+          [
+            `👤 *Username*: ${displayAccount(acc)}`,
+            `📛 *Nickname*: ${shorten(entry.userName, 80)}`,
+            `📢 *Grup*: ${displayGroup(entry)}`,
+            '⚠️ _Data profil TikTok belum bisa diambil, coba lagi nanti._',
+          ],
+          '🎵'
+        )
+      );
+    }
+
+    const latest = videos[0];
+    const monitorLines = [`🎯 *Target*: ${hashtag} • CN ${cn}`];
+    if (latest) {
+      const hashtagOk = latest.hashtagStatus === 'Ada';
+      const cnOk = latest.cnStatus === 'Cocok';
+      monitorLines.push(
+        `🕒 *UP hari*: ${formatClock(latest.timestamp, this.timezone)} WIB • ${videos.length} video`
+      );
+      monitorLines.push(`${hashtagOk ? '✅' : '❎'} ${hashtag} ${hashtagOk ? 'ada' : 'belum ada'}`);
+      monitorLines.push(`${cnOk ? '✅' : '❎'} CN ${cn} ${cnOk ? 'cocok' : 'belum cocok'}`);
+
+      const notes = [];
+      if (!hashtagOk) notes.push(`caption belum memakai ${hashtag}`);
+      if (!cnOk) notes.push(`nama/bio belum memuat ${cn}`);
+      if (notes.length) monitorLines.push(`⚠️ ${notes.join(' • ')}`);
+
+      const caption = String(latest.caption || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (caption) {
+        monitorLines.push(`📝 ${caption.slice(0, 120)}${caption.length > 120 ? '…' : ''}`);
+      }
+      if (latest.link) monitorLines.push(`🔗 *Video*: ${latest.link}`);
+    } else {
+      monitorLines.push('🕒 *UP hari*: belum ada');
+      monitorLines.push(`❎ ${hashtag} belum ada video untuk dicek`);
+    }
+
+    if (entry.createdAt) {
+      monitorLines.push(`📅 *Verif*: ${formatDate(entry.createdAt, this.timezone)}`);
+    }
+    const monitorOn =
+      !this.accounts ||
+      typeof this.accounts.isEnabled !== 'function' ||
+      this.accounts.isEnabled();
+    monitorLines.push(`🔔 *Status*: ${monitorOn ? 'Aktif (real-time)' : 'Nonaktif'}`);
+    blocks.push(frame('MONITORING', monitorLines, '📡'));
+
+    blocks.push(`🔗 https://www.tiktok.com/@${acc}`);
+    return blocks.join('\n\n');
   }
 
   usage() {
@@ -102,7 +373,7 @@ class VerifFeature {
       '/verif <nama_acc>',
       '/listverif',
       '/unverif <nama_acc>',
-      '/me',
+      '/me — kartu profil TikTok + statistik',
       '',
       '*Pantauan akun*',
       '/addakun <nama_acc> — sama seperti /verif di grup, khusus owner di DM',
@@ -512,55 +783,58 @@ class VerifFeature {
     const defaultCn = normalizeCn(this.cfg.tiktokCnKeyword || 'ECN');
     const today = this.store.todayVideos();
 
-    const lines = ['👤 *PROFIL TIKTOK KAMU*', ''];
-    entries.forEach((entry, index) => {
+    // Ambil profil TikTok secara paralel. Batasi 5 akun supaya `.me` tidak
+    // menembak API terlalu banyak kalau satu nomor punya banyak akun.
+    const profiles = await Promise.all(
+      entries.map((entry, index) =>
+        index < 5 ? this.fetchProfile(entry.accName) : Promise.resolve(null)
+      )
+    );
+
+    const header =
+      entries.length === 1
+        ? '🎵 *PROFIL TIKTOK KAMU*'
+        : `🎵 *PROFIL TIKTOK KAMU* (${entries.length} akun)`;
+    const sections = entries.map((entry, index) => {
       const acc = normalizeAccount(entry.accName);
       const hashtag = normalizeHashtag(entry.hashtag) || defaultHashtag;
       const cn = normalizeCn(entry.cnKeyword) || defaultCn;
       const videos = today.filter((v) => accountKey(v.username) === accountKey(acc));
-      const latest = videos[0];
-
-      lines.push(`🎵 *${displayAccount(acc)}*`);
-      lines.push(`   👤 Nama WA : ${entry.userName || '-'}`);
-      lines.push(`   🏠 Grup    : ${displayGroup(entry)}`);
-      lines.push(`   🎯 Target  : ${hashtag} • CN ${cn}`);
-      if (entry.createdAt) {
-        lines.push(`   📅 Verif   : ${formatDate(entry.createdAt, this.timezone)}`);
-      }
-
-      if (latest) {
-        const hashtagOk = latest.hashtagStatus === 'Ada';
-        const cnOk = latest.cnStatus === 'Cocok';
-        lines.push(
-          `   🕒 UP hari : ${formatClock(latest.timestamp, this.timezone)} WIB • ${videos.length} video`
-        );
-        lines.push(`   ${hashtagOk ? '✅' : '❎'} ${hashtag} ${hashtagOk ? 'ada' : 'belum ada'}`);
-        lines.push(`   ${cnOk ? '✅' : '❎'} CN ${cn} ${cnOk ? 'cocok' : 'belum cocok'}`);
-
-        const notes = [];
-        if (!hashtagOk) notes.push(`caption belum memakai ${hashtag}`);
-        if (!cnOk) notes.push(`nama/bio belum memuat ${cn}`);
-        if (notes.length) lines.push(`   ⚠️ ${notes.join(' • ')}`);
-
-        const caption = String(latest.caption || '')
-          .replace(/\s+/g, ' ')
-          .trim();
-        if (caption) {
-          lines.push(`   📝 ${caption.slice(0, 120)}${caption.length > 120 ? '…' : ''}`);
-        }
-        if (latest.link) lines.push(`   🔗 ${latest.link}`);
-      } else {
-        lines.push('   🕒 UP hari : belum ada');
-        lines.push(`   ${hashtag}: belum ada video untuk dicek`);
-      }
-
-      if (index < entries.length - 1) lines.push('   ───────────────');
-      lines.push('');
+      return this.renderProfile(entry, profiles[index], videos, hashtag, cn);
     });
 
-    lines.push(`📊 Total akun tertaut: ${entries.length}`);
-    lines.push('🗑️ Hapus tautan: /unverif <nama_acc>');
-    await this.reply(m, lines.join('\n'));
+    const text = [
+      header,
+      '',
+      sections.join('\n\n━━━━━━━━━━━━━━━\n\n'),
+      '',
+      `📊 *Total akun tertaut*: ${entries.length}`,
+      '🗑️ Hapus tautan: /unverif <nama_acc>',
+    ].join('\n');
+
+    // Kartu gambar memakai avatar akun pertama yang profilnya berhasil diambil.
+    const firstIndex = profiles.findIndex(Boolean);
+    const firstProfile = firstIndex >= 0 ? profiles[firstIndex] : null;
+    const cardEntry = firstIndex >= 0 ? entries[firstIndex] : entries[0];
+    let card = null;
+    const avatar = await fetchAvatar(avatarUrlOf(firstProfile));
+    if (avatar) {
+      try {
+        card = await menuBanner.buildAdReply({
+          thumbnail: avatar,
+          title: `${this.cfg.botName || 'Tsukasa'} • Profil TikTok`,
+          description:
+            entries.length === 1
+              ? `Profil ${displayAccount(cardEntry.accName)}`
+              : `${entries.length} akun TikTok tertaut`,
+          sourceUrl: `https://www.tiktok.com/@${normalizeAccount(cardEntry.accName)}`,
+        });
+      } catch {
+        card = null;
+      }
+    }
+
+    await this.reply(m, text, card);
   }
 
   async handleList(m) {
