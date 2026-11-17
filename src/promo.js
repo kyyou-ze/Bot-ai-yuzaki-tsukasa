@@ -107,7 +107,12 @@ class Promo {
     const sock = wa.getSock();
     if (!sock || typeof sock.groupFetchAllParticipating !== 'function') return [];
     const map = await sock.groupFetchAllParticipating();
-    return Object.keys(map || {}).filter((jid) => isGroupJid(jid));
+    const groups = Object.keys(map || {}).filter((jid) => isGroupJid(jid));
+    // Saat grupbot ON, promo tidak boleh terkirim ke grup di luar whitelist.
+    if (global.grupbot === true) {
+      return groups.filter((jid) => !!global.db?.groups?.[jid]?.allowed);
+    }
+    return groups;
   }
 
   async preview() {

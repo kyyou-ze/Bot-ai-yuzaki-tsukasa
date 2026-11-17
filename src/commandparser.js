@@ -23,7 +23,7 @@ const KNOWN_COMMANDS = new Set([
   'afk', 'back', 'unafk', 'kembali',
   'config', 'setting', 'pengaturan', 'set', 'isi',
   'update', 'upgrade', 'autoupdate',
-  'panel', 'server',
+  'panel', 'server', 'grupbot',
   'geminikey', 'gkey',
   'hot', 'tsukasa', 'persona', 'mode',
   'modegrup', 'groupmode',

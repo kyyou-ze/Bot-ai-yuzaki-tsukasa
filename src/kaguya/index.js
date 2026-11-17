@@ -342,6 +342,23 @@ function getCatalog() {
   return catalogCache;
 }
 
+// `.grupbot on/off` ditulis ke lib/kaguya-config.js lewat updateConfigValue.
+// File ESM itu baru di-import saat runtime Kaguya pertama dipakai, jadi baca
+// nilainya lebih awal secara sinkron supaya gate whitelist di router sudah
+// benar sejak pesan pertama setelah restart.
+function persistedGrupbot() {
+  const files = [path.join(ROOT, 'config.js'), path.join(LIB_DIR, 'kaguya-config.js')];
+  for (const file of files) {
+    try {
+      const m = fs.readFileSync(file, 'utf-8').match(/global\.grupbot\s*=\s*(true|false)\b/);
+      if (m) return m[1] === 'true';
+    } catch {
+      /* file belum ada / tidak bisa dibaca */
+    }
+  }
+  return undefined;
+}
+
 function setGlobals(cfg) {
   const g = global;
   g.prefix = ['.', '!', '/'];
@@ -370,7 +387,13 @@ function setGlobals(cfg) {
   g.gconly = false;
   // Jangan reset sewamode kalau sudah diubah lewat .sewamode / SEWA_MODE.
   g.sewamode = typeof g.sewamode === 'boolean' ? g.sewamode : false;
-  g.grupbot = false;
+  const savedGrupbot = persistedGrupbot();
+  g.grupbot =
+    typeof savedGrupbot === 'boolean'
+      ? savedGrupbot
+      : typeof g.grupbot === 'boolean'
+        ? g.grupbot
+        : false;
   g.botMode = 'all';
   g.buttonMode = false;
   g.replyCardOn = false;

@@ -3,10 +3,11 @@
  * .grupbot — whitelist grup: hanya grup di daftar yang bisa memakai bot, walau mode self
  *
  *   .grupbot                   status + daftar perintah
- *   .grupbot on | off          aktif / nonaktifkan fitur
+ *   .grupbot on | off          aktif / nonaktifkan fitur (owner saja)
  *   .grupbot add [id|link]     masukkan grup ke daftar (tanpa argumen = grup ini)
  *   .grupbot del [id|link|no]  keluarkan dari daftar (tanpa argumen = grup ini)
  *   .grupbot list              lihat daftar grup
+ * Owner bisa mengatur semua grup; admin grup hanya grupnya sendiri (tanpa argumen).
  */
 
 import { getMeta } from '../../lib/platform/wa.js'
@@ -26,7 +27,7 @@ async function resolveGroup(sock, tok) {
     return { jid: info.id, name: info.subject || '' }
 }
 
-let handler = async (m, { sock, text, prefix, jid, reply }) => {
+let handler = async (m, { sock, text, prefix, jid, reply, isOwner }) => {
     const p = prefix || '.'
     const args = String(text || '').trim().split(/\s+/).filter(Boolean)
     const sub = (args[0] || '').toLowerCase()
@@ -43,11 +44,12 @@ let handler = async (m, { sock, text, prefix, jid, reply }) => {
                 `${p}grupbot add [id|link]  (kosong = grup ini)\n` +
                 `${p}grupbot del [id|link|no]\n` +
                 `${p}grupbot list\n\n` +
-                `Kalau ON: hanya grup di daftar yang dilayani, dan semua member grup itu boleh pakai bot walau mode self. Grup lain diabaikan (owner tetap bisa).`
+                `Kalau ON: hanya grup di daftar yang dilayani, dan semua member grup itu boleh pakai bot walau mode self. Grup lain diabaikan (owner tetap bisa). Admin grup bisa ${p}grupbot add / del untuk grupnya sendiri; on/off hanya owner.`
             )
         }
 
         if (/^(on|aktif|1|true|off|mati|nonaktif|0|false)$/.test(sub)) {
+            if (!isOwner) return reply('Hanya owner yang bisa mengaktifkan/mematikan grupbot.')
             const on = /^(on|aktif|1|true)$/.test(sub)
             if (isGroupbotOn() === on) return reply(`･ﾟ✦ grupbot sudah ${on ? 'aktif' : 'nonaktif'}.`)
             global.grupbot = on
@@ -71,6 +73,7 @@ let handler = async (m, { sock, text, prefix, jid, reply }) => {
         }
 
         if (sub === 'add' || sub === 'tambah') {
+            if (rest[0] && !isOwner) return reply('Admin grup hanya bisa mendaftarkan grup ini. Pakai .grupbot add tanpa argumen.')
             let target = { jid, name: '' }
             if (rest[0]) target = await resolveGroup(sock, rest[0]).catch(() => null)
             else if (!m.isGroup) return reply(`Pakai di dalam grup, atau sertakan id / link grup.\nContoh: ${p}grupbot add https://chat.whatsapp.com/xxxx`)
@@ -85,6 +88,7 @@ let handler = async (m, { sock, text, prefix, jid, reply }) => {
         }
 
         if (sub === 'del' || sub === 'delete' || sub === 'hapus' || sub === 'remove') {
+            if (rest[0] && !isOwner) return reply('Admin grup hanya bisa menghapus grup ini. Pakai .grupbot del tanpa argumen.')
             let jidTarget = null
             if (rest[0]) {
                 if (/^\d{1,3}$/.test(rest[0])) jidTarget = list[Number(rest[0]) - 1]?.jid
@@ -106,6 +110,6 @@ let handler = async (m, { sock, text, prefix, jid, reply }) => {
 handler.command = ['grupbot']
 handler.tags = ['owner']
 handler.help = ['grupbot on|off', 'grupbot add [id|link]', 'grupbot del [id|link|no]', 'grupbot list']
-handler.owner = true
+handler.admin = true
 
 export default handler

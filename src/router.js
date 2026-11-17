@@ -918,6 +918,15 @@ class Router {
   }
 
   async handleGroupParticipantsUpdate(ev) {
+    // Grupbot ON: jangan kirim welcome/goodbye di grup di luar whitelist.
+    const updateChat = String(ev?.id || '');
+    if (
+      global.grupbot === true &&
+      isGroupJid(updateChat) &&
+      !global.db?.groups?.[updateChat]?.allowed
+    ) {
+      return;
+    }
     try {
       const action = String(ev?.action || '').toLowerCase();
       if (action === 'add' || action === 'remove') {
@@ -998,6 +1007,19 @@ class Router {
     const isCmd = Boolean(explicitCmd || knownCmd);
     const cmdName = isCmd && parsed ? parsed.cmd : '';
     const cmdRest = isCmd && parsed ? parsed.rest : '';
+
+    // Gerbang grupbot (whitelist grup): kalau ON, hanya grup yang terdaftar
+    // lewat .grupbot yang dilayani. Owner tetap bisa dari grup mana pun, dan
+    // .grupbot sendiri tetap lolos supaya admin bisa mendaftarkan grupnya.
+    if (
+      isGroupJid(chat) &&
+      global.grupbot === true &&
+      !isOwner &&
+      !global.db?.groups?.[chat]?.allowed &&
+      cmdName !== 'grupbot'
+    ) {
+      return;
+    }
 
     // Gerbang sewa: inilah bedanya grup yang menyewa dan tidak.
     // sewamode ON  -> grup tanpa sewa tidak dilayani (kecuali owner & perintah sewa/menu).
