@@ -392,8 +392,21 @@ async function main() {
             sock
               .requestPairingCode(cfg.pairingNumber)
               .then((code) => {
-                log.info('[WA] Pairing code untuk ' + cfg.pairingNumber + ': ' + code);
-                log.info('[WA] Buka WhatsApp > Perangkat Tertaut > Tautkan dengan nomor telepon.');
+                const { formatDateTime } = require('./src/util');
+                log.info(
+                  '[WA] 🔑 KODE PAIRING TERBARU (' +
+                    formatDateTime(Date.now(), cfg.timezone) +
+                    ') untuk ' +
+                    cfg.pairingNumber +
+                    ': ' +
+                    code
+                );
+                log.info(
+                  '[WA] Masukkan SEGERA di WhatsApp > Perangkat Tertaut > Tautkan dengan nomor telepon. ' +
+                    'Abaikan kode lama; kode diganti tiap ' +
+                    Math.round(refreshMs / 1000) +
+                    ' detik.'
+                );
               })
               .catch((err) => {
                 // Biarkan QR berikutnya mencoba minta kode baru.
