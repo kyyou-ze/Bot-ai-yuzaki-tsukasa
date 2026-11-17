@@ -233,7 +233,7 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `AUTO_READ` | `true` | Tandai pesan masuk sudah dibaca (centang biru). Status/story dan channel dilewati |
 | `TYPING_MAX_MS` | `1500` | Durasi maksimal animasi mengetik sebelum setiap pesan keluar (teks, media, poll, sticker) |
 | `BOT_PASSIVE_MODE` | `false` | `true` = bot hanya membalas perintah/panggilan; promo, reminder, notifikasi TikTok, dan alert error otomatis dimatikan |
-| `HEALTH_ALERT_ENABLED` | `true` | Kirim notifikasi error ke owner |
+| `HEALTH_ALERT_ENABLED` | `false` | Kirim notifikasi error ke owner (default mati; aktifkan dengan `.set HEALTH_ALERT_ENABLED on`) |
 | `HEALTH_ALERT_COOLDOWN_SEC` | `120` | Jeda minimum antar alert apa pun |
 | `HEALTH_ALERT_TAG_COOLDOWN_SEC` | `900` | Jeda minimum alert untuk tag yang sama |
 | `HEALTH_ALERT_MAX_PER_HOUR` | `6` | Batas jumlah alert per jam |
@@ -1097,7 +1097,7 @@ Bot menjaga sesi dan koneksi WhatsApp tetap sehat tanpa intervensi manual.
 - **Pemulihan sesi logout** — saat WhatsApp mencabut sesi (401), folder sesi lama dipindahkan ke `session.loggedout-<waktu>` lalu bot masuk alur pairing baru (QR atau `PAIRING_NUMBER`) tanpa restart manual. Dibatasi 5 pemulihan per 10 menit; setelah itu bot berhenti agar tidak menjadi loop. Matikan dengan `SESSION_RESET_ON_LOGOUT=false`.
 - **Antrean unduhan** — unduhan HTTP (`downloadBytes`) dan media WhatsApp (`downloadMedia`) melewati antrean global dengan batas `DOWNLOAD_QUEUE_CONCURRENCY`. Ini mencegah RAM/bandwidth habis saat banyak permintaan berat bersamaan.
 - **Metrik & health** — `.health`, `.status`, dan `GET /metrics` menampilkan jumlah pesan, command, error, reconnect, antrean unduhan, serta status backup. `GET /metrics` mengembalikan JSON.
-- **Notifikasi error owner** — setiap log level `error` dicatat ke metrik dan dikirim ke owner lewat WhatsApp. Alert dibatasi `HEALTH_ALERT_COOLDOWN_SEC`, satu alert per tag per `HEALTH_ALERT_TAG_COOLDOWN_SEC`, dan maksimal `HEALTH_ALERT_MAX_PER_HOUR` per jam. Error kuota/rate-limit/429 tidak dikirim ke WhatsApp. Matikan dengan `HEALTH_ALERT_ENABLED=false` atau `BOT_PASSIVE_MODE=true`.
+- **Notifikasi error owner** — setiap log level `error` tetap dicatat ke metrik, tetapi pengirimannya ke owner **default mati**. Aktifkan lewat `.set HEALTH_ALERT_ENABLED on` atau `HEALTH_ALERT_ENABLED=true`. Saat aktif, alert dibatasi `HEALTH_ALERT_COOLDOWN_SEC`, satu alert per tag per `HEALTH_ALERT_TAG_COOLDOWN_SEC`, dan maksimal `HEALTH_ALERT_MAX_PER_HOUR` per jam. Error kuota/rate-limit/429 tidak dikirim ke WhatsApp. `BOT_PASSIVE_MODE=true` juga mematikan alert.
 - **Presence hemat risiko** — dengan `PRESENCE_MODE=auto` (default), nomor bot tidak tampil online terus-menerus. Status hanya aktif sebentar saat bot mengetik/mengirim, lalu kembali offline setelah `PRESENCE_IDLE_OFFLINE_SEC`. Semua kegiatan otomatis tetap berjalan. Gunakan `offline` untuk tidak pernah menampilkan presence, atau `online` untuk perilaku lama.
 - **Animasi mengetik** — semua pesan keluar (teks, gambar, video, audio/VN, dokumen, sticker, poll) mengirim status `composing` lebih dulu, lalu `paused`. Durasi maksimal diatur `TYPING_MAX_MS` (default 1500 ms).
 - **Auto-read** — `AUTO_READ=true` (default) menandai pesan masuk sebagai sudah dibaca (centang biru). Status/story, channel, dan pesan dari bot sendiri dilewati. Bisa dimatikan lewat `.set AUTO_READ false`.

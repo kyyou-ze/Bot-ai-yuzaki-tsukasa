@@ -319,7 +319,7 @@ function load() {
       1,
       Math.min(10, intEnv(getenv('DOWNLOAD_QUEUE_CONCURRENCY', '2'), 2))
     ),
-    healthAlertEnabled: boolEnv(getenv('HEALTH_ALERT_ENABLED', 'true'), true),
+    healthAlertEnabled: boolEnv(getenv('HEALTH_ALERT_ENABLED', 'false'), false),
     // Mode pasif: bot tetap terhubung untuk menerima perintah, tetapi tidak
     // mengirim promosi, reminder, notifikasi TikTok, atau alert error sendiri.
     passiveMode: boolEnv(getenv('BOT_PASSIVE_MODE', getenv('QUIET_MODE', 'false')), false),

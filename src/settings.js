@@ -1037,7 +1037,7 @@ const DEFS = [
     group: 'reliability',
     label: 'Kirim notifikasi error ke owner',
     type: 'bool',
-    default: true,
+    default: false,
     apply: (cfg, v) => {
       cfg.healthAlertEnabled = v;
     },
@@ -1178,6 +1178,11 @@ function load() {
         // Abaikan nilai lama yang tidak valid supaya bot tetap bisa boot.
       }
     }
+  }
+  // Default mati. Env lama yang masih berisi true diabaikan supaya alert error
+  // tidak spam owner. Bisa diaktifkan lagi lewat `.set HEALTH_ALERT_ENABLED on`.
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'HEALTH_ALERT_ENABLED')) {
+    process.env.HEALTH_ALERT_ENABLED = 'false';
   }
   return overrides;
 }
