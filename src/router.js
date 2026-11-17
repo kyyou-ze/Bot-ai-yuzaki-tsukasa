@@ -1405,7 +1405,7 @@ class Router {
         bang.cmd === 'livemenu'
       ) {
         const usedPrefix = /^[.!/]/.test(origTxt) ? origTxt[0] : '.';
-        log.info(`[MENU] dismiss=${bang.cmd} rest=${String(bang.rest || '').slice(0, 40)} chat=${chat}`);
+        console.log(`[MENU] masuk cmd=${bang.cmd} rest=${String(bang.rest || '').slice(0, 40)} chat=${chat}`);
         const builtinCategories = featureList()
           .filter((f) => !isGroupJid(chat) || this.store.isFeatureEnabled(chat, f.key))
           .map((f) => ({
@@ -1468,7 +1468,7 @@ class Router {
           let menuText =
             menu ||
             `Kategori *${String(bang.rest || '').trim()}* tidak ditemukan.\nCoba ${usedPrefix}menu atau ${usedPrefix}menu all.`;
-          log.info(`[MENU] disusun ${menuText.length} karakter`);
+          console.log(`[MENU] disusun ${menuText.length} karakter`);
 
           // Status sewa grup ditampilkan di menu supaya bedanya kelihatan.
           if (isGroupJid(chat)) {
@@ -1498,15 +1498,32 @@ class Router {
             }
           }
 
+          // Versi ringkas dikirim lebih dulu: kalau menu panjang/banner ditolak
+          // WA, user tetap melihat teks menu, bukan hanya suara.
+          const shortMenu = [
+            `*${(this.cfg && this.cfg.botName) || 'Tsukasa'} — MENU*`,
+            `Total ${menuText.length} karakter.`,
+            '',
+            `${usedPrefix}menu all — indeks kategori`,
+            `${usedPrefix}menu <kategori> — daftar command`,
+            `${usedPrefix}menu cari <kata> — cari command`,
+            `${usedPrefix}help <command> — cara pakai`,
+            '',
+            'Kategori: ai, anime, sticker, download, fun, rpg, group, owner, tools, verif.',
+          ].join('\n');
+          await wa.sendText(chat, shortMenu, m).catch((e) =>
+            console.error('[MENU] gagal kirim versi ringkas:', e && e.message)
+          );
+
           try {
             await wa.sendText(chat, menuText, m, undefined, banner);
-            log.info('[MENU] terkirim');
+            console.log('[MENU] terkirim');
           } catch (err) {
             // Banner/teks panjang kadang ditolak WA. Kirim ulang tanpa banner
             // supaya menu tetap tampil (voice note tidak jadi satu-satunya output).
             console.error('[MENU] gagal kirim teks/banner, coba tanpa banner:', err && err.message);
             await wa.sendText(chat, menuText, m);
-            log.info('[MENU] terkirim tanpa banner');
+            console.log('[MENU] terkirim tanpa banner');
           }
 
           // Menu utama diikuti voice note singkat (gaya ALYA MD). Bisa
