@@ -1484,11 +1484,20 @@ class Router {
             }
           }
 
-          // Banner hanya untuk menu utama. Kartu banner ditempel lewat
-          // externalAdReply supaya URL tidak perlu tampil di badan pesan.
-          // Banner externalAdReply sering membuat WA menyembunyikan teks menu
-          // (pesan terkirim tapi tidak tampil). Menu dikirim sebagai teks polos.
-          const banner = null;
+          // Banner hanya untuk menu utama. Ditempel lewat externalAdReply.
+          // Versi ringkas tetap dikirim lebih dulu supaya teks selalu tampil
+          // walaupun kartu banner ditolak/disembunyikan WhatsApp.
+          let banner = null;
+          if (!String(bang.rest || '').trim()) {
+            try {
+              banner = await menuBanner.buildMenuPreview({
+                title: (this.cfg && this.cfg.botName) || 'Tsukasa',
+                description: 'Sticker, unduhan, game grup, dan moderasi.',
+              });
+            } catch (err) {
+              console.error('[MENU] banner gagal dibangun:', err && err.message);
+            }
+          }
 
           // Versi ringkas dikirim lebih dulu: kalau menu panjang/banner ditolak
           // WA, user tetap melihat teks menu, bukan hanya suara.
@@ -1518,13 +1527,9 @@ class Router {
             console.log('[MENU] terkirim tanpa banner');
           }
 
-          // Voice note menu sengaja tidak dikirim lagi: sering jadi satu-satunya
-          // yang tampil saat teks menu tertahan WA. Aktifkan manual lewat
-          // MENU_AUDIO_FORCE=true kalau benar-benar menginginkannya.
-          if (
-            String(process.env.MENU_AUDIO_FORCE || '').toLowerCase() === 'true' &&
-            !String(bang.rest || '').trim()
-          ) {
+          // Voice note dikirim paling akhir, setelah teks menu. Jadi teks tetap
+          // tampil dulu; kalau audio gagal tidak mengganggu menu.
+          if (!String(bang.rest || '').trim()) {
             await menuAudio.sendMenuAudio(this.sock, chat, m).catch(() => false);
           }
           return;
