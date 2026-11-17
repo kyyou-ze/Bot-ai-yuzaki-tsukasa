@@ -11,6 +11,7 @@ const {
   readViaJina,
   isWafError,
   isRateLimitError,
+  isAuthError,
   isArchivePostsBlocked,
   hasConfiguredPostsApi,
   fetchUserPostsApi,
@@ -407,6 +408,7 @@ async function fetchUserVideos(account, cfg = {}) {
   if (!unique) return [];
   const errors = [];
   let waf = false;
+  let authFailures = 0;
 
   const localRequest = (url, options, timeoutMs) =>
     tiktokFetch(url, options, timeoutMs, cfg);
@@ -474,12 +476,16 @@ async function fetchUserVideos(account, cfg = {}) {
         throw notFoundError;
       }
       if ((err && err.waf) || isWafError(err)) waf = true;
+      if ((err && err.auth) || isAuthError(err)) authFailures += 1;
       errors.push(`${name}: ${err && err.message ? err.message : err}`);
     }
   }
 
   const finalError = new Error(errors.join(' | ') || 'gagal mengambil video TikTok');
   finalError.waf = waf;
+  // Semua sumber yang dicoba hanya menolak key/langganan: masalah konfigurasi,
+  // jangan dikirim sebagai alert error berulang ke owner.
+  if (authFailures && authFailures === errors.length) finalError.auth = true;
   throw finalError;
 }
 
@@ -745,6 +751,9 @@ class TikTokMonitor {
     this.lastError = shortError(err);
     // Kuota/rate-limit bukan error fatal: jangan memicu notifikasi owner.
     if (isRateLimitError(err)) return;
+    // Key/langganan provider ditolak sudah dilaporkan sekali oleh tiktokapi;
+    // tidak perlu dihitung sebagai error berulang.
+    if (err && err.auth) return;
     const last = this.errorLogAt.get(account) || 0;
     if (now - last < ERROR_LOG_EVERY_MS) return;
     this.errorLogAt.set(account, now);

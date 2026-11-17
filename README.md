@@ -814,7 +814,7 @@ Bot memantau akun di `TIKTOK_ACCOUNTS` (atau daftar hasil command) setiap `TIKTO
 - `local`: hanya scraper lokal (paling hemat kuota). Kalau embed benar-benar diblokir WAF, bot tetap memakai Jina sebagai cadangan darurat agar detector tidak mati.
 - `api`: lewati scraper lokal dan pakai rantai API/Jina seperti konfigurasi lama.
 
-Cadangan: custom/TikHub/tiktok-api23/Ensig (kalau diisi) → TikWM `www.tikwm.com/api/user/posts` → Jina Reader (markdown) → Jina HTML (embed) → scraping profil langsung. Kalau semua sumber kena 403/WAF, bot berhenti selama `TIKTOK_WAF_COOLDOWN_MIN` menit dan hanya menulis satu log `[TIKTOK] WAF block, retry 10 menit`. Untuk tiap video baru, bot mengecek:
+Cadangan: custom/TikHub/tiktok-api23/Ensig (kalau diisi) → TikWM `www.tikwm.com/api/user/posts` → Jina Reader (markdown) → Jina HTML (embed) → scraping profil langsung. Kalau semua sumber kena 403/WAF, bot berhenti selama `TIKTOK_WAF_COOLDOWN_MIN` menit dan hanya menulis satu log `[TIKTOK] WAF block, retry 10 menit`. Error `401/403` karena API key ditolak atau langganan RapidAPI belum aktif (mis. `You are not subscribed to this API`) **tidak** dianggap WAF: provider itu dinonaktifkan sementara 1 jam, dicatat sekali di log, lalu rantai sumber lain tetap jalan. Untuk tiap video baru, bot mengecek:
 
 - Caption mengandung hashtag target grup (`#margaecn` default, case-insensitive).
 - Nickname/display name akun mengandung `TIKTOK_CN_KEYWORD` (default `ECN`). Huruf Unicode seperti `𝙀𝘾𝙉`, `〆𝙀𝘾𝙉`, dan `ft 𝙀𝘾𝙉` otomatis dinormalisasi jadi `ECN` sebelum dicocokkan.

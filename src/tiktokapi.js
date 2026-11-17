@@ -33,10 +33,22 @@ const ARCHIVE_QUOTA_COOLDOWN_MS = 10 * 60 * 1000;
 const ARCHIVE_QUOTA_COOLDOWN_MAX_MS = 60 * 60 * 1000;
 const PROVIDER_COOLDOWN_MS = 10 * 60 * 1000;
 const PROVIDER_COOLDOWN_MAX_MS = 60 * 60 * 1000;
+// Kredensial ditolak (API key salah / belum subscribe) bukan masalah sementara:
+// jangan retry tiap tick, nonaktifkan provider cukup lama sampai key diperbaiki.
+const PROVIDER_AUTH_COOLDOWN_MS = 60 * 60 * 1000;
+// Tanda khas halaman challenge/WAF TikTok. Dipakai untuk membedakan 403 WAF
+// dari 403 "API key ditolak" milik provider pihak ketiga.
+const WAF_SIGNATURE_RE =
+  /WAF|cloudflare|just a moment|slardarClientWAF|access denied|performing security verification|ratelimit triggered|_wafchallengeid|please wait\.\.\./i;
+// Frasa khas 401/403 dari provider API berbayar. Sengaja tidak memakai "403"
+// saja supaya WAF TikTok (HTML challenge) tidak ikut terdeteksi sebagai auth.
+const AUTH_ERROR_RE =
+  /not subscribed to this api|invalid api key|invalid key|invalid subscription|subscription (?:expired|required|not found|inactive)|api key (?:is )?(?:invalid|missing|required|expired|not found)|unauthorized|not authorized|you (?:are|do) not have access|permission denied/i;
 let archivePostsBlockedUntil = 0;
 let archiveQuotaStrikes = 0;
 const providerBlockedUntil = new Map();
 const providerStrikes = new Map();
+const authWarned = new Set();
 
 /** Deteksi error kuota/rate-limit supaya tidak dianggap error fatal. */
 function isRateLimitError(err) {
@@ -45,6 +57,26 @@ function isRateLimitError(err) {
   if (Number(err.status) === 429) return true;
   return /kuota|quota|rate.?limit|too many requests|limit exceeded|cooldown sementara/i.test(
     String(err.message || err)
+  );
+}
+
+/** Deteksi API key/langganan ditolak (permanen sampai key diperbaiki). */
+function isAuthError(err) {
+  if (!err) return false;
+  const text = String(err.message || err);
+  // Pesan gabungan yang juga mengandung tanda WAF tetap dianggap WAF.
+  if (WAF_SIGNATURE_RE.test(text)) return false;
+  if (Number(err.status) === 401) return true;
+  return AUTH_ERROR_RE.test(text);
+}
+
+function warnAuthOnce(name, err, waitMs) {
+  if (authWarned.has(name)) return;
+  authWarned.add(name);
+  const detail = String((err && err.message) || err || '').slice(0, 160);
+  log.warn(
+    `[TIKTOK] ${name} menolak API key/langganan, provider dimatikan ` +
+      `${Math.round(waitMs / 60000)} menit. Periksa key/subscription: ${detail}`
   );
 }
 
@@ -66,6 +98,9 @@ function blockProvider(name, ms = PROVIDER_COOLDOWN_MS) {
 function clearProviderBlock(name) {
   providerBlockedUntil.delete(name);
   providerStrikes.delete(name);
+  // Provider sudah berhasil lagi (mis. key diperbaiki): izinkan peringatan
+  // baru kalau nanti ditolak lagi.
+  authWarned.delete(name);
 }
 
 function isArchivePostsBlocked(now = Date.now()) {
@@ -210,9 +245,10 @@ function fillTemplate(template, vars) {
 
 function isWafError(err) {
   const text = String((err && err.message) || err || '');
-  return /(?:\b403\b|WAF|cloudflare|just a moment|slardarClientWAF|access denied|performing security verification|ratelimit triggered)/i.test(
-    text
-  );
+  if (WAF_SIGNATURE_RE.test(text)) return true;
+  // 403 biasa tetap dianggap WAF (perilaku lama), kecuali jelas error auth
+  // provider seperti "You are not subscribed to this API".
+  return /\b403\b/.test(text) && !isAuthError(err);
 }
 
 function assertApiOk(json, label) {
@@ -591,22 +627,34 @@ async function fetchUserPostsApi(unique, cfg = {}) {
     err.rateLimited = true;
     throw err;
   }
+  const blockedCount = allProviders.length - providers.length;
 
   const errors = [];
   let waf = false;
   let limited = 0;
+  let authFailures = 0;
+  let attempted = 0;
 
   for (const [name, fn] of providers) {
     try {
       const items = await fn(cfg, unique);
       if (items === null) continue;
+      attempted += 1;
       clearProviderBlock(name);
       return { items, provider: name };
     } catch (err) {
-      if (isWafError(err)) waf = true;
-      if (isRateLimitError(err)) {
-        limited += 1;
-        blockProvider(name);
+      attempted += 1;
+      if (isAuthError(err)) {
+        err.auth = true;
+        authFailures += 1;
+        const wait = blockProvider(name, PROVIDER_AUTH_COOLDOWN_MS);
+        warnAuthOnce(name, err, wait);
+      } else {
+        if (isWafError(err)) waf = true;
+        if (isRateLimitError(err)) {
+          limited += 1;
+          blockProvider(name);
+        }
       }
       errors.push(`${name}: ${err.message}`);
     }
@@ -614,9 +662,18 @@ async function fetchUserPostsApi(unique, cfg = {}) {
 
   const err = new Error(errors.join(' | ') || 'gagal mengambil video TikTok');
   err.waf = waf;
+  if (!errors.length && blockedCount) {
+    // Semua provider yang tersisa tidak dikonfigurasi, sementara yang lain
+    // sedang cooldown (kuota/auth). Jangan dilaporkan sebagai error TikTok.
+    err.message = 'semua sumber daftar video sedang cooldown';
+    err.rateLimited = true;
+  }
   // Semua provider yang dicoba kena kuota/rate-limit: jangan diperlakukan
   // sebagai error fatal oleh monitor.
-  if (limited && limited === providers.length) err.rateLimited = true;
+  if (limited && limited === attempted) err.rateLimited = true;
+  // Semua provider yang benar-benar dipanggil menolak key/langganan: ini
+  // masalah konfigurasi, bukan gangguan TikTok, jadi jangan spam alert owner.
+  if (authFailures && authFailures === attempted) err.auth = true;
   throw err;
 }
 
@@ -935,7 +992,7 @@ async function fetchVideoInfoApi(link, cfg = {}) {
   // TikWM diletakkan sebelum tiklydown karena endpoint tiklydown sering
   // mati/TLS error; kalau ditaruh duluan, download jadi lambat 30 detik
   // sebelum akhirnya jatuh ke TikWM.
-  const providers = [
+  const allProviders = [
     ['local', infoLocal],
     // Scraper ALYA MD: POST tikwm.com/api/ (paling dekat dengan implementasi
     // archive), lalu provider custom/berbayar sebagai cadangan.
@@ -949,6 +1006,9 @@ async function fetchVideoInfoApi(link, cfg = {}) {
     // Fallback terakhir: halaman diambil server Jina, jadi bebas WAF IP panel.
     ['jina', infoJina],
   ];
+  // Provider yang API key-nya ditolak (401/403 subscription) dilewati sampai
+  // cooldown selesai, supaya tiap download tidak menunggu request sia-sia.
+  const providers = allProviders.filter(([name]) => !providerBlocked(name));
 
   const errors = [];
   let waf = false;
@@ -967,9 +1027,16 @@ async function fetchVideoInfoApi(link, cfg = {}) {
         if (!partial) partial = media;
         continue;
       }
+      clearProviderBlock(name);
       return media;
     } catch (err) {
-      if (isWafError(err)) waf = true;
+      if (isAuthError(err)) {
+        err.auth = true;
+        const wait = blockProvider(name, PROVIDER_AUTH_COOLDOWN_MS);
+        warnAuthOnce(name, err, wait);
+      } else if (isWafError(err)) {
+        waf = true;
+      }
       errors.push(`${name}: ${err.message}`);
     }
   }
@@ -989,6 +1056,7 @@ module.exports = {
   fillTemplate,
   isWafError,
   isRateLimitError,
+  isAuthError,
   isArchivePostsBlocked,
   hasConfiguredPostsApi,
   extractVideoArray,
