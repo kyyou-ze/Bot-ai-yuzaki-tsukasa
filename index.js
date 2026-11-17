@@ -381,10 +381,11 @@ async function main() {
 
       if (qr) {
         if (cfg.pairingNumber) {
-          // Kode pairing hanya berlaku singkat. Minta ulang saat QR berganti
-          // supaya user tidak terkunci pada kode yang sudah kedaluwarsa.
+          // Kode lama tidak bisa dipakai setelah diganti, jadi jangan terlalu
+          // sering minta kode baru. Jeda bisa diatur lewat PAIRING_REFRESH_SEC.
           const now = Date.now();
-          const shouldRefresh = pairingRequestedAt > 0 && now - pairingRequestedAt >= 60000;
+          const refreshMs = Math.max(30, Number(cfg.pairingRefreshSec) || 300) * 1000;
+          const shouldRefresh = pairingRequestedAt > 0 && now - pairingRequestedAt >= refreshMs;
           if (!pairingRequested || shouldRefresh) {
             pairingRequested = true;
             pairingRequestedAt = now;

@@ -205,6 +205,7 @@ Lihat `.env.example` untuk daftar lengkap. Variabel penting:
 | `BOT_TZ_OFFSET` | otomatis dari `BOT_TIMEZONE` | Override manual offset UTC (WIB = 7, WITA = 8, WIT = 9) |
 | `SESSION_DIR` | `./session` | Folder auth Baileys (bisa jadi `*_auth` jika diisi nama file) |
 | `PAIRING_NUMBER` | - | Nomor WhatsApp bot untuk pairing code, mis. `6281234567890` |
+| `PAIRING_REFRESH_SEC` | `300` | Jeda sebelum kode pairing diganti/diminta ulang (30–900 detik). Makin lama = kode makin lama bisa dipakai |
 | `STATE_DB` | `./tsukasa_state.json` | State JSON (persona/pro/warn/peraturan) |
 | `LID_MAP_FILE` | `./data/lidmap.json` | Pemetaan LID → nomor telepon agar balasan chat pribadi terkirim |
 | `SETTINGS_DB` | `./database/settings.json` | Override pengaturan yang diisi lewat chat (`!config`) |
@@ -1171,7 +1172,7 @@ Binary cloudflared diunduh otomatis sekali ke `data/bin/`. Bila hosting membloki
 ## Troubleshooting
 
 - **Tidak ada QR/pairing code**: Periksa log, pastikan folder sesi bisa ditulis dan `PAIRING_NUMBER` benar (kode negara, tanpa `+`). Kalau sebelumnya pairing sempat gagal, `creds.json` bisa menyimpan `me` setengah jadi; bot sekarang memindahkannya otomatis ke `session.loggedout-<waktu>` saat menerima 401.
-- **Kode pairing kedaluwarsa**: kode hanya berlaku singkat. Bot meminta kode baru tiap ±60 detik selama belum terhubung, jadi lihat console lagi bila kode lama ditolak.
+- **Kode pairing kedaluwarsa**: kode yang ditampilkan jadi tidak bisa dipakai setelah bot meminta kode baru. Jeda default sekarang **5 menit** (`PAIRING_REFRESH_SEC=300`, bisa diatur 30–900 detik). Bila kode tetap ditolak sebelum jeda habis, itu batas berlaku dari WhatsApp — tunggu kode baru muncul di console.
 - **`GEMINI_API_KEYS` fatal**: Tambahkan minimal satu API key Gemini.
 - **Fitur hijabin/TTS gagal**: Cek kredensial di environment.
 - **Sticker animasi gagal**: Pastikan `npm install` selesai (ffmpeg-static terpasang) atau set `FFMPEG_PATH`.
