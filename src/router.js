@@ -1486,9 +1486,9 @@ class Router {
 
           // Teknik ALYA/Kaguya: banner adalah kartu *link preview* yang
           // menyatu dengan pesan teks menu (bukan externalAdReply, bukan
-          // gambar terpisah). URL ditaruh di baris pertama dan `matched-text`
-          // diisi URL yang sama, persis seperti menu Shiroine/ALYA. Dengan
-          // cara ini seluruh teks menu panjang tetap tampil bersama kartunya.
+          // gambar terpisah). URL hanya dikirim lewat `matched-text` /
+          // `canonical-url`, tidak ditulis di badan pesan, supaya alamatnya
+          // tidak terlihat. Seluruh teks menu panjang tetap tampil.
           let linkPreview = null;
           if (!String(bang.rest || '').trim()) {
             try {
@@ -1501,12 +1501,12 @@ class Router {
             }
           }
 
-          const payload = linkPreview
-            ? `${linkPreview['canonical-url']}\n${menuText}`
-            : menuText;
+          const payload = menuText;
 
           try {
-            await wa.sendText(chat, payload, m, undefined, linkPreview);
+            // `quoted` sengaja kosong: menu dikirim sebagai pesan mandiri,
+            // bukan pesan balasan (tidak ada kutipan `.menu` di atasnya).
+            await wa.sendText(chat, payload, undefined, undefined, linkPreview);
             console.log(
               `[MENU] terkirim (${Buffer.byteLength(payload)} byte, banner ${
                 linkPreview ? 'ada' : 'tidak ada'
@@ -1519,10 +1519,10 @@ class Router {
               .catch((e) => console.error('[MENU] gagal kirim teks polos:', e && e.message));
           }
 
-          // Voice note dikirim paling akhir, setelah teks menu. Jadi teks tetap
-          // tampil dulu; kalau audio gagal tidak mengganggu menu.
+          // Voice note dikirim paling akhir, setelah teks menu. Juga mandiri
+          // (tidak mengutip perintah) supaya tampil bersih seperti menu.
           if (!String(bang.rest || '').trim()) {
-            await menuAudio.sendMenuAudio(this.sock, chat, m).catch(() => false);
+            await menuAudio.sendMenuAudio(this.sock, chat, null).catch(() => false);
           }
           return;
         }

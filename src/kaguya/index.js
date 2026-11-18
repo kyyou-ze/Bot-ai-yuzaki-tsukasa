@@ -918,9 +918,10 @@ const CATEGORY_GROUPS = [
 ];
 
 const MENU_PAGE_SIZE = 60;
-// Batas aman satu pesan menu. Kalau katalog lebih panjang, menu dipecah
-// menjadi beberapa halaman agar tetap nyaman dibaca di WhatsApp.
-const MENU_MESSAGE_LIMIT = 2600;
+// Menu utama sengaja disatukan dalam SATU pesan: tidak ada `.menu 2`,
+// `.menu 3`, dan seterusnya. Batas ini hanya pengaman kalau katalog tumbuh
+// sangat besar; untuk katalog saat ini (~3.700 karakter) tidak pernah tercapai.
+const MENU_MESSAGE_LIMIT = 60000;
 
 function upper(value) {
   return String(value || '').toUpperCase();

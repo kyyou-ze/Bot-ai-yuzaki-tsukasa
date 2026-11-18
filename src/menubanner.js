@@ -204,8 +204,8 @@ async function buildMenuPreview(opts) {
  * walaupun panjang — guild yang dulu memakai externalAdReply membuat bubble
  * teksnya hilang dan yang tampil cuma voice note.
  *
- * Baris URL ditaruh di awal teks oleh router dan `matched-text` diisi URL yang
- * sama supaya WhatsApp mengaitkan kartu ke baris tersebut.
+ * URL tidak ditulis di badan pesan; cukup lewat `matched-text` dan
+ * `canonical-url`, sehingga kartu tetap muncul tanpa alamat yang terlihat.
  */
 async function buildMenuLinkPreview({ title, description } = {}) {
   const ad = await buildMenuPreview({ title, description });

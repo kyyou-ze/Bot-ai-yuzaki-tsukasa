@@ -70,7 +70,6 @@ Bot ini memakai **arsitektur bridge**: inti bot tetap milik Tsukasa, sedangkan p
 | `.menu <kategori> <halaman>` | Halaman berikutnya, mis. `.menu rpg 2`. |
 | `.menu all` | Indeks ringkas semua kategori + jumlah command. |
 | `.menu cari <kata>` | Cari command berdasarkan nama atau deskripsi, mis. `.menu cari anime`. |
-| `.menu <halaman>` | Halaman berikutnya untuk katalog utama, mis. `.menu 2`. |
 | `.menu banner` | (Owner) Cek kesiapan banner (mode `externalAdReply`, URL gambar yang dipakai, dan sumber error bila gambar tidak muncul). |
 | `.promo` | (Owner) Status promosi otomatis: interval, grup terakhir, jumlah terkirim. |
 | `.promo on` / `.promo off` | (Owner) Nyalakan atau matikan promosi otomatis. Pilihan tersimpan di `database/promo.json`. |
@@ -82,8 +81,8 @@ Bot ini memakai **arsitektur bridge**: inti bot tetap milik Tsukasa, sedangkan p
 Catatan:
 - Semua fitur tampil sebagai fitur Tsukasa. Tidak ada pemisahan “fitur Tsukasa” dan “fitur Kaguya”.
 - Nama kategori yang sama (`anime`, `sticker`, `tools`) otomatis digabung menjadi satu kategori.
-- `.menu` memakai tampilan bergaya ALYA MD: sapaan `Halo, *nama*`, ringkasan `› Status / Mode / Total / Runtime / Prefix`, daftar kategori dengan penanda `◦`, dan indeks `《 GROUP 》` yang dipaginasi. Setelah menu utama, bot mengirim **voice note menu** dari `assets/menu/menu-music.mp3` (dimatikan dengan `MENU_AUDIO=false`). Teks menu selalu dikirim lebih dulu.
-- Banner menu berbentuk **kartu preview** (`contextInfo.externalAdReply`) dalam **satu pesan** dengan menu. Gambar besar, judul, dan deskripsi tampil sebagai banner; **URL tidak ditulis** di badan pesan.
+- `.menu` memakai tampilan bergaya ALYA MD: sapaan `Halo, *nama*`, ringkasan `› Status / Mode / Total / Runtime / Prefix`, daftar kategori dengan penanda `◦`. Semua kategori digabung dalam **satu pesan**, tanpa `.menu 2`. Setelah menu utama, bot mengirim **voice note menu** dari `assets/menu/menu-music.mp3` (dimatikan dengan `MENU_AUDIO=false`). Teks menu selalu dikirim lebih dulu.
+- Banner menu berbentuk **kartu link preview** (`extendedTextMessage.linkPreview`, teknik ALYA/Kaguya) dalam **satu pesan** dengan menu. Gambar, judul, dan deskripsi tampil sebagai banner; **URL tidak ditulis** di badan pesan. Menu dan voice note dikirim sebagai pesan mandiri, bukan balasan.
 - Gambar banner diambil berurutan dari `MENU_IMAGE_PATH` (file lokal, relatif ke root repo atau path `~`), `MENU_IMAGE_URL`, `PROMO_IMAGE_URL`, lalu banner bawaan di `assets/menu/banner-tsukasa.png`. File lokal otomatis diresize dengan `sharp` bila tersedia; thumbnail kartu menu diperkecil lagi (±360px) supaya menempel di teks tanpa membuat pesan ditolak.
 - Teks panjang (`.menu`, `.help`, `.me`) dipecah otomatis **per byte UTF‑8**, bukan per karakter. Bingkai `╭─╮` dan emoji memakai 3–4 byte, jadi batas karakter saja tidak cukup. Bila menu terlalu panjang untuk satu pesan, potongan lanjutan diberi penanda `(2/3)`; banner tetap menempel di potongan pertama. Kalau kartu ditolak WhatsApp, potongan itu dikirim ulang tanpa kartu agar isi menu tetap sampai.
 - Aset menu/kuis ALYA ada di `assets/menu` (banner, preview video/webp, musik) dan `assets/quiz` (JSON soal). Banner bawaan sudah diganti dengan banner Tsukasa, bukan banner ALYA.
