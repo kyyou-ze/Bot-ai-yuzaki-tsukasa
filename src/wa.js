@@ -410,10 +410,15 @@ async function sendText(jid, text, quoted, mentions, linkPreview) {
   const content = { text: str };
   if (mentions && mentions.length) content.mentions = mentions;
   if (linkPreview) {
-    if (linkPreview.thumbnailUrl || Buffer.isBuffer(linkPreview.thumbnail)) {
+    if (linkPreview.thumbnailUrl || linkPreview.thumbnail) {
       // Kartu banner: gambar besar + judul/deskripsi ditempel lewat
       // externalAdReply, jadi URL tidak perlu (dan tidak boleh) tampil di teks.
-      content.contextInfo = { externalAdReply: linkPreview };
+      // PENTING: field `thumbnail` pada proto ExternalAdReplyInfo bertipe string
+      // (base64), bukan bytes. Mengirim Buffer membuat kartu gagal dirender dan
+      // WhatsApp menyembunyikan seluruh bubble teks (yang tampil hanya audio).
+      const ad = { ...linkPreview };
+      if (Buffer.isBuffer(ad.thumbnail)) ad.thumbnail = ad.thumbnail.toString('base64');
+      content.contextInfo = { externalAdReply: ad };
       // Cegah Baileys membuat preview link otomatis dari URL di teks.
       content.linkPreview = null;
     } else {

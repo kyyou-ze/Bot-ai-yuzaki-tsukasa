@@ -1484,9 +1484,7 @@ class Router {
             }
           }
 
-          // Banner hanya untuk menu utama. Ditempel lewat externalAdReply.
-          // Versi ringkas tetap dikirim lebih dulu supaya teks selalu tampil
-          // walaupun kartu banner ditolak/disembunyikan WhatsApp.
+          // Banner tetap ditempel ke teks menu lewat externalAdReply.
           let banner = null;
           if (!String(bang.rest || '').trim()) {
             try {
@@ -1498,6 +1496,20 @@ class Router {
               console.error('[MENU] banner gagal dibangun:', err && err.message);
             }
           }
+
+          // Versi ringkas dikirim lebih dulu: jaminan ada teks menu yang tampil
+          // walaupun kartu banner bermasalah di WhatsApp.
+          const shortMenu = [
+            `*${(this.cfg && this.cfg.botName) || 'Tsukasa'} — MENU*`,
+            '',
+            `${usedPrefix}menu all — indeks kategori`,
+            `${usedPrefix}menu <kategori> — daftar command`,
+            `${usedPrefix}menu cari <kata> — cari command`,
+            `${usedPrefix}help <command> — cara pakai`,
+          ].join('\n');
+          await wa
+            .sendText(chat, shortMenu, m)
+            .catch((e) => console.error('[MENU] gagal kirim versi ringkas:', e && e.message));
 
           // Batas pesan WA dihitung per byte UTF-8, bukan per karakter. Emoji
           // dan bingkai ╭─╮ memakai 3-4 byte, jadi menu 3.700 karakter bisa
