@@ -196,6 +196,34 @@ async function buildMenuPreview(opts) {
 }
 
 /**
+ * Banner menu teknik ALYA/Kaguya: kartu *link preview* yang menempel pada
+ * pesan teks menu lewat `extendedTextMessage.linkPreview` (WAUrlInfo).
+ *
+ * Ini berbeda dari `externalAdReply`. Kartu link preview adalah bagian dari
+ * pesan teks itu sendiri, sehingga WhatsApp tetap merender seluruh teks menu
+ * walaupun panjang — guild yang dulu memakai externalAdReply membuat bubble
+ * teksnya hilang dan yang tampil cuma voice note.
+ *
+ * Baris URL ditaruh di awal teks oleh router dan `matched-text` diisi URL yang
+ * sama supaya WhatsApp mengaitkan kartu ke baris tersebut.
+ */
+async function buildMenuLinkPreview({ title, description } = {}) {
+  const ad = await buildMenuPreview({ title, description });
+  const url = bannerLinkUrl() || DEFAULT_BANNER_IMAGE;
+  const info = {
+    'matched-text': url,
+    'canonical-url': url,
+    title: String(title || 'Tsukasa').slice(0, 120),
+    description: String(description || '').slice(0, 200),
+  };
+  if (ad && Buffer.isBuffer(ad.thumbnail) && ad.thumbnail.length) {
+    // WAUrlInfo.jpegThumbnail bertipe string base64 (bukan Buffer).
+    info.jpegThumbnail = ad.thumbnail.toString('base64');
+  }
+  return info;
+}
+
+/**
  * Banner untuk welcome/goodbye. URL target tidak ikut ditulis ke badan pesan,
  * jadi yang terlihat hanya kartu gambar/teks, bukan alamat web.
  */
@@ -232,6 +260,7 @@ async function testMenuBanner(opts = {}) {
 module.exports = {
   buildAdReply,
   buildMenuPreview,
+  buildMenuLinkPreview,
   buildGreetingPreview,
   bannerImageCandidates,
   bannerLinkUrl,

@@ -1484,11 +1484,15 @@ class Router {
             }
           }
 
-          // Banner tetap ditempel ke teks menu lewat externalAdReply.
-          let banner = null;
+          // Teknik ALYA/Kaguya: banner adalah kartu *link preview* yang
+          // menyatu dengan pesan teks menu (bukan externalAdReply, bukan
+          // gambar terpisah). URL ditaruh di baris pertama dan `matched-text`
+          // diisi URL yang sama, persis seperti menu Shiroine/ALYA. Dengan
+          // cara ini seluruh teks menu panjang tetap tampil bersama kartunya.
+          let linkPreview = null;
           if (!String(bang.rest || '').trim()) {
             try {
-              banner = await menuBanner.buildMenuPreview({
+              linkPreview = await menuBanner.buildMenuLinkPreview({
                 title: (this.cfg && this.cfg.botName) || 'Tsukasa',
                 description: 'Sticker, unduhan, game grup, dan moderasi.',
               });
@@ -1497,37 +1501,22 @@ class Router {
             }
           }
 
-          // Versi ringkas dikirim lebih dulu: jaminan ada teks menu yang tampil
-          // walaupun kartu banner bermasalah di WhatsApp.
-          const shortMenu = [
-            `*${(this.cfg && this.cfg.botName) || 'Tsukasa'} — MENU*`,
-            '',
-            `${usedPrefix}menu all — indeks kategori`,
-            `${usedPrefix}menu <kategori> — daftar command`,
-            `${usedPrefix}menu cari <kata> — cari command`,
-            `${usedPrefix}help <command> — cara pakai`,
-          ].join('\n');
-          await wa
-            .sendText(chat, shortMenu, m)
-            .catch((e) => console.error('[MENU] gagal kirim versi ringkas:', e && e.message));
+          const payload = linkPreview
+            ? `${linkPreview['canonical-url']}\n${menuText}`
+            : menuText;
 
-          // Batas pesan WA dihitung per byte UTF-8, bukan per karakter. Emoji
-          // dan bingkai ╭─╮ memakai 3-4 byte, jadi menu 3.700 karakter bisa
-          // berbesar 5.000+ byte dan ditolak. sendLongText memecahnya aman.
-          // Banner ditempel ke potongan pertama supaya menyatu dengan menu;
-          // thumbnail sudah diperkecil oleh menubanner.buildMenuPreview.
           try {
-            await wa.sendLongText(chat, menuText, m, { linkPreview: banner });
-            console.log(`[MENU] terkirim (${Buffer.byteLength(menuText)} byte, banner ${banner ? 'ada' : 'tidak ada'})`);
+            await wa.sendText(chat, payload, m, undefined, linkPreview);
+            console.log(
+              `[MENU] terkirim (${Buffer.byteLength(payload)} byte, banner ${
+                linkPreview ? 'ada' : 'tidak ada'
+              })`
+            );
           } catch (err) {
-            console.error('[MENU] gagal kirim teks:', err && err.message);
+            console.error('[MENU] gagal kirim teks + banner, coba teks polos:', err && err.message);
             await wa
-              .sendText(
-                chat,
-                `⚠️ Menu gagal dikirim. Coba ${usedPrefix}menu <kategori> atau ${usedPrefix}menu all.`,
-                m
-              )
-              .catch(() => {});
+              .sendLongText(chat, menuText, m)
+              .catch((e) => console.error('[MENU] gagal kirim teks polos:', e && e.message));
           }
 
           // Voice note dikirim paling akhir, setelah teks menu. Jadi teks tetap
